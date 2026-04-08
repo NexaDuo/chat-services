@@ -1,0 +1,59 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## Repository status
+
+This repo is currently **blueprint-only**. The only substantive file is `plan.md` (in Portuguese) — the technical blueprint for an Omnichannel AI Stack. Treat `plan.md` as the authoritative source of architectural intent.
+
+## Architecture (target state)
+
+The system is a four-service stack with **Chatwoot as the single hub** for all conversations:
+
+```
+WhatsApp ──▶ Evolution API ──▶ Chatwoot (Webhook) ──▶ Middleware (Adapter) ──▶ Dify (Agent) ──▶ Azure OpenAI
+                                      ▲                      │
+                                      └─────── response ─────┘
+```
+
+- **Chatwoot** — inbox, CRM, ticketing, human handoff. Single source of truth.
+- **Evolution API v2.1+** — WhatsApp/Instagram bridge.
+- **Middleware (Adapter)** — Node.js service that translates Chatwoot webhooks to Dify API calls and sends responses back to Chatwoot.
+- **Dify (v1.2+)** — agentic engine + RAG. Supports MCP bidirectionally.
+- **Postgres 16+** — shared by Chatwoot and Dify via separate databases.
+- **pgvector** — **Primary vector store** (reuses Postgres).
+- **Redis 7+** — Sidekiq (Chatwoot) + Celery (Dify) queues.
+- **Azure OpenAI** — `gpt-4o` (agent) and `gpt-4o-mini` (embeddings/RAG).
+
+**Human handoff** is a Dify **tool** (HTTP request) that updates the Chatwoot conversation status to `open` and adds the `atendimento-humano` label.
+
+## Multitenancy model
+
+1. **Tier Shared (default)** — one Dify CE, one app per client. Chatwoot `account_id` maps to a `DIFY_API_KEY` in the middleware.
+2. **Tier Dedicated** — full Dify stack per tenant.
+
+**Conversational memory key:** Dify is called with `user = {account_id}:{contact_id}` from Chatwoot.
+
+## Target repo layout
+
+```
+docker-compose.yml           # Base stack
+.env.example                 # Secrets template
+/middleware                  # Dify-Chatwoot Adapter (Node.js/TS)
+/infrastructure/postgres     # Init: DB creation + pgvector extension
+/dify                        # Dify-specific docker configs
+/dify-apps                   # DSL (YAML) exports of agents - MUST be versioned
+/provisioning                # Automation scripts
+/scripts                     # Deploy utilities (Coolify-ready)
+```
+
+## Operational non-negotiables
+
+- **RAM:** **16 GB minimum** recommended for the shared stack.
+- **Backup:** daily `pg_dump` (Chatwoot + Dify DBs); `/dify-apps` backed up via Git.
+- **Observability:** Grafana + Prometheus for queue depths and **token usage per account_id**.
+- **Rate limiting:** Respect Meta tiers; throttle in Dify.
+
+## Language
+
+`plan.md` is in pt-BR. Keep documentation in pt-BR; code and config in English. Default to Portuguese for user interactions.
