@@ -1,0 +1,10 @@
+# Dify Apps — YAML (DSL) exports
+#
+# Export your Dify apps from the Studio (Settings → Export DSL) and commit the
+# YAML files here. This directory IS the source of truth for agent/workflow
+# versioning, per the operational non-negotiables in CLAUDE.md.
+#
+# Suggested naming: {tenant-slug}__{app-kind}.yml
+#   example:  acme__support-agent.yml
+#             acme__rag-kb.yml
+#             beta-co__scheduling-workflow.yml

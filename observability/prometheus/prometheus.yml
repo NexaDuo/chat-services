@@ -1,0 +1,38 @@
+# =============================================================================
+# Prometheus — NexaDuo chat-services
+# Scrapes metrics exposed by:
+#   - middleware  (Fastify + prom-client, /metrics)
+#   - dify-api    (if DIFY_API_ENABLE_METRICS=true)
+#
+# Extend with exporters for:
+#   - redis        → redis_exporter (future)
+#   - postgres     → postgres_exporter (future)
+#   - chatwoot     → via prometheus-client gem (future)
+# =============================================================================
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    stack: nexaduo
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: [localhost:9090]
+
+  - job_name: middleware
+    metrics_path: /metrics
+    static_configs:
+      - targets: [middleware:4000]
+        labels:
+          service: middleware
+
+  - job_name: dify-api
+    metrics_path: /metrics
+    static_configs:
+      - targets: [dify-api:5001]
+        labels:
+          service: dify-api
+    # Dify's /metrics endpoint is opt-in — expect this job to be DOWN until
+    # you enable it via Dify env. The scrape failure is harmless.
