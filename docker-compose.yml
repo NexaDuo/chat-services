@@ -263,11 +263,23 @@ services:
   # ===========================================================================
   # Dify — agent engine + RAG (pgvector) — NO internal nginx
   # ===========================================================================
+  dify-init:
+    image: alpine:latest
+    container_name: nexaduo-dify-init
+    restart: "no"
+    volumes:
+      - dify-api-storage:/app/api/storage
+    command: chown -R 1001:1001 /app/api/storage
+    networks:
+      - chat-network
+
   dify-api:
     image: langgenius/dify-api:1.13.3
     container_name: nexaduo-dify-api
     restart: unless-stopped
     depends_on:
+      dify-init:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
       redis:
@@ -512,7 +524,9 @@ services:
       start_period: 20s
     logging: *default-logging
     networks:
-      - chat-network
+      chat-network:
+        aliases:
+          - middleware.local
 
   # ===========================================================================
   # Observability — Prometheus + Grafana (provisioned)
@@ -572,3 +586,4 @@ networks:
   chat-network:
     driver: bridge
     name: ${COMPOSE_PROJECT_NAME:-nexaduo}-network
+

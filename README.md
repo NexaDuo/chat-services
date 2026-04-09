@@ -87,7 +87,7 @@ TENANT_MAP={"1":{"dify_api_key":"app-XXXXXXXX"}}
 ```
 
 ```bash
-docker compose restart middleware
+docker compose up -d middleware
 docker compose logs -f middleware    # espere "middleware: listening" + tenants=1
 ```
 
@@ -95,7 +95,7 @@ docker compose logs -f middleware    # espere "middleware: listening" + tenants=
 
 No Chatwoot: *Settings → Integrations → Webhooks → Add new webhook*
 
-- URL: `http://middleware:4000/webhooks/chatwoot` (rede Docker) **ou** a URL pública do middleware
+- URL: `http://middleware.local:4000/webhooks/chatwoot` (rede Docker) **ou** a URL pública do middleware
 - Eventos: **Conversation Created**, **Message Created**
 
 ### 8. Teste end-to-end
@@ -122,7 +122,7 @@ curl -s http://localhost:4000/metrics | grep middleware_dify
 O Dify chama o middleware via HTTP Tool (Dify Studio → *Tools → Custom → HTTP request*):
 
 ```http
-POST http://middleware:4000/tools/handoff
+POST http://middleware.local:4000/tools/handoff
 x-handoff-secret: ${HANDOFF_SHARED_SECRET}
 Content-Type: application/json
 

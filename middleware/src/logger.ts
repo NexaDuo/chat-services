@@ -23,22 +23,18 @@ interface LogFn {
  * type conflicts when we'd otherwise pass `loggerInstance: myPino`.
  */
 export function buildFastifyLoggerConfig(level: string): object {
-  const isProduction = process.env.NODE_ENV === "production";
   return {
     level,
     base: { service: "nexaduo-middleware" },
     timestamp: () => `,"time":"${new Date().toISOString()}"`,
-    ...(isProduction
-      ? {}
-      : {
-          transport: {
-            target: "pino-pretty",
-            options: {
-              colorize: true,
-              translateTime: "HH:MM:ss.l",
-              ignore: "pid,hostname,service",
-            },
-          },
-        }),
+    transport: {
+      target: "pino-pretty",
+      options: {
+        colorize: true,
+        translateTime: "HH:MM:ss.l",
+        ignore: "pid,hostname,service",
+        singleLine: true,
+      },
+    },
   };
 }
