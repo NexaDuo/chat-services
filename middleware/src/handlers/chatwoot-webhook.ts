@@ -115,7 +115,7 @@ export async function registerChatwootWebhookRoute(
 
     const start = process.hrtime.bigint();
     try {
-      const difyResp = await dify.chatBlocking({
+      const chatReq = {
         query: content,
         user: `${accountIdStr}:${contactId}`,
         conversationId: difyConvId,
@@ -124,7 +124,10 @@ export async function registerChatwootWebhookRoute(
           chatwoot_conversation_id: String(conversationId),
           chatwoot_contact_id: String(contactId),
         },
-      });
+      };
+      const difyResp = tenant.appType === "agent"
+        ? await dify.chatStreaming(chatReq)
+        : await dify.chatBlocking(chatReq);
 
       const durationS =
         Number(process.hrtime.bigint() - start) / 1_000_000_000;

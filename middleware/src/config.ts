@@ -7,6 +7,7 @@ import { z } from "zod";
 const TenantSchema = z.object({
   dify_api_key: z.string().min(1),
   dify_base_url: z.string().url().optional(),
+  dify_app_type: z.enum(["chatflow", "agent"]).default("chatflow"),
 });
 
 export type Tenant = z.infer<typeof TenantSchema>;
@@ -112,12 +113,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
 export function resolveTenant(
   config: AppConfig,
   accountId: string | number,
-): { apiKey: string; baseUrl: string } | null {
+): { apiKey: string; baseUrl: string; appType: "chatflow" | "agent" } | null {
   const key = String(accountId);
   const tenant = config.tenants[key];
   if (!tenant) return null;
   return {
     apiKey: tenant.dify_api_key,
     baseUrl: (tenant.dify_base_url ?? config.dify.baseUrl).replace(/\/+$/, ""),
+    appType: tenant.dify_app_type,
   };
 }
