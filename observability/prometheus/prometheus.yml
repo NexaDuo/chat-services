@@ -1,8 +1,8 @@
 # =============================================================================
 # Prometheus — NexaDuo chat-services
 # Scrapes metrics exposed by:
-#   - middleware  (Fastify + prom-client, /metrics)
-#   - dify-api    (if DIFY_API_ENABLE_METRICS=true)
+#   - middleware      (Fastify + prom-client, /metrics)
+#   - dify-api        (via otel-collector:8889)
 #
 # Extend with exporters for:
 #   - redis        → redis_exporter (future)
@@ -31,8 +31,8 @@ scrape_configs:
   - job_name: dify-api
     metrics_path: /metrics
     static_configs:
-      - targets: [dify-api:5001]
+      - targets: [otel-collector:8889]
         labels:
           service: dify-api
-    # Dify's /metrics endpoint is opt-in — expect this job to be DOWN until
-    # you enable it via Dify env. The scrape failure is harmless.
+    # Dify pushes to OTel Collector, which exposes /metrics on port 8889.
+    # Enable via ENABLE_OTEL=true in Dify env.

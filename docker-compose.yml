@@ -338,6 +338,11 @@ services:
       STORAGE_TYPE: opendal
       OPENDAL_SCHEME: fs
       OPENDAL_FS_ROOT: storage
+      # OpenTelemetry (Metrics push)
+      ENABLE_OTEL: "true"
+      OTEL_EXPORTER_TYPE: "otlp"
+      OTEL_EXPORTER_OTLP_PROTOCOL: "http"
+      OTLP_BASE_ENDPOINT: "http://otel-collector:4318"
     volumes:
       - dify-api-storage:/app/api/storage
     ports:
@@ -397,6 +402,11 @@ services:
       STORAGE_TYPE: opendal
       OPENDAL_SCHEME: fs
       OPENDAL_FS_ROOT: storage
+      # OpenTelemetry (Metrics push)
+      ENABLE_OTEL: "true"
+      OTEL_EXPORTER_TYPE: "otlp"
+      OTEL_EXPORTER_OTLP_PROTOCOL: "http"
+      OTLP_BASE_ENDPOINT: "http://otel-collector:4318"
     volumes:
       - dify-api-storage:/app/api/storage
     logging: *default-logging
@@ -531,6 +541,16 @@ services:
   # ===========================================================================
   # Observability — Prometheus + Grafana (provisioned)
   # ===========================================================================
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.111.0
+    container_name: nexaduo-otel-collector
+    restart: unless-stopped
+    command: ["--config=/etc/otel-collector-config.yaml"]
+    volumes:
+      - ./observability/otel-collector/config.yaml:/etc/otel-collector-config.yaml:ro
+    networks:
+      - chat-network
+
   prometheus:
     image: prom/prometheus:v2.54.1
     container_name: nexaduo-prometheus
