@@ -1,0 +1,234 @@
+app:
+  description: ''
+  icon: 🤖
+  icon_background: '#FFEAD5'
+  icon_type: emoji
+  mode: workflow
+  name: Self-Healing Agent Analysis
+  use_icon_as_answer_icon: false
+dependencies:
+- current_identifier: null
+  type: marketplace
+  value:
+    marketplace_plugin_unique_identifier: langgenius/azure_openai:0.0.50@61cf7ba70e80065c6828d21d0bb2c0f1a76c99d599c5266fe86f4fe135c27880
+    version: null
+kind: app
+version: 0.6.0
+workflow:
+  conversation_variables: []
+  environment_variables: []
+  features:
+    file_upload:
+      allowed_file_extensions:
+      - .JPG
+      - .JPEG
+      - .PNG
+      - .GIF
+      - .WEBP
+      - .SVG
+      allowed_file_types:
+      - image
+      allowed_file_upload_methods:
+      - local_file
+      - remote_url
+      enabled: false
+      fileUploadConfig:
+        attachment_image_file_size_limit: 2
+        audio_file_size_limit: 50
+        batch_count_limit: 5
+        file_size_limit: 15
+        file_upload_limit: 20
+        image_file_batch_limit: 10
+        image_file_size_limit: 10
+        single_chunk_attachment_limit: 10
+        video_file_size_limit: 100
+        workflow_file_upload_limit: 10
+      image:
+        enabled: false
+        number_limits: 3
+        transfer_methods:
+        - local_file
+        - remote_url
+      number_limits: 3
+    opening_statement: ''
+    retriever_resource:
+      enabled: true
+    sensitive_word_avoidance:
+      enabled: false
+    speech_to_text:
+      enabled: false
+    suggested_questions: []
+    suggested_questions_after_answer:
+      enabled: false
+    text_to_speech:
+      enabled: false
+      language: ''
+      voice: ''
+  graph:
+    edges:
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: start
+        targetType: llm
+      id: 1775876548758-source-1775876615183-target
+      source: '1775876548758'
+      sourceHandle: source
+      target: '1775876615183'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: llm
+        targetType: end
+      id: 1775876615183--1775876984981-target
+      source: '1775876615183'
+      sourceHandle: source
+      target: '1775876984981'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    nodes:
+    - data:
+        selected: false
+        title: User Input
+        type: start
+        variables:
+        - default: ''
+          hint: ''
+          label: Service Name
+          options: []
+          placeholder: ''
+          required: true
+          type: text-input
+          variable: service_name
+        - default: ''
+          hint: ''
+          label: Log Content
+          options: []
+          placeholder: ''
+          required: true
+          type: text-input
+          variable: log_content
+      height: 134
+      id: '1775876548758'
+      position:
+        x: 80
+        y: 282
+      positionAbsolute:
+        x: 80
+        y: 282
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        context:
+          enabled: false
+          variable_selector: []
+        model:
+          completion_params:
+            temperature: 0.7
+          mode: chat
+          name: gpt-4o-mini
+          provider: langgenius/azure_openai/azure_openai
+        prompt_template:
+        - id: 59424f38-cdc9-4d96-8dc0-c7aa7bb87211
+          role: system
+          text: 'Você é um engenheiro SRE sênior. Analise o log de erro do serviço
+            ''{{#1775876548758.service_name#}}'' e identifique a causa raiz e sugira
+            uma correção prática.
+
+
+
+            LOG:
+
+            {{#1775876548758.log_content#}}
+
+
+
+            Responda em JSON com os campos: root_cause, suggested_fix, severity (info,
+            warning, error, fatal).'
+        selected: false
+        structured_output:
+          schema:
+            additionalProperties: false
+            properties:
+              root_cause:
+                type: string
+              severity:
+                enum:
+                - info
+                - warning
+                - error
+                - fatal
+                type: string
+              suggested_fix:
+                type: string
+            required:
+            - root_cause
+            - suggested_fix
+            - severity
+            type: object
+        structured_output_enabled: true
+        title: LLM
+        type: llm
+        vision:
+          enabled: false
+      height: 87
+      id: '1775876615183'
+      position:
+        x: 382
+        y: 282
+      positionAbsolute:
+        x: 382
+        y: 282
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 241
+    - data:
+        outputs:
+        - value_selector:
+          - '1775876615183'
+          - structured_output
+          - root_cause
+          value_type: object
+          variable: root_cause
+        - value_selector:
+          - '1775876615183'
+          - structured_output
+          - suggested_fix
+          value_type: object
+          variable: suggested_fix
+        - value_selector:
+          - '1775876615183'
+          - structured_output
+          - severity
+          value_type: object
+          variable: severity
+        selected: false
+        title: Output
+        type: end
+      height: 139
+      id: '1775876984981'
+      position:
+        x: 683
+        y: 282
+      positionAbsolute:
+        x: 683
+        y: 282
+      selected: true
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 241
+    viewport:
+      x: -258
+      y: 69.5
+      zoom: 1
+  rag_pipeline_variables: []

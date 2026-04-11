@@ -129,7 +129,7 @@ async function queryLokiErrors() {
   
   // Query by project label or container name prefix for stability
   const project = process.env.COMPOSE_PROJECT_NAME || 'nexaduo';
-  const query = `{project="${project}"} |~ "(?i)(error|fatal|panic|exception|traceback)"`;
+  const query = `{project="${project}", service!="self-healing-agent"} |~ "(?i)(error|fatal|panic|exception|traceback)"`;
   
   try {
     const response = await axios.get(`${LOKI_URL}/loki/api/v1/query_range`, {

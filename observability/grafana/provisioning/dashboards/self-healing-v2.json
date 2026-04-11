@@ -1,0 +1,99 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "postgres-self-healing-v2"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "text"
+            }
+          }
+        }
+      },
+      "gridPos": {
+        "h": 12,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "options": {
+        "showHeader": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "postgres-self-healing-v2"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT created_at AS \"time\", service_name, error_message, root_cause, suggested_fix, severity FROM insights WHERE $__timeFilter(created_at) ORDER BY created_at DESC",
+          "refId": "A"
+        }
+      ],
+      "title": "Analítico de Erros",
+      "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "postgres-self-healing-v2"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 24,
+        "x": 0,
+        "y": 12
+      },
+      "id": 2,
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "postgres-self-healing-v2"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT 'Conexão OK' as status, count(*) as total_registros FROM insights WHERE $__timeFilter(created_at)",
+          "refId": "B"
+        }
+      ],
+      "title": "Debug Conexão",
+      "type": "table"
+    }
+  ],
+  "schemaVersion": 39,
+  "tags": [],
+  "templating": {
+    "list": []
+  },
+  "refresh": "30s",
+  "time": {
+    "from": "now-7d",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Self-Healing Insights V2",
+  "uid": "self-healing-v2",
+  "version": 9
+}

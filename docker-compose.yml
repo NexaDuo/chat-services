@@ -342,7 +342,7 @@ services:
       ENABLE_OTEL: "true"
       OTEL_EXPORTER_TYPE: "otlp"
       OTEL_EXPORTER_OTLP_PROTOCOL: "http"
-      OTLP_BASE_ENDPOINT: "http://otel-collector:4318"
+      OTLP_BASE_ENDPOINT: "http://otel-collector:4318/v1/traces"
     volumes:
       - dify-api-storage:/app/api/storage
     ports:
@@ -406,7 +406,7 @@ services:
       ENABLE_OTEL: "true"
       OTEL_EXPORTER_TYPE: "otlp"
       OTEL_EXPORTER_OTLP_PROTOCOL: "http"
-      OTLP_BASE_ENDPOINT: "http://otel-collector:4318"
+      OTLP_BASE_ENDPOINT: "http://otel-collector:4318/v1/traces"
     volumes:
       - dify-api-storage:/app/api/storage
     logging: *default-logging
@@ -637,6 +637,8 @@ services:
       GF_USERS_ALLOW_SIGN_UP: "false"
       GF_ANALYTICS_REPORTING_ENABLED: "false"
       GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     volumes:
       - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
       - grafana-data:/var/lib/grafana

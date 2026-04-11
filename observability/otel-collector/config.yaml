@@ -9,9 +9,14 @@ exporters:
     endpoint: "0.0.0.0:8889"
     namespace: dify
     send_timestamps: true
+  logging:
+    verbosity: basic
 
 service:
   pipelines:
     metrics:
       receivers: [otlp]
       exporters: [prometheus]
+    traces:
+      receivers: [otlp]
+      exporters: [logging]

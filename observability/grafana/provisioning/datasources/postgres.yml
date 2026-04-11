@@ -1,9 +1,9 @@
 apiVersion: 1
 
 datasources:
-  - name: Postgres-SelfHealing
+  - name: Self-Healing-DB-V2
     type: postgres
-    uid: postgres-self-healing
+    uid: postgres-self-healing-v2
     url: postgres:5432
     user: ${POSTGRES_USER}
     database: self_healing
@@ -12,3 +12,5 @@ datasources:
       postgresVersion: 1600
     secureJsonData:
       password: ${POSTGRES_PASSWORD}
+    isDefault: false
+    editable: true
