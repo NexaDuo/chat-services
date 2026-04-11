@@ -18,14 +18,27 @@ WhatsApp ──▶ Evolution API ──▶ Chatwoot (Webhook) ──▶ Middlewa
 
 - **Chatwoot** — inbox, CRM, ticketing, human handoff. Single source of truth.
 - **Evolution API v2.1+** — WhatsApp/Instagram bridge.
-- **Middleware (Adapter)** — Node.js service that translates Chatwoot webhooks to Dify API calls and sends responses back to Chatwoot.
+- **Middleware (Adapter)** — Node.js service that translates Chatwoot webhooks to Dify API calls and sends responses back to Chatwoot. Centralized config provider for internal agents.
 - **Dify (v1.2+)** — agentic engine + RAG. Supports MCP bidirectionally.
-- **Postgres 16+** — shared by Chatwoot and Dify via separate databases.
+- **Self-Healing Agent** — Node.js agent that analyzes Loki logs via Dify to find root causes of errors.
+- **Observability** — Loki, Promtail, Prometheus, and Grafana (centralized logs and metrics).
+- **Postgres 16+** — shared by Chatwoot, Dify, and Middleware via separate databases.
 - **pgvector** — **Primary vector store** (reuses Postgres).
 - **Redis 7+** — Sidekiq (Chatwoot) + Celery (Dify) queues.
 - **Azure OpenAI** — `gpt-4o` (agent) and `gpt-4o-mini` (embeddings/RAG).
 
 **Human handoff** is a Dify **tool** (HTTP request) that updates the Chatwoot conversation status to `open` and adds the `atendimento-humano` label.
+
+## Configuration & Dynamics
+
+The stack uses a **hybrid configuration model**:
+1. **Static (.env):** Infrastructure secrets (DB passwords, Redis URLs, etc.).
+2. **Dynamic (Postgres + Middleware API):** Application-specific settings and API keys (e.g., `DIFY_SELF_HEALING_API_KEY`).
+
+**Standard for internal agents:**
+- All internal agents (like `self-healing`) must fetch their functional configuration from the **Middleware Config API** (`GET /config`).
+- Authentication for internal config fetching is done via `Bearer token` using the `HANDOFF_SHARED_SECRET`.
+- New configuration keys should be added to the `middleware.configs` table in Postgres for runtime updates.
 
 ## Multitenancy model
 
