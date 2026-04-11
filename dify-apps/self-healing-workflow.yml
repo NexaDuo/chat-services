@@ -1,0 +1,61 @@
+app:
+  description: 'Analisador de erros para o stack NexaDuo'
+  icon: 🤖
+  icon_background: '#FFEAD5'
+  mode: workflow
+  name: Self-Healing Agent Analysis
+workflow:
+  features:
+    opening_statement: ''
+    retention_period: 0
+  graph:
+    nodes:
+      - data:
+          desc: ''
+          input_params:
+            - label: service_name
+              max_length: 256
+              required: true
+              type: text-input
+              variable: service_name
+            - label: log_content
+              max_length: 4096
+              required: true
+              type: paragraph
+              variable: log_content
+          name: Start
+          type: start
+        id: start
+      - data:
+          model:
+            mode: chat
+            name: gpt-4o-mini
+            provider: azure_openai
+          prompt_template:
+            - role: system
+              text: "Você é um engenheiro SRE sênior. Analise o log de erro do serviço '{{service_name}}' e identifique a causa raiz e sugira uma correção prática.\n\nLOG:\n{{log_content}}\n\nResponda em JSON com os campos: root_cause, suggested_fix, severity (info, warning, error, fatal)."
+          name: Analyze Error
+          type: llm
+        id: llm
+      - data:
+          outputs:
+            - value_selector:
+                - llm
+                - text
+              variable: root_cause
+            - value_selector:
+                - llm
+                - text
+              variable: suggested_fix
+            - value_selector:
+                - llm
+                - text
+              variable: severity
+          name: End
+          type: end
+        id: end
+    edges:
+      - source: start
+        target: llm
+      - source: llm
+        target: end

@@ -1,0 +1,14 @@
+apiVersion: 1
+
+datasources:
+  - name: Postgres-SelfHealing
+    type: postgres
+    uid: postgres-self-healing
+    url: postgres:5432
+    user: ${POSTGRES_USER}
+    database: self_healing
+    jsonData:
+      sslmode: 'disable'
+      postgresVersion: 1600
+    secureJsonData:
+      password: ${POSTGRES_PASSWORD}

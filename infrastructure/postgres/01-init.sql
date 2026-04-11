@@ -31,6 +31,12 @@ SELECT 'CREATE DATABASE evolution'
 SELECT 'CREATE DATABASE dify_plugin'
  WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'dify_plugin')\gexec
 
+SELECT 'CREATE DATABASE self_healing'
+ WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'self_healing')\gexec
+
+SELECT 'CREATE DATABASE middleware'
+ WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'middleware')\gexec
+
 -- ---------- chatwoot ---------------------------------------------------------
 \connect chatwoot
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
@@ -45,6 +51,39 @@ CREATE EXTENSION IF NOT EXISTS pgcrypto;
 -- ---------- dify_plugin ------------------------------------------------------
 \connect dify_plugin
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
+-- ---------- middleware -------------------------------------------------------
+\connect middleware
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+CREATE TABLE IF NOT EXISTS configs (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  key TEXT NOT NULL UNIQUE,
+  value TEXT,
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Pre-seed some default keys if needed
+-- INSERT INTO configs (key, value) VALUES ('DIFY_SELF_HEALING_API_KEY', NULL) ON CONFLICT DO NOTHING;
+
+-- ---------- self_healing -----------------------------------------------------
+\connect self_healing
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+CREATE TABLE IF NOT EXISTS insights (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+  service_name TEXT NOT NULL,
+  error_message TEXT,
+  stack_trace TEXT,
+  root_cause TEXT,
+  suggested_fix TEXT,
+  severity TEXT,
+  fingerprint TEXT,
+  occurrence_count INT DEFAULT 1,
+  metadata JSONB
+);
+
+CREATE INDEX IF NOT EXISTS idx_insights_fingerprint ON insights(fingerprint);
+CREATE INDEX IF NOT EXISTS idx_insights_service_created ON insights(service_name, created_at DESC);
 
 -- ---------- evolution --------------------------------------------------------
 \connect evolution

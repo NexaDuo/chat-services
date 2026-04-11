@@ -55,11 +55,14 @@ const EnvSchema = z.object({
     .string()
     .min(16, "HANDOFF_SHARED_SECRET must be at least 16 chars"),
   HANDOFF_LABEL: z.string().default("atendimento-humano"),
+
+  DATABASE_URL: z.string().url().optional(),
 });
 
 export type AppConfig = {
   port: number;
   logLevel: z.infer<typeof EnvSchema>["LOG_LEVEL"];
+  databaseUrl?: string;
   chatwoot: {
     baseUrl: string;
     apiToken: string;
@@ -90,6 +93,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   return {
     port: data.PORT,
     logLevel: data.LOG_LEVEL,
+    databaseUrl: data.DATABASE_URL,
     chatwoot: {
       baseUrl: data.CHATWOOT_BASE_URL.replace(/\/+$/, ""),
       apiToken: data.CHATWOOT_API_TOKEN,

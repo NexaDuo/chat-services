@@ -7,6 +7,7 @@ import { ChatwootClient } from "./chatwoot.js";
 import { registerHealthRoutes } from "./handlers/health.js";
 import { registerChatwootWebhookRoute } from "./handlers/chatwoot-webhook.js";
 import { registerHandoffRoute } from "./handlers/handoff.js";
+import { registerConfigRoute } from "./handlers/config.js";
 
 async function main(): Promise<void> {
   let config;
@@ -38,6 +39,7 @@ async function main(): Promise<void> {
   await registerHealthRoutes(app, metrics);
   await registerChatwootWebhookRoute(app, config, metrics, chatwoot);
   await registerHandoffRoute(app, config, metrics, chatwoot);
+  await registerConfigRoute(app, config);
 
   const shutdown = async (signal: string): Promise<void> => {
     app.log.info({ signal }, "middleware: shutting down");
