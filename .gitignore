@@ -32,3 +32,22 @@ Thumbs.db
 .vscode/
 *.swp
 *.swo
+
+# Terraform
+**/.terraform/*
+*.tfstate
+*.tfstate.*
+crash.log
+*.tfvars
+*.tfvars.json
+override.tf
+override.tf.json
+_override.tf
+_override.tf.json
+.terraformrc
+terraform.rc
+*.json
+!**/.planning/**/*.json
+!**/dify-apps/*.yml
+!**/.env.example
+!**/*.tfvars.example
