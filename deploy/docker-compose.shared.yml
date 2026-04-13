@@ -49,5 +49,4 @@ volumes:
 
 networks:
   chat-network:
-    external: true
     name: ${COMPOSE_PROJECT_NAME:-nexaduo}-network

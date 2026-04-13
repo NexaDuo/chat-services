@@ -1,4 +1,3 @@
-
 services:
   evolution-api:
     image: atendai/evolution-api:v2.1.1
@@ -17,7 +16,6 @@ services:
       - "8080:8080"
     networks:
       - chat-network
-
   middleware:
     build:
       context: ../middleware
@@ -37,7 +35,6 @@ services:
       - "4000:4000"
     networks:
       - chat-network
-
   # Observability & Self-healing
   loki:
     image: grafana/loki:3.2.0
@@ -49,7 +46,6 @@ services:
       - loki-data:/var/loki
     networks:
       - chat-network
-
   promtail:
     image: grafana/promtail:3.1.0
     container_name: nexaduo-promtail
@@ -60,7 +56,6 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     networks:
       - chat-network
-
   grafana:
     image: grafana/grafana:11.3.0
     container_name: nexaduo-grafana
@@ -75,7 +70,6 @@ services:
       - "3002:3000"
     networks:
       - chat-network
-
   self-healing-agent:
     build:
       context: ../agents/self-healing
@@ -89,13 +83,10 @@ services:
       MIDDLEWARE_URL: http://middleware:4000
     networks:
       - chat-network
-
 volumes:
   evolution-instances:
   loki-data:
   grafana-data:
-
 networks:
   chat-network:
-    external: true
     name: ${COMPOSE_PROJECT_NAME:-nexaduo}-network
