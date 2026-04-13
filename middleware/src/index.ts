@@ -62,7 +62,6 @@ async function main(): Promise<void> {
     app.log.info(
       {
         port: config.port,
-        tenants: Object.keys(config.tenants).length,
         chatwootBaseUrl: config.chatwoot.baseUrl,
         difyBaseUrl: config.dify.baseUrl,
       },

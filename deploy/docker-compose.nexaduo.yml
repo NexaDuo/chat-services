@@ -1,4 +1,3 @@
-version: '3.8'
 
 services:
   evolution-api:
@@ -23,7 +22,7 @@ services:
     build:
       context: ../middleware
       dockerfile: Dockerfile
-    image: nexaduo/middleware:prod
+    image: nexaduo/middleware:dev
     container_name: nexaduo-middleware
     restart: unless-stopped
     env_file: ../.env
