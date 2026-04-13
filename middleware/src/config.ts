@@ -1,42 +1,5 @@
 import { z } from "zod";
 
-/**
- * Tenant configuration for a single Chatwoot account.
- * Keyed by Chatwoot `account_id` (string) in `TENANT_MAP`.
- */
-const TenantSchema = z.object({
-  dify_api_key: z.string().min(1),
-  dify_base_url: z.string().url().optional(),
-  dify_app_type: z.enum(["chatflow", "agent"]).default("chatflow"),
-});
-
-export type Tenant = z.infer<typeof TenantSchema>;
-
-const TenantMapSchema = z.record(z.string(), TenantSchema);
-
-export type TenantMap = z.infer<typeof TenantMapSchema>;
-
-function parseTenantMap(raw: string | undefined): TenantMap {
-  if (!raw || raw.trim() === "" || raw.trim() === "{}") {
-    return {};
-  }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch (err) {
-    throw new Error(
-      `TENANT_MAP is not valid JSON. Expected a JSON object mapping account_id → { dify_api_key }. Got: ${(err as Error).message}`,
-    );
-  }
-  const result = TenantMapSchema.safeParse(parsed);
-  if (!result.success) {
-    throw new Error(
-      `TENANT_MAP schema mismatch: ${result.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ")}`,
-    );
-  }
-  return result.data;
-}
-
 const EnvSchema = z.object({
   PORT: z.coerce.number().int().positive().default(4000),
   LOG_LEVEL: z
@@ -49,20 +12,18 @@ const EnvSchema = z.object({
   DIFY_BASE_URL: z.string().url(),
   DIFY_REQUEST_TIMEOUT_MS: z.coerce.number().int().positive().default(30000),
 
-  TENANT_MAP: z.string().optional(),
-
   HANDOFF_SHARED_SECRET: z
     .string()
     .min(16, "HANDOFF_SHARED_SECRET must be at least 16 chars"),
   HANDOFF_LABEL: z.string().default("atendimento-humano"),
 
-  DATABASE_URL: z.string().url().optional(),
+  DATABASE_URL: z.string().url().min(1, "DATABASE_URL is required"),
 });
 
 export type AppConfig = {
   port: number;
   logLevel: z.infer<typeof EnvSchema>["LOG_LEVEL"];
-  databaseUrl?: string;
+  databaseUrl: string;
   chatwoot: {
     baseUrl: string;
     apiToken: string;
@@ -71,7 +32,6 @@ export type AppConfig = {
     baseUrl: string;
     requestTimeoutMs: number;
   };
-  tenants: TenantMap;
   handoff: {
     sharedSecret: string;
     label: string;
@@ -102,7 +62,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       baseUrl: data.DIFY_BASE_URL.replace(/\/+$/, ""),
       requestTimeoutMs: data.DIFY_REQUEST_TIMEOUT_MS,
     },
-    tenants: parseTenantMap(data.TENANT_MAP),
     handoff: {
       sharedSecret: data.HANDOFF_SHARED_SECRET,
       label: data.HANDOFF_LABEL,
@@ -111,19 +70,32 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
 }
 
 /**
- * Resolves the per-tenant Dify config for a given Chatwoot account_id.
+ * Resolves the per-tenant Dify config for a given Chatwoot account_id from database.
  * Returns `null` if the account is not mapped.
  */
-export function resolveTenant(
+export async function resolveTenant(
   config: AppConfig,
   accountId: string | number,
-): { apiKey: string; baseUrl: string; appType: "chatflow" | "agent" } | null {
+  pool: import("pg").Pool,
+): Promise<{ apiKey: string; baseUrl: string; appType: "chatflow" | "agent" } | null> {
   const key = String(accountId);
-  const tenant = config.tenants[key];
-  if (!tenant) return null;
-  return {
-    apiKey: tenant.dify_api_key,
-    baseUrl: (tenant.dify_base_url ?? config.dify.baseUrl).replace(/\/+$/, ""),
-    appType: tenant.dify_app_type,
-  };
+
+  try {
+    const result = await pool.query(
+      "SELECT dify_api_key, dify_app_type FROM tenants WHERE chatwoot_account_id = $1",
+      [key]
+    );
+    if (result.rows.length > 0) {
+      const row = result.rows[0];
+      return {
+        apiKey: row.dify_api_key,
+        baseUrl: config.dify.baseUrl,
+        appType: row.dify_app_type as "chatflow" | "agent",
+      };
+    }
+  } catch (err) {
+    console.error("Failed to resolve tenant from database", err);
+  }
+
+  return null;
 }

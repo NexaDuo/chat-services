@@ -62,6 +62,18 @@ CREATE TABLE IF NOT EXISTS configs (
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS tenants (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  subdomain TEXT NOT NULL UNIQUE,
+  chatwoot_account_id TEXT NOT NULL,
+  dify_api_key TEXT,
+  dify_app_type TEXT DEFAULT 'chatflow',
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_tenants_subdomain ON tenants(subdomain);
+
 -- Pre-seed some default keys if needed
 -- INSERT INTO configs (key, value) VALUES ('DIFY_SELF_HEALING_API_KEY', NULL) ON CONFLICT DO NOTHING;
 

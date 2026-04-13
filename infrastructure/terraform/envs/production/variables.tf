@@ -14,7 +14,7 @@ variable "gcp_region" {
 
 variable "gcp_zone" {
   type    = string
-  default = "us-central1-a"
+  default = "us-central1-b"
 }
 
 variable "app_name" {
@@ -54,7 +54,17 @@ variable "cloudflare_zone_id" {
   type = string
 }
 
+variable "coolify_api_token" {
+  type      = string
+  sensitive = true
+}
+
 variable "dns_subdomain" {
   type    = string
   default = "chat"
+}
+
+variable "base_domain" {
+  type    = string
+  default = "chat.nexaduo.com"
 }

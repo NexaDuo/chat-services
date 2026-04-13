@@ -54,7 +54,7 @@ gcloud compute ssh nexaduo-chat-services --tunnel-through-iap --project <PROJECT
 ```
 
 ### 6. Instalação Manual do Coolify (Se necessário)
-Se o script de inicialização falhar, você pode instalar manualmente via SSH:
+Se o script de inicialização falhar, você pode instalar manualmente via SSH seguindo o comando oficial:
 
 ```bash
 curl -fsSL https://cdn.coollabs.io/coolify/install.sh | sudo bash

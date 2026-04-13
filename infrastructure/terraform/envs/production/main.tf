@@ -17,14 +17,17 @@ module "dns" {
   zone_id = var.cloudflare_zone_id
   name    = var.dns_subdomain
   value   = module.vm.public_ip
+  proxied = true
 }
 
 module "tunnel" {
   source = "../../modules/cloudflare-tunnel"
 
-  account_id = var.cloudflare_account_id
-  name       = "${var.app_name}-tunnel"
-  zone_id    = var.cloudflare_zone_id
+  account_id  = var.cloudflare_account_id
+  name        = "${var.app_name}-tunnel"
+  zone_id     = var.cloudflare_zone_id
+  base_domain = var.base_domain
+  proxied     = true
 }
 
 output "public_ip" {

@@ -6,6 +6,9 @@ set -e
 # durante a execução como script de inicialização do GCP.
 export HOME=/root
 
+# Força a instalação não interativa via variável de ambiente para automação
+export FORCE=true
+
 echo "------------------------------------------"
 echo "Iniciando instalação do Coolify (Automated)..."
 echo "------------------------------------------"
@@ -14,9 +17,8 @@ echo "------------------------------------------"
 apt-get update
 apt-get upgrade -y
 
-# Instalação do Coolify via script oficial com a flag --force
-# A flag --force ignora todos os prompts interativos (Y/N)
-curl -fsSL https://cdn.coollabs.io/coolify/install.sh | bash -s -- --force
+# Instalação do Coolify via script oficial (conforme site oficial)
+curl -fsSL https://cdn.coollabs.io/coolify/install.sh | sudo bash
 
 echo "------------------------------------------"
 echo "Instalação do Coolify concluída!"

@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import axios from "axios";
+import pg from "pg";
 import type { AppConfig } from "../config.js";
 import { resolveTenant } from "../config.js";
 import type { Metrics } from "../metrics.js";
@@ -54,6 +55,8 @@ export async function registerChatwootWebhookRoute(
   metrics: Metrics,
   chatwoot: ChatwootClient,
 ): Promise<void> {
+  const pool = new pg.Pool({ connectionString: config.databaseUrl });
+
   app.post("/webhooks/chatwoot", async (req, reply) => {
     const parsed = WebhookSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -91,7 +94,7 @@ export async function registerChatwootWebhookRoute(
     const contactId = evt.conversation.contact_inbox?.contact_id ?? "unknown";
 
     const accountIdStr = String(accountId);
-    const tenant = resolveTenant(config, accountIdStr);
+    const tenant = await resolveTenant(config, accountIdStr, pool);
     if (!tenant) {
       req.log.warn({ accountId: accountIdStr }, "webhook: no tenant mapping");
       metrics.errorsTotal.inc({

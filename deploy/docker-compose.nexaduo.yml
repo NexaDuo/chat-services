@@ -1,0 +1,102 @@
+version: '3.8'
+
+services:
+  evolution-api:
+    image: atendai/evolution-api:v2.1.1
+    container_name: nexaduo-evolution-api
+    restart: unless-stopped
+    env_file: ../.env
+    environment:
+      SERVER_TYPE: http
+      SERVER_PORT: 8080
+      AUTHENTICATION_API_KEY: ${EVOLUTION_AUTHENTICATION_API_KEY}
+      DATABASE_CONNECTION_URI: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/evolution
+      CACHE_REDIS_URI: redis://:${REDIS_PASSWORD}@redis:6379/2
+    volumes:
+      - evolution-instances:/evolution/instances
+    ports:
+      - "8080:8080"
+    networks:
+      - chat-network
+
+  middleware:
+    build:
+      context: ../middleware
+      dockerfile: Dockerfile
+    image: nexaduo/middleware:prod
+    container_name: nexaduo-middleware
+    restart: unless-stopped
+    env_file: ../.env
+    environment:
+      PORT: 4000
+      CHATWOOT_BASE_URL: http://chatwoot-rails:3000
+      CHATWOOT_API_TOKEN: ${CHATWOOT_API_TOKEN}
+      DIFY_BASE_URL: http://dify-api:5001/v1
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/middleware
+      HANDOFF_SHARED_SECRET: ${HANDOFF_SHARED_SECRET}
+    ports:
+      - "4000:4000"
+    networks:
+      - chat-network
+
+  # Observability & Self-healing
+  loki:
+    image: grafana/loki:3.2.0
+    container_name: nexaduo-loki
+    restart: unless-stopped
+    command: -config.file=/etc/loki/loki.yaml
+    volumes:
+      - ../observability/loki/loki.yaml:/etc/loki/loki.yaml:ro
+      - loki-data:/var/loki
+    networks:
+      - chat-network
+
+  promtail:
+    image: grafana/promtail:3.1.0
+    container_name: nexaduo-promtail
+    restart: unless-stopped
+    command: -config.file=/etc/promtail/promtail.yaml
+    volumes:
+      - ../observability/promtail/promtail.yaml:/etc/promtail/promtail.yaml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - chat-network
+
+  grafana:
+    image: grafana/grafana:11.3.0
+    container_name: nexaduo-grafana
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD}
+    volumes:
+      - ../observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "3002:3000"
+    networks:
+      - chat-network
+
+  self-healing-agent:
+    build:
+      context: ../agents/self-healing
+      dockerfile: Dockerfile
+    container_name: nexaduo-self-healing-agent
+    restart: unless-stopped
+    env_file: ../.env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/self_healing
+      LOKI_URL: http://loki:3100
+      MIDDLEWARE_URL: http://middleware:4000
+    networks:
+      - chat-network
+
+volumes:
+  evolution-instances:
+  loki-data:
+  grafana-data:
+
+networks:
+  chat-network:
+    external: true
+    name: ${COMPOSE_PROJECT_NAME:-nexaduo}-network

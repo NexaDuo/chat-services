@@ -1,0 +1,97 @@
+version: '3.8'
+
+services:
+  chatwoot-init:
+    image: chatwoot/chatwoot:v4.1.0
+    container_name: nexaduo-chatwoot-init
+    restart: "no"
+    env_file: ../.env
+    environment:
+      NODE_ENV: production
+      RAILS_ENV: production
+      INSTALLATION_ENV: docker
+      SECRET_KEY_BASE: ${CHATWOOT_SECRET_KEY_BASE}
+      FRONTEND_URL: ${CHATWOOT_FRONTEND_URL}
+      POSTGRES_HOST: ${POSTGRES_HOST:-postgres}
+      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+      POSTGRES_USERNAME: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DATABASE: chatwoot
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/1
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        echo "==> Running db:chatwoot_prepare (idempotent)";
+        bundle exec rails db:chatwoot_prepare;
+        echo "==> Chatwoot DB ready.";
+    networks:
+      - chat-network
+
+  chatwoot-rails:
+    image: chatwoot/chatwoot:v4.1.0
+    container_name: nexaduo-chatwoot-rails
+    restart: unless-stopped
+    depends_on:
+      chatwoot-init:
+        condition: service_completed_successfully
+    env_file: ../.env
+    environment:
+      NODE_ENV: production
+      RAILS_ENV: production
+      INSTALLATION_ENV: docker
+      SECRET_KEY_BASE: ${CHATWOOT_SECRET_KEY_BASE}
+      FRONTEND_URL: ${CHATWOOT_FRONTEND_URL}
+      POSTGRES_HOST: ${POSTGRES_HOST:-postgres}
+      POSTGRES_USERNAME: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DATABASE: chatwoot
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/1
+    ports:
+      - "3000:3000"
+    volumes:
+      - chatwoot-storage:/app/storage
+      - chatwoot-public:/app/public
+    entrypoint: docker/entrypoints/rails.sh
+    command: ["bundle", "exec", "rails", "s", "-p", "3000", "-b", "0.0.0.0"]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/ || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 90s
+    networks:
+      - chat-network
+
+  chatwoot-sidekiq:
+    image: chatwoot/chatwoot:v4.1.0
+    container_name: nexaduo-chatwoot-sidekiq
+    restart: unless-stopped
+    depends_on:
+      - chatwoot-rails
+    env_file: ../.env
+    environment:
+      NODE_ENV: production
+      RAILS_ENV: production
+      INSTALLATION_ENV: docker
+      SECRET_KEY_BASE: ${CHATWOOT_SECRET_KEY_BASE}
+      POSTGRES_HOST: ${POSTGRES_HOST:-postgres}
+      POSTGRES_USERNAME: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DATABASE: chatwoot
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/1
+    volumes:
+      - chatwoot-storage:/app/storage
+      - chatwoot-public:/app/public
+    command: ["bundle", "exec", "sidekiq", "-C", "config/sidekiq.yml"]
+    networks:
+      - chat-network
+
+volumes:
+  chatwoot-storage:
+  chatwoot-public:
+
+networks:
+  chat-network:
+    external: true
+    name: ${COMPOSE_PROJECT_NAME:-nexaduo}-network

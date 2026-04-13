@@ -1,0 +1,121 @@
+version: '3.8'
+
+services:
+  dify-init:
+    image: alpine:latest
+    container_name: nexaduo-dify-init
+    restart: "no"
+    volumes:
+      - dify-api-storage:/app/api/storage
+    command: chown -R 1001:1001 /app/api/storage
+    networks:
+      - chat-network
+
+  dify-api:
+    image: langgenius/dify-api:1.13.3
+    container_name: nexaduo-dify-api
+    restart: unless-stopped
+    depends_on:
+      dify-init:
+        condition: service_completed_successfully
+      dify-sandbox:
+        condition: service_started
+      dify-plugin-daemon:
+        condition: service_started
+      dify-ssrf-proxy:
+        condition: service_started
+    env_file: ../.env
+    environment:
+      MODE: api
+      SECRET_KEY: ${DIFY_SECRET_KEY}
+      DB_USERNAME: ${POSTGRES_USER}
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
+      DB_HOST: ${POSTGRES_HOST:-postgres}
+      DB_DATABASE: dify
+      REDIS_HOST: ${REDIS_HOST:-redis}
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      CELERY_BROKER_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
+      VECTOR_STORE: pgvector
+      PGVECTOR_HOST: ${POSTGRES_HOST:-postgres}
+      PGVECTOR_USER: ${POSTGRES_USER}
+      PGVECTOR_PASSWORD: ${POSTGRES_PASSWORD}
+      PGVECTOR_DATABASE: dify
+      CODE_EXECUTION_ENDPOINT: http://dify-sandbox:8194
+      CODE_EXECUTION_API_KEY: ${DIFY_SANDBOX_API_KEY}
+      PLUGIN_DAEMON_URL: http://dify-plugin-daemon:5002
+      PLUGIN_DAEMON_KEY: ${DIFY_PLUGIN_DAEMON_KEY}
+    volumes:
+      - dify-api-storage:/app/api/storage
+    ports:
+      - "5001:5001"
+    networks:
+      - chat-network
+
+  dify-worker:
+    image: langgenius/dify-api:1.13.3
+    container_name: nexaduo-dify-worker
+    restart: unless-stopped
+    env_file: ../.env
+    environment:
+      MODE: worker
+      SECRET_KEY: ${DIFY_SECRET_KEY}
+      DB_USERNAME: ${POSTGRES_USER}
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
+      DB_HOST: ${POSTGRES_HOST:-postgres}
+      DB_DATABASE: dify
+      REDIS_HOST: ${REDIS_HOST:-redis}
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      CELERY_BROKER_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
+    volumes:
+      - dify-api-storage:/app/api/storage
+    networks:
+      - chat-network
+
+  dify-web:
+    image: langgenius/dify-web:1.13.3
+    container_name: nexaduo-dify-web
+    restart: unless-stopped
+    env_file: ../.env
+    ports:
+      - "3001:3000"
+    networks:
+      - chat-network
+
+  dify-sandbox:
+    image: langgenius/dify-sandbox:0.2.14
+    container_name: nexaduo-dify-sandbox
+    restart: unless-stopped
+    environment:
+      API_KEY: ${DIFY_SANDBOX_API_KEY}
+    networks:
+      - chat-network
+
+  dify-plugin-daemon:
+    image: langgenius/dify-plugin-daemon:0.5.3-local
+    container_name: nexaduo-dify-plugin-daemon
+    restart: unless-stopped
+    env_file: ../.env
+    environment:
+      DB_HOST: ${POSTGRES_HOST:-postgres}
+      DB_USERNAME: ${POSTGRES_USER}
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
+      DB_DATABASE: dify_plugin
+      REDIS_HOST: ${REDIS_HOST:-redis}
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+    networks:
+      - chat-network
+
+  dify-ssrf-proxy:
+    image: ubuntu/squid:latest
+    container_name: nexaduo-dify-ssrf-proxy
+    restart: unless-stopped
+    networks:
+      - chat-network
+
+volumes:
+  dify-api-storage:
+
+networks:
+  chat-network:
+    external: true
+    name: ${COMPOSE_PROJECT_NAME:-nexaduo}-network

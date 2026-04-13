@@ -19,6 +19,10 @@ variable "zone_id" {
   type = string
 }
 
+variable "base_domain" {
+  type = string # e.g. chat.nexaduo.com
+}
+
 variable "proxied" {
   type    = bool
   default = true
@@ -32,6 +36,21 @@ resource "cloudflare_zero_trust_tunnel_cloudflared" "main" {
   account_id = var.account_id
   name       = var.name
   secret     = random_id.tunnel_secret.b64_std
+}
+
+resource "cloudflare_zero_trust_tunnel_cloudflared_config" "config" {
+  account_id = var.account_id
+  tunnel_id  = cloudflare_zero_trust_tunnel_cloudflared.main.id
+
+  config {
+    ingress_rule {
+      hostname = "coolify.${var.base_domain}"
+      service  = "http://localhost:80"
+    }
+    ingress_rule {
+      service = "http_status:404"
+    }
+  }
 }
 
 # CNAME para o painel do Coolify
