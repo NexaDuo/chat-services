@@ -12,7 +12,7 @@ services:
       TZ: ${TZ:-UTC}
     volumes:
       - postgres-data:/var/lib/postgresql/data
-      - ../infrastructure/postgres:/docker-entrypoint-initdb.d:ro
+      - ./01-init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d postgres"]
       interval: 10s
