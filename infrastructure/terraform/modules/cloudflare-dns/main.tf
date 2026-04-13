@@ -8,8 +8,8 @@ terraform {
 }
 
 variable "zone_id" { type = string }
-variable "name"    { type = string } # e.g. chat
-variable "value"   { type = string } # IP address
+variable "name" { type = string }  # e.g. chat
+variable "value" { type = string } # IP address
 
 resource "cloudflare_record" "root" {
   zone_id = var.zone_id
