@@ -16,7 +16,15 @@ module "dns" {
 
   zone_id = var.cloudflare_zone_id
   name    = var.dns_subdomain
-  value   = module.vm.public_ip
+  value   = "${module.tunnel.tunnel_id}.cfargotunnel.com"
+  proxied = true
+}
+
+resource "cloudflare_record" "dify" {
+  zone_id = var.cloudflare_zone_id
+  name    = "dify.chat"
+  content = "${module.tunnel.tunnel_id}.cfargotunnel.com"
+  type    = "CNAME"
   proxied = true
 }
 

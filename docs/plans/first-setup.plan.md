@@ -1,10 +1,11 @@
+<!-- generated-by: gsd-doc-writer -->
+# Blueprint: Omnichannel AI Stack (Dify + Evolution + Chatwoot)
+
 Aqui está o **Blueprint Técnico** atualizado. A grande mudança é a substituição do n8n pelo **Dify**, que assume o papel de "LLMOps" e motor agêntico.
 
 O Dify é tecnicamente superior para RAG e Orquestração de Agentes, e a **Evolution API v2** possui integração nativa com ele, o que reduz a necessidade de "plumbing" manual de webhooks.
 
 ---
-
-# Blueprint: Omnichannel AI Stack (Dify + Evolution + Chatwoot)
 
 ## 1. Stack Tecnológica (Referência 2026)
 
@@ -37,6 +38,17 @@ O Dify Community Edition suporta **apenas um workspace por instalação**. Nossa
 | **Performance** | Recursos compartilhados | CPU/RAM garantidos |
 | **Acesso ao Dify** | Apenas via API (gerenciado) | Acesso total ao Studio pelo cliente |
 | **Uso Recomendado** | PMEs e Startups | Enterprise / Compliance (LGPD) |
+
+### 2.3. Roteamento de Produção e Multi-tenancy
+A stack utiliza os seguintes domínios base em produção:
+- **Chatwoot:** `chat.nexaduo.com`
+- **Dify:** `dify.nexaduo.com`
+
+Para suporte a múltiplos tenants na **Shared Stack**, o roteamento futuro será baseado em caminhos (paths):
+- **Chatwoot:** `chat.nexaduo.com/{tenant}/`
+- **Dify:** `dify.nexaduo.com/{tenant}/`
+
+Um Cloudflare Worker ou Ingress Controller será responsável por injetar os headers de tenant correspondentes.
 
 ## 3. Fluxo Agêntico e MCP (Model Context Protocol)
 
@@ -96,7 +108,7 @@ O Chatwoot é o **Hub**, mas o Dify precisa de um "Adapter" para fechar o loop d
 
 ## 8. Portabilidade e Nuvem
 
-*   **Coolify:** O repositório é desenhado para ser importado no **Coolify**, que gerencia subdomínios (ex: `chat.empresa.com`, `api.empresa.com`, `dify.empresa.com`) e SSL automático via Let's Encrypt.
+*   **Coolify:** O repositório é desenhado para ser importado no **Coolify** (`coolify.nexaduo.com`), que gerencia subdomínios (ex: `chat.nexaduo.com`, `dify.nexaduo.com`) e SSL automático via Let's Encrypt.
 *   **Azure/AWS:** Deploy via `docker-compose` em uma VM Linux (Ubuntu 24.04 LTS), mantendo custo fixo entre **$20 e $40/mês** para a Shared Stack.
 
 ---

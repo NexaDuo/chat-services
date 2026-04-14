@@ -1,6 +1,12 @@
+<!-- generated-by: gsd-doc-writer -->
 # Middleware — Chatwoot ⇄ Dify Adapter
 
 Serviço Node.js/TypeScript (Fastify 5) que fecha o loop de mensagens entre o Chatwoot (hub) e o Dify (cérebro agêntico). É o único lugar onde a lógica de multitenancy por `account_id` é resolvida.
+
+## URLs de Produção
+
+- **Endpoint Webhook:** `https://api.nexaduo.com/webhooks/chatwoot` <!-- VERIFY: check if middleware is exposed at api.nexaduo.com -->
+- **Endpoint Handoff:** `https://api.nexaduo.com/tools/handoff`
 
 ## Responsabilidades
 
@@ -33,7 +39,7 @@ Serviço Node.js/TypeScript (Fastify 5) que fecha o loop de mensagens entre o Ch
 | `HANDOFF_SHARED_SECRET` | ✅ | Segredo ≥16 chars para o header `x-handoff-secret` |
 | `HANDOFF_LABEL` | não | Default `atendimento-humano` |
 
-> O `CHATWOOT_API_TOKEN` **só existe depois do primeiro setup** do Chatwoot. Crie o super-admin na UI (`http://localhost:3000`), copie o token em *Profile Settings → Access Token*, coloque no `.env` e rode `docker compose restart middleware`.
+> O `CHATWOOT_API_TOKEN` **só existe depois do primeiro setup** do Chatwoot. Crie o super-admin na UI (`chat.nexaduo.com`), copie o token em *Profile Settings → Access Token*, coloque no `.env` e rode `docker compose restart middleware`.
 
 ## Executar local (sem Docker)
 

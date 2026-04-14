@@ -1,3 +1,4 @@
+<!-- generated-by: gsd-doc-writer -->
 # CLAUDE.md
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
@@ -16,10 +17,11 @@ WhatsApp ──▶ Evolution API ──▶ Chatwoot (Webhook) ──▶ Middlewa
                                       └─────── response ─────┘
 ```
 
-- **Chatwoot** — inbox, CRM, ticketing, human handoff. Single source of truth.
+- **Coolify** — [coolify.nexaduo.com](https://coolify.nexaduo.com) (Orquestração e Deploy).
+- **Chatwoot** — [chat.nexaduo.com](https://chat.nexaduo.com). Inbox, CRM, ticketing, human handoff. Single source of truth.
+- **Dify** — [dify.nexaduo.com](https://dify.nexaduo.com). Agentic engine + RAG. Supports MCP bidirectionally.
 - **Evolution API v2.1+** — WhatsApp/Instagram bridge.
 - **Middleware (Adapter)** — Node.js service that translates Chatwoot webhooks to Dify API calls and sends responses back to Chatwoot. Centralized config provider for internal agents.
-- **Dify (v1.2+)** — agentic engine + RAG. Supports MCP bidirectionally.
 - **Self-Healing Agent** — Node.js agent that analyzes Loki logs via Dify to find root causes of errors.
 - **Observability** — Loki, Promtail, Prometheus, and Grafana (centralized logs and metrics).
 - **Postgres 16+** — shared by Chatwoot, Dify, and Middleware via separate databases.
@@ -44,6 +46,10 @@ The stack uses a **hybrid configuration model**:
 
 1. **Tier Shared (default)** — one Dify CE, one app per client. Chatwoot `account_id` maps to a `DIFY_API_KEY` in the middleware.
 2. **Tier Dedicated** — full Dify stack per tenant.
+
+**Routing Strategy (Future):**
+- **Chatwoot:** `chat.nexaduo.com/{tenant}/`
+- **Dify:** `dify.nexaduo.com/{tenant}/`
 
 **Conversational memory key:** Dify is called with `user = {account_id}:{contact_id}` from Chatwoot.
 

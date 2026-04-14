@@ -1,9 +1,23 @@
+<!-- generated-by: gsd-doc-writer -->
 # chat-services — NexaDuo Omnichannel AI Stack
 
 Stack de atendimento omnichannel **production-ready no dia zero**: Chatwoot como hub único, Evolution API para WhatsApp/Instagram, Dify como cérebro agêntico (RAG + MCP) e um middleware Node.js que fecha o loop Chatwoot ⇄ Dify.
 
 > Blueprint completo em pt-BR: [`docs/plans/first-setup.plan.md`](docs/plans/first-setup.plan.md).
 > Convenções para contribuir com IA: [`CLAUDE.md`](CLAUDE.md).
+
+## URLs de Produção
+
+A stack é orquestrada via Coolify e exposta nos seguintes domínios:
+
+- **Coolify (Painel):** [coolify.nexaduo.com](https://coolify.nexaduo.com)
+- **Chatwoot (Inbox/CRM):** [chat.nexaduo.com](https://chat.nexaduo.com)
+- **Dify (IA/Agentes):** [dify.nexaduo.com](https://dify.nexaduo.com)
+
+### Estratégia de Multi-tenancy (Futuro)
+Para suporte a múltiplos tenants em uma stack compartilhada, o roteamento será baseado em paths:
+- **Chatwoot:** `chat.nexaduo.com/{tenant}/`
+- **Dify:** `dify.nexaduo.com/{tenant}/`
 
 ## Arquitetura
 
@@ -45,7 +59,7 @@ openssl rand -hex 32    # REDIS_PASSWORD, POSTGRES_PASSWORD,
                         # HANDOFF_SHARED_SECRET
 ```
 
-Preencha também `AZURE_OPENAI_*` e `CHATWOOT_FRONTEND_URL` / `DIFY_CONSOLE_WEB_URL` com as URLs públicas que o Coolify/Traefik vai expor.
+Preencha também `AZURE_OPENAI_*` e `CHATWOOT_FRONTEND_URL` / `DIFY_CONSOLE_WEB_URL` com as URLs públicas (`chat.nexaduo.com` e `dify.nexaduo.com`).
 
 ### 2. Validar o compose
 
@@ -69,13 +83,13 @@ docker compose ps    # todos os healthy em ~2 min (dify-api leva até 120s no st
 
 ### 5. Primeiro login (manual, uma vez só)
 
-| Serviço    | URL local              | O que fazer                                               |
-| ---------- | ---------------------- | --------------------------------------------------------- |
-| Chatwoot   | `http://localhost:3000`  | Crie o super-admin. Vá em *Profile → Access Token* e copie. |
-| Dify       | `http://localhost:3001`  | Wizard de setup. Configure **Azure OpenAI** em *Settings → Model Provider*. Crie um App (Chatflow/Agent) e copie a **Service API Key**. |
-| Evolution  | `http://localhost:8080/manager` | Autentique com `EVOLUTION_AUTHENTICATION_API_KEY`. Crie uma instância WhatsApp (QR code). |
-| Grafana    | `http://localhost:3002`  | Login `GRAFANA_ADMIN_*`. Dashboard "NexaDuo — Chat Services" já provisionado. |
-| Prometheus | `http://localhost:9090`  | — |
+| Serviço    | URL local              | URL Produção | O que fazer                                               |
+| ---------- | ---------------------- | ------------ | --------------------------------------------------------- |
+| Chatwoot   | `http://localhost:3000`  | `chat.nexaduo.com` | Crie o super-admin. Vá em *Profile → Access Token* e copie. |
+| Dify       | `http://localhost:3001`  | `dify.nexaduo.com` | Wizard de setup. Configure **Azure OpenAI** em *Settings → Model Provider*. Crie um App (Chatflow/Agent) e copie a **Service API Key**. |
+| Evolution  | `http://localhost:8080/manager` | — | Autentique com `EVOLUTION_AUTHENTICATION_API_KEY`. Crie uma instância WhatsApp (QR code). |
+| Grafana    | `http://localhost:3002`  | — | Login `GRAFANA_ADMIN_*`. Dashboard "NexaDuo — Chat Services" já provisionado. |
+| Prometheus | `http://localhost:9090`  | — | — |
 
 ### 6. Conectar middleware ao Chatwoot e ao Dify
 

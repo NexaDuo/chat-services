@@ -1,7 +1,8 @@
+<!-- generated-by: gsd-doc-writer -->
 # Plano de Hospedagem — NexaDuo Chat Services
 
 ## Objetivo
-Definir uma estratégia de hospedagem **mais barata possível** (região US), com **infra 100% via código** (Terraform), atualização simples via Docker Compose e suporte a multi-tenant com **Cloudflare** roteando URLs do tipo `https://chat.nexaduo.com/{tenant_id}/app` para o Chatwoot.
+Definir uma estratégia de hospedagem **mais barata possível** (região US), com **infra 100% via código** (Terraform), atualização simples via Docker Compose e suporte a multi-tenant com **Cloudflare** roteando URLs do tipo `https://chat.nexaduo.com/{tenant}/` para o Chatwoot.
 
 ## Estado atual (repo)
 - Stack pronta via **docker-compose** com Chatwoot, Evolution API, Dify, Middleware, Postgres+pgvector e Redis.
@@ -9,11 +10,16 @@ Definir uma estratégia de hospedagem **mais barata possível** (região US), co
 - Backup via `scripts/backup.sh`.
 - Proxy externo esperado (Coolify/Traefik) — sem nginx interno.
 
+## URLs de Produção
+- **Coolify:** `coolify.nexaduo.com`
+- **Dify:** `dify.nexaduo.com`
+- **Chatwoot:** `chat.nexaduo.com`
+
 ## Premissas
 - Região de referência: **US** (comparativo de menor custo).
 - **Janela de manutenção curta** aceita para atualizações (sem zero-downtime).
 - Infra declarada em **Terraform**.
-- Cloudflare pode ser usado para **rotear por tenant**.
+- Cloudflare é usado para **roteamento por tenant baseado em paths**.
 - Provedor principal recomendado: **GCP** (menor custo estimado no comparativo).
 
 ## Comparativo de custo (VM 4 vCPU / 16 GB RAM, on-demand, Linux, US)
@@ -38,7 +44,7 @@ Definir uma estratégia de hospedagem **mais barata possível** (região US), co
 
 ## Racional de Decisão: Coolify
 A escolha do Coolify como orquestrador baseia-se nos seguintes pontos:
-- **Experiência PaaS (Heroku/Vercel) "Self-Hosted":** Oferece interface visual para gestão de containers, variáveis de ambiente e SSL (Let's Encrypt) sem o custo de serviços gerenciados.
+- **Experiência PaaS (Heroku/Vercel) "Self-Hosted":** Oferece interface visual para gestão de containers, variáveis de ambiente e SSL (Let's Encrypt) sem o custo de serviços gerenciados. URL: `coolify.nexaduo.com`.
 - **Paridade Local/Cloud:** O Coolify é open-source e idêntico em qualquer ambiente. É possível rodar a mesma versão localmente (via Docker) para testes idênticos ao ambiente de produção.
 - **Eficiência de Recursos (Docker vs Kubernetes):** O Coolify opera sobre **Docker Engine/Swarm**. Ao contrário do Kubernetes, que possui um "control plane" pesado, o Docker permite que quase 100% dos 16GB de RAM da VM sejam dedicados às aplicações (Dify, Chatwoot, etc.).
 - **Escalabilidade Manual vs Automática:** Para manter o custo baixo, aceita-se a limitação de **não possuir auto-scaling nativo** (infra elástica). O escalonamento é feito via verticalização da VM ou aumento manual de réplicas no painel, o que atende ao perfil de custo do projeto.
@@ -56,17 +62,14 @@ A escolha do Coolify como orquestrador baseia-se nos seguintes pontos:
 - Validar tags antes do deploy
 
 ## Multitenancy via Cloudflare
-**Objetivo:** `https://chat.nexaduo.com/{tenant_id}/app` → Chatwoot.
+**Objetivo:** Roteamento baseado em paths para múltiplos tenants.
 
-Opções:
-1. **Cloudflare Workers**: reescrever URL e adicionar header `X-Tenant-Id` para o middleware (ou para o Chatwoot via proxy).
-2. **Cloudflare Rules**: reescrita simples de path para `/app` no Chatwoot.
+- **Chatwoot:** `https://chat.nexaduo.com/{tenant}/` → Roteado para o hub central com identificador de tenant.
+- **Dify:** `https://dify.nexaduo.com/{tenant}/` → Acesso isolado logicamente por tenant.
 
-Recomendado:
-- Worker simples que:
-  - extrai `{tenant_id}` do path
-  - reescreve para `/app`
-  - injeta header `x-tenant-id` (futuro uso no middleware)
+**Estratégia:**
+- **Cloudflare Workers**: reescrever a URL para remover o prefixo do tenant antes de enviar ao backend e injetar o header `X-Tenant-Id` para o middleware (ou para o Chatwoot/Dify via proxy).
+- O backend (Middleware) utiliza o `X-Tenant-Id` ou mapeia o `account_id` vindo do payload para garantir o isolamento lógico.
 
 ## Infra via código (Terraform)
 **MVP GCP:**
@@ -74,7 +77,7 @@ Recomendado:
 - `google_compute_firewall` (SSH + portas 80/443)
 - `google_compute_address` (IP estático)
 - `google_compute_disk` (SSD)
-- `cloudflare_record` (DNS)
+- `cloudflare_record` (DNS para `coolify`, `chat`, `dify`)
 
 **Estrutura sugerida:**
 ```
@@ -116,7 +119,7 @@ Recomendado:
 
 **Notas/assunções:**
 - GCP como provedor padrão, VM única 4 vCPU/16GB.
-- Cloudflare Worker faz rewrite para `/app` e injeta header `x-tenant-id`.
+- Cloudflare Worker faz rewrite e injeta header `x-tenant-id`.
 - Coolify local usado apenas para paridade de deploy (sem executar aqui).
 
 ## Notas

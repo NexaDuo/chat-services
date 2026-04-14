@@ -21,7 +21,7 @@ The recommended architectural approach is a **Hybrid Edge-Origin Architecture**.
 *   **The Conflict:** The initial plan for path-based routing (`https://chat.nexaduo.com/{tenant_id}/app`) directly conflicts with the architectural design of Chatwoot and Dify.
     *   **Chatwoot:** Extremely brittle on subpaths; assets and ActionCable (WebSockets) frequently break.
     *   **Dify:** Next.js base paths are set at **build-time**, meaning a single Docker image cannot easily serve multiple tenants on different paths without complex rebuilding.
-*   **The Resolution:** Pivot to **subdomain-based routing** (`{tenant}.chat.nexaduo.com`). Cloudflare Workers can still inject the `X-Tenant-ID` header based on the subdomain to simplify backend middleware logic.
+- **Final Resolution (2026-04-14):** Pivot to **path-based routing** (`chat.nexaduo.com/{tenant}/` and `dify.nexaduo.com/{tenant}`). While native application support for subpaths is brittle, the platform will leverage **Cloudflare Workers** at the edge to handle sophisticated URL rewriting and header injection, effectively abstracting the subpath complexity from the core services.
 
 ### 3. Critical Pitfalls
 *   **Resource Spikes:** Dify's vector databases and Sidekiq workers can cause OOM (Out of Memory) errors on 8GB instances. A minimum of 4GB swap space is required.

@@ -5,8 +5,8 @@ import path from 'path';
 // Load .env from root
 dotenv.config({ path: path.resolve(process.cwd(), '../.env') });
 
-const CHATWOOT_URL = process.env.CHATWOOT_FRONTEND_URL || 'http://localhost:3000';
-const DIFY_URL = process.env.DIFY_CONSOLE_WEB_URL || 'http://localhost:3001';
+const CHATWOOT_URL = process.env.CHATWOOT_FRONTEND_URL || 'https://chat.nexaduo.com';
+const DIFY_URL = process.env.DIFY_CONSOLE_WEB_URL || 'http://136.111.120.181:3001';
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'alexandre@nexaduo.com';
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'NexaDuo@2025';
 

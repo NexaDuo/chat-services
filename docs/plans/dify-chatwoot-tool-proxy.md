@@ -1,3 +1,4 @@
+<!-- generated-by: gsd-doc-writer -->
 # Plano de Arquitetura: Proxy de Ferramentas (Dify → Middleware → Chatwoot)
 
 Este documento descreve a estratégia para permitir que agentes do Dify atualizem informações no Chatwoot, em um ambiente multi-tenant, de forma segura, auditável e escalável.
@@ -123,7 +124,7 @@ Permite dashboards "top-N tenants por chamada de tool" e alertas em taxa de erro
 
 Schema OpenAPI publicado em `dify-apps/tools/chatwoot-proxy.v1.yaml` (versionado no Git):
 
-- `servers.url`: `https://<middleware-url>`
+- `servers.url`: `https://api.nexaduo.com` <!-- VERIFY: check if middleware is exposed at api.nexaduo.com -->
 - `paths`: `/tools/chatwoot/update-contact` → `operationId: updateContact`
 - `components.securitySchemes`: `ApiKeyAuth` (header `x-tool-secret`).
 - `components.schemas`: espelha exatamente o Zod acima.

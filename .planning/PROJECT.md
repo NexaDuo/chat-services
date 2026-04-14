@@ -15,6 +15,6 @@ Building a low-cost, multi-tenant AI-driven chat platform leveraging Chatwoot, D
 
 ## Constraints
 - **Low-Cost Goal:** Use cost-efficient GCP instance types (e2-standard-4) and single-node orchestration to minimize overhead.
-- **Subdomain Routing:** Avoid path-based routing (e.g., `/tenant/app`) for Chatwoot due to known breakage; use `{tenant}.chat.nexaduo.com` instead.
+- **Path-based Routing:** Tenants are accessed via paths on unified subdomains: `chat.nexaduo.com/{tenant}/` (Chatwoot) and `dify.nexaduo.com/{tenant}` (Dify). This is managed via Cloudflare Workers at the edge to route to internal shared instances.
 - **Portless Ingress:** Use Cloudflare Tunnels (Argo) to secure the origin and avoid opening firewall ports (except SSH).
 - **Single Provider:** Stick to GCP as the primary cloud provider (based on initial hosting plan).

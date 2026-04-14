@@ -1,6 +1,18 @@
+<!-- generated-by: gsd-doc-writer -->
 # Provisionamento de tenants
 
 Automação (semi-manual) para criar um novo tenant (cliente) no stack NexaDuo.
+
+## URLs de Produção (Referência)
+
+- **Chatwoot:** [chat.nexaduo.com](https://chat.nexaduo.com)
+- **Dify:** [dify.nexaduo.com](https://dify.nexaduo.com)
+- **Evolution API (Manager):** `https://chat.nexaduo.com/evolution/manager` <!-- VERIFY: check correct public URL for evolution manager -->
+
+### Estratégia de Multi-tenancy (Futuro)
+O roteamento para múltiplos tenants será baseado em paths:
+- **Chatwoot:** `chat.nexaduo.com/{tenant}/`
+- **Dify:** `dify.nexaduo.com/{tenant}/`
 
 ## Fluxo por tenant
 
@@ -25,9 +37,9 @@ Documentação oficial: [Chatwoot Platform API](https://developers.chatwoot.com/
 ## Uso do script
 
 ```bash
-export CHATWOOT_URL=http://localhost:3000
+export CHATWOOT_URL=https://chat.nexaduo.com
 export CHATWOOT_PLATFORM_TOKEN=<token>
-export DIFY_URL=http://localhost:3001   # só cosmético, o script só printa
+export DIFY_URL=https://dify.nexaduo.com   # só cosmético, o script só printa
 
 ./provisioning/create-tenant.sh "Acme Corp" admin@acme.com "João Silva"
 ```
@@ -51,8 +63,8 @@ docker compose logs -f middleware   # conferir "middleware: listening" + tenants
 
 ## Evolution API — nova instância WhatsApp
 
-1. Abra `http://localhost:8080/manager` (use `EVOLUTION_AUTHENTICATION_API_KEY` como autenticação).
-2. Crie uma nova instance, escolha Chatwoot como integração, aponte para `http://chatwoot-rails:3000` + `account_id` criado + token do bot user do Chatwoot.
+1. Abra o Manager (ex: `http://localhost:8080/manager` ou a URL pública configurada).
+2. Crie uma nova instance, escolha Chatwoot como integração, aponte para `http://chatwoot-rails:3000` (rede Docker interna) + `account_id` criado + token do bot user do Chatwoot.
 3. Escaneie o QR code.
 
 Alternativa via API (sem UI):
