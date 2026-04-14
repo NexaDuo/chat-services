@@ -1,89 +1,82 @@
 # External Integrations
 
-**Analysis Date:** 2025-01-24
+**Analysis Date:** 2026-04-14
 
 ## APIs & External Services
 
 **Chat Hub:**
-- Chatwoot - Omnichannel customer service hub.
-  - SDK/Client: Axios (Custom client in `middleware/src/chatwoot.ts`).
+- Chatwoot - Omnichannel customer service.
+  - SDK/Client: Axios (Middleware).
   - Auth: `CHATWOOT_API_TOKEN`.
 
-**LLM Orchestration:**
-- Dify - Agent and RAG platform.
-  - SDK/Client: Axios (Custom client in `middleware/src/dify.ts`).
-  - Auth: `DIFY_API_KEY` (per-tenant) and `DIFY_SELF_HEALING_API_KEY`.
+**AI Orchestration:**
+- Dify - RAG and Agent engine.
+  - SDK/Client: Axios (Middleware).
+  - Auth: Per-tenant API keys.
 
-**Messaging Gateway:**
-- Evolution API - Bridge for WhatsApp and Instagram.
-  - Auth: `EVOLUTION_AUTHENTICATION_API_KEY`.
+**Edge & Connectivity:**
+- Cloudflare Tunnel (Argo) - Portless origin connectivity.
+- Cloudflare Workers (Deferred/Planned) - Path-based edge routing.
 
 ## Data Storage
 
 **Databases:**
-- PostgreSQL 16 (shared)
-  - Connection: `DATABASE_URL` / `POSTGRES_HOST`.
-  - Client: `pg` (custom logic) and ORM-less raw SQL in custom services.
-
-**Vector Store:**
-- pgvector (via shared PostgreSQL) - Used by Dify for RAG.
+- PostgreSQL 16 (on-instance via Docker).
+  - Client: `pg` (Node.js).
+  - Features: `pgvector` for AI similarity search.
 
 **Caching:**
-- Redis 7 (shared)
-  - Connection: `REDIS_URL`.
+- Redis 7 (on-instance via Docker).
+  - Used by: Chatwoot Sidekiq, Dify Celery.
 
 **File Storage:**
+- Google Cloud Storage (GCS) - Backup and Terraform remote state.
 - Local filesystem (via Docker volumes).
 
 ## Authentication & Identity
 
 **Auth Provider:**
-- Custom / Shared Secret
-  - Implementation: `HANDOFF_SHARED_SECRET` used for service-to-service communication between `middleware` and `self-healing-agent`.
+- Custom Shared Secret (`HANDOFF_SHARED_SECRET`) for internal service calls.
+- API Key based auth for external service SDKs.
 
 ## Monitoring & Observability
 
+**Error Tracking & Logs:**
+- Loki - Log aggregation.
+- Promtail - Log scraping.
+- Grafana - Visualization.
+
 **Metrics:**
-- Prometheus - Scrapes metrics from `/metrics` endpoints.
-- OpenTelemetry (OTEL) - Used by Dify to push traces/metrics.
-
-**Logs:**
-- Loki - Log aggregation service.
-- Promtail - Log scraping agent for Docker.
-
-**Dashboards:**
-- Grafana - Visualization for metrics, logs, and database insights.
+- Prometheus - Metric scraping from app endpoints (`/metrics`).
 
 ## CI/CD & Deployment
 
 **Hosting:**
-- Docker Compose based, typically behind a reverse proxy (Coolify/Traefik).
+- Google Cloud Platform (GCP) Compute Engine.
+- Coolify v4 for container orchestration.
 
-**CI Pipeline:**
-- Not explicitly configured in the repo (standard Docker build).
+**IaC:**
+- Terraform for GCP VM, GCS, Cloudflare DNS, and Cloudflare Tunnels.
 
 ## Environment Configuration
 
 **Required env vars:**
-- `POSTGRES_USER`, `POSTGRES_PASSWORD`
-- `CHATWOOT_API_TOKEN`, `CHATWOOT_SECRET_KEY_BASE`
-- `DIFY_SECRET_KEY`, `DIFY_SANDBOX_API_KEY`
-- `EVOLUTION_AUTHENTICATION_API_KEY`
-- `HANDOFF_SHARED_SECRET`
+- `GCP_PROJECT_ID`, `CLOUDFLARE_API_TOKEN` (Terraform).
+- `DATABASE_URL`, `REDIS_URL` (Middleware/Apps).
+- `CHATWOOT_API_TOKEN`, `DIFY_API_KEY` (Middleware).
 
 **Secrets location:**
-- Managed via `.env` file and passed to containers.
+- GCP Secret Manager (Planned) / `.env` (Current).
 
 ## Webhooks & Callbacks
 
 **Incoming:**
-- `middleware/`: `/webhooks/chatwoot` - Receives incoming messages from Chatwoot.
-- `middleware/`: `/handoff` - Receives handoff requests from Dify tools.
+- `middleware:3001/webhooks/chatwoot` - Message events.
+- `middleware:3001/handoff` - Dify tool calls.
 
 **Outgoing:**
-- Chatwoot API calls (post messages).
-- Dify API calls (chat/agent requests).
+- Messaging events to external Chatwoot/Dify endpoints via Cloudflare Tunnel.
 
 ---
 
-*Integration audit: 2025-01-24*
+*Integration audit: 2026-04-14*

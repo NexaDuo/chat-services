@@ -1,44 +1,62 @@
 # Codebase Structure
 
-**Analysis Date:** 2025-01-24
+**Analysis Date:** 2026-04-14
 
 ## Directory Layout
 
 ```
 chat-services/
+├── .planning/
+│   ├── phases/          # Project execution phases (current & past)
+│   │   ├── 01-foundation/
+│   │   ├── 02-management-and-edge-connectivity/
+│   │   ├── 04-automated-provisioning/    # (Empty/Pending)
+│   │   └── 05-core-service-deployment/   # (Active/Completed)
+│   ├── codebase/        # Analysis and mapping documents
+│   ├── research/        # Initial technology research
+│   ├── PROJECT.md       # Core project definition
+│   ├── ROADMAP.md       # High-level timeline and goals
+│   ├── STATE.md         # Current execution state
+│   └── REQUIREMENTS.md  # Detailed technical requirements
 ├── agents/
 │   └── self-healing/    # LLM-powered error analysis agent
+├── automation/          # Initial setup and lifecycle scripts
+├── deploy/              # Docker Compose templates for services
 ├── dify-apps/           # Dify workflow/app exports (YAML)
 ├── docs/                # Planning and sample documentation
 ├── infrastructure/
-│   └── postgres/        # DB initialization scripts
+│   ├── postgres/        # DB initialization scripts
+│   └── terraform/       # Infrastructure as Code (GCP, Cloudflare)
 ├── middleware/          # Chatwoot ⇄ Dify adapter (Node.js/TS)
 ├── observability/       # Grafana, Loki, Prometheus, OTEL configs
-├── provisioning/        # Deployment and tenant setup scripts
-├── scripts/             # Operational scripts (backup, etc.)
-└── docker-compose.yml   # Full stack orchestration
+├── provisioning/        # Tenant setup scripts
+├── scripts/             # Operational scripts (backup, validation)
+└── validation/          # Audit and validation scripts
 ```
 
 ## Directory Purposes
 
-**agents/self-healing/:**
-- Purpose: Polling Loki for errors and analyzing them with Dify.
-- Contains: TypeScript source code, Dockerfile, and package configuration.
-- Key files: `agents/self-healing/src/index.ts`.
+**[.planning/phases/]:**
+- Purpose: Historical and active plan records.
+- Note: Phase numbering is currently inconsistent between the file system and roadmap.
+- Key files: `.planning/phases/05-core-service-deployment/04-PLAN.md` (Wait, yes, the numbering is shifted).
+
+**.planning/codebase/:**
+- Purpose: Source-of-truth for the current codebase mapping.
+- Contains: `ARCHITECTURE.md`, `STRUCTURE.md`, `STACK.md`, `INTEGRATIONS.md`, `CONCERNS.md`, `CONVENTIONS.md`, `TESTING.md`.
+
+**infrastructure/terraform/:**
+- Purpose: Manages all cloud and edge infrastructure.
+- Contains: `envs/production` for the live environment and `modules/` for reusable GCP/Cloudflare components.
 
 **middleware/:**
 - Purpose: The core logic for routing messages between platforms.
 - Contains: Fastify handlers, API clients, and tenant management.
 - Key files: `middleware/src/index.ts`, `middleware/src/handlers/chatwoot-webhook.ts`.
 
-**observability/:**
-- Purpose: Configuration and provisioning for the observability stack.
-- Contains: YAML configs and Grafana dashboard JSONs.
-- Key files: `observability/prometheus/prometheus.yml`, `observability/grafana/provisioning/dashboards/chat-services.json`.
-
-**infrastructure/postgres/:**
-- Purpose: Database schema setup for all services.
-- Key files: `infrastructure/postgres/01-init.sql`.
+**deploy/:**
+- Purpose: Modular Docker Compose files used by Coolify to orchestrate services.
+- Key files: `docker-compose.chatwoot.yml`, `docker-compose.dify.yml`, `docker-compose.shared.yml`.
 
 ## Key File Locations
 
@@ -47,49 +65,52 @@ chat-services/
 - `agents/self-healing/src/index.ts`: Agent polling loop entry.
 
 **Configuration:**
-- `.env.example`: Template for all environment variables.
-- `middleware/src/config.ts`: Configuration parsing and tenant resolution.
+- `.planning/ROADMAP.md`: Project roadmap.
+- `.planning/STATE.md`: Current execution state.
+- `infrastructure/terraform/envs/production/terraform.tfvars`: Infrastructure variables.
 
 **Core Logic:**
 - `middleware/src/chatwoot.ts`: Chatwoot API wrapper.
 - `middleware/src/dify.ts`: Dify API wrapper.
 
 **Testing:**
-- Not detected (No dedicated `test/` or `*.test.ts` files found in the current tree).
+- `validation/phase2_audit.sh`: Script for auditing infrastructure state.
+- (Note: No standard unit test suites found yet).
 
 ## Naming Conventions
 
 **Files:**
 - TypeScript: Kebab-case (e.g., `chatwoot-webhook.ts`).
-- Config: Snake-case or kebab-case (e.g., `01-init.sql`, `config.yaml`).
+- Terraform: Kebab-case (e.g., `cloudflare-dns`).
+- Scripts: Kebab-case or snake_case (e.g., `create-tenant.sh`, `phase2_audit.sh`).
 
 **Directories:**
 - Kebab-case (e.g., `self-healing`, `dify-apps`).
 
 ## Where to Add New Code
 
+**New Phase/Plan:**
+- Location: `.planning/phases/` (Follow naming convention: `[XX]-[phase-name]/[XX]-[YY]-PLAN.md`).
+
+**New Infrastructure Resource:**
+- Location: `infrastructure/terraform/modules/` or `infrastructure/terraform/envs/production/`.
+
 **New Feature (Chat logic):**
-- Primary code: `middleware/src/handlers/` for new endpoints or logic branches.
-- Client logic: `middleware/src/` if it involves a new external service.
+- Implementation: `middleware/src/handlers/` or `middleware/src/` for core logic.
 
-**New Agent/Worker:**
-- Implementation: Create a new directory under `agents/` with its own `Dockerfile` and `package.json`.
-
-**New Dashboard/Metric:**
-- Grafana: Add JSON to `observability/grafana/provisioning/dashboards/`.
-- Prometheus: Update `observability/prometheus/prometheus.yml`.
+**New Deployment Service:**
+- Location: `deploy/` for the compose file, then referenced in Terraform.
 
 ## Special Directories
 
 **dify-apps/:**
 - Purpose: Holds the source-of-truth for Dify application configurations.
-- Generated: No (manually exported from Dify UI).
 - Committed: Yes.
 
-**infrastructure/postgres/:**
-- Purpose: Auto-executed by the Postgres container on first run to create databases and extensions.
+**infrastructure/terraform/:**
+- Purpose: Primary infrastructure definition.
 - Committed: Yes.
 
 ---
 
-*Structure analysis: 2025-01-24*
+*Structure analysis: 2026-04-14*

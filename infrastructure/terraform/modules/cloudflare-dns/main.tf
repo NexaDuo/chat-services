@@ -31,11 +31,3 @@ resource "cloudflare_record" "root" {
   type    = "CNAME"
   proxied = var.proxied
 }
-
-resource "cloudflare_record" "wildcard" {
-  zone_id = var.zone_id
-  name    = "*.${var.name}"
-  content = var.value
-  type    = "CNAME"
-  proxied = var.proxied
-}

@@ -64,7 +64,12 @@ variable "dns_subdomain" {
   default = "chat"
 }
 
+variable "backup_bucket_name" {
+  type    = string
+  default = "nexaduo-coolify-backups"
+}
+
 variable "base_domain" {
   type    = string
-  default = "chat.nexaduo.com"
+  default = "nexaduo.com"
 }

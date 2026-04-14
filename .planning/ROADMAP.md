@@ -4,29 +4,11 @@
 
 - [x] **Phase 1: Foundation (Terraform & GCP)** - Provision core infrastructure on GCP using Infrastructure as Code. (Completed: 2025-01-24)
 - [x] **Phase 2: Management & Edge Connectivity** - Setup Coolify and secure Cloudflare Tunnels for portless origin access. (Completed: 2025-01-24)
-- [x] **Phase 3: Edge Logic & Path Routing** - Implement Cloudflare Workers for header injection and path-based multi-tenant routing. (Completed: 2025-01-24)
+- [ ] **Phase 3: Edge Logic & Path Routing** - Implement Cloudflare Workers for header injection and path-based multi-tenant routing. (Current Focus)
 - [ ] **Phase 4: Automated Provisioning** - Automate tenant lifecycle management and resource allocation.
-- [x] **Phase 5: Core Service Deployment** - Deploy Chatwoot, Dify, and Middleware in a multi-tenant configuration. (Completed: 2026-04-14)
+- [x] **Phase 5: Core Service Deployment** - Deploy Chatwoot, Dify, and Middleware in a multi-tenant configuration. (Manually Completed: 2026-04-14)
 
 ## Phase Details
-
-### Phase 1: Foundation (Terraform & GCP)
-**Goal**: Establish a reproducible, cost-effective infrastructure baseline on Google Cloud Platform.
-**Depends on**: Nothing
-**Requirements**: INFRA-01, INFRA-02, INFRA-03
-**Success Criteria** (what must be TRUE):
-  1. GCP Compute Instance (e2-standard-4) is provisioned and accessible via SSH.
-  2. VPC and Firewall rules restrict all non-essential ingress traffic.
-  3. Persistent SSD storage is successfully attached and ready for application data.
-
-### Phase 2: Management & Edge Connectivity
-**Goal**: Install the orchestration layer and establish secure, portless connectivity to Cloudflare.
-**Depends on**: Phase 1
-**Requirements**: INFRA-04, INFRA-05, ROUTE-01, ROUTE-04
-**Success Criteria** (what must be TRUE):
-  1. Coolify v4 dashboard is accessible via a secure Cloudflare-managed domain.
-  2. All ingress traffic to the GCP VM flows exclusively through Cloudflare Tunnels.
-  3. DNS records are configured and pointing to Cloudflare.
 
 ### Phase 3: Edge Logic & Path Routing
 **Goal**: Implement tenant identification and routing logic at the network edge to support multiple tenants via paths.
@@ -36,6 +18,7 @@
   1. Request to `chat.nexaduo.com/alpha/` results in `X-Tenant-ID: alpha` header reaching the origin.
   2. Cloudflare Worker successfully maps paths to the corresponding origin services.
   3. Edge logic correctly handles WebSocket upgrades for Chatwoot's real-time features.
+**Plans**: [03-RESEARCH.md](.planning/phases/03-edge-logic/03-RESEARCH.md)
 
 ### Phase 4: Automated Provisioning
 **Goal**: Streamline the onboarding of new tenants through automated infrastructure updates.
@@ -55,7 +38,7 @@
   1. Chatwoot is fully functional (including assets and WebSockets) under a tenant-specific path.
   2. Dify is accessible and able to communicate with the Middleware bridge.
   3. Observability dashboards (Grafana) show live metrics from all deployed services.
-**Plans**: [05-PLAN.md](.planning/phases/05-core-service-deployment/05-PLAN.md)
+**Status**: Manually completed as a Proof of Concept (PoC) before full automation.
 
 ## Progress
 
@@ -63,6 +46,6 @@
 |-------|----------------|--------|-----------|
 | 1. Foundation | 1/1 | Complete | 2025-01-24 |
 | 2. Management | 1/1 | Complete | 2025-01-24 |
-| 3. Edge Logic | 1/1 | Complete | 2025-01-24 |
+| 3. Edge Logic | 0/1 | Not started | - |
 | 4. Automated Provisioning | 0/1 | Not started | - |
-| 5. Core Service Deployment | 1/1 | Complete | 2026-04-14 |
+| 5. Core Service Deployment | 1/1 | Complete (Manual) | 2026-04-14 |

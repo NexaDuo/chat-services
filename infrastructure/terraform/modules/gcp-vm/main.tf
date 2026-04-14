@@ -74,18 +74,6 @@ resource "google_compute_firewall" "allow_ssh_iap" {
   source_ranges = ["35.235.240.0/20"] # Google IAP range
 }
 
-resource "google_compute_firewall" "allow_http_https" {
-  name    = "${var.name}-allow-http-https"
-  network = google_compute_network.vpc.name
-
-  allow {
-    protocol = "tcp"
-    ports    = ["80", "443", "3000", "3001", "4000", "8000", "6001", "6002"]
-  }
-
-  source_ranges = ["0.0.0.0/0"]
-}
-
 resource "google_compute_instance" "vm" {
   name         = var.name
   machine_type = var.machine_type

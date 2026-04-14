@@ -1,70 +1,76 @@
 # Codebase Concerns
 
-**Analysis Date:** 2025-01-24
+**Analysis Date:** 2026-04-14
 
 ## Tech Debt
 
+**Phase Numbering Discrepancy:**
+- Issue: Significant inconsistency between `.planning/ROADMAP.md`, `.planning/STATE.md`, and the `.planning/phases/` directory structure.
+- Files: `.planning/ROADMAP.md`, `.planning/STATE.md`, `.planning/phases/`
+- Impact: Confusion for contributors and automated agents when determining project progress or next steps.
+- Fix approach: Audit and align all planning files to a unified numbering scheme (1-6). Ensure Phase 3 (Edge Logic) and Phase 4 (Automated Provisioning) are correctly represented as deferred or in-progress.
+
 **Single Postgres Instance (SPOF):**
 - Issue: All services (Chatwoot, Dify, Evolution, Middleware, Agent) share a single Postgres container.
-- Files: `docker-compose.yml`
-- Impact: A failure in Postgres takes down the entire stack. Large database operations in one service (like Dify vector indexing) could impact the chat latency.
-- Fix approach: Move to a managed Postgres service or separate instances for core components.
+- Files: `deploy/docker-compose.shared.yml`
+- Impact: A failure in Postgres takes down the entire stack. Large database operations (vector indexing) impact the chat latency.
+- Fix approach: Migrate to a managed service or separate instances for core components.
 
 **No Automated Tests:**
-- Issue: No test suites were found for either the Middleware or the Self-Healing Agent.
+- Issue: No unit or integration test suites for the Middleware or Self-Healing Agent.
 - Files: `middleware/`, `agents/self-healing/`
-- Impact: Regression risk when modifying core routing logic or Dify/Chatwoot integrations.
-- Fix approach: Introduce Vitest or Jest and implement unit tests for handlers and API clients.
+- Impact: Regression risk in routing and integration logic.
+- Fix approach: Implement a testing framework (Vitest) and add tests for `middleware/src/handlers/`.
 
 ## Security Considerations
 
 **Shared Secret Auth:**
-- Issue: `HANDOFF_SHARED_SECRET` is the only authentication for handoff and internal config fetching.
+- Issue: `HANDOFF_SHARED_SECRET` is the primary auth for internal communication.
 - Files: `middleware/src/handlers/handoff.ts`, `agents/self-healing/src/index.ts`
-- Current mitigation: Bearer token validation with a shared secret from `.env`.
-- Recommendations: Implement proper API keys or OAuth if external integrations are added.
+- Current mitigation: Bearer token validation.
+- Recommendations: Transition to OIDC or per-service API keys.
 
-**Postgres Permissions:**
-- Issue: Custom services (`middleware`, `self-healing-agent`) use the primary Postgres credentials.
-- Files: `docker-compose.yml`
-- Current mitigation: None (uses root-level `POSTGRES_USER`).
-- Recommendations: Create dedicated Postgres users with limited permissions for each service.
+**Public IP Exposure (Temporary):**
+- Issue: GCP firewall rules allow direct access to ports 3000, 3001, 8000 for onboarding.
+- Files: `infrastructure/terraform/modules/gcp-vm/main.tf`
+- Current mitigation: Temporary measure during Cloudflare SSL propagation.
+- Recommendations: Close these ports immediately after verification and rely solely on Cloudflare Tunnels.
 
 ## Performance Bottlenecks
 
 **Loki Polling Interval:**
 - Issue: Self-healing agent polls Loki every 5 minutes.
-- Files: `agents/self-healing/src/index.ts` (`POLL_INTERVAL_MS`)
-- Cause: The agent is a polling-based background loop.
-- Improvement path: Switch to a push-based model (e.g., Loki alerts triggering the agent via webhook) for more real-time healing.
-
-**Middleware/Dify Latency:**
-- Issue: Chat responses are blocked on Dify completion (for non-streaming).
-- Files: `middleware/src/handlers/chatwoot-webhook.ts`
-- Cause: Synchronous wait for LLM output.
-- Improvement path: Standardize on streaming responses where possible or optimize Dify workflows.
+- Files: `agents/self-healing/src/index.ts`
+- Cause: Background polling loop.
+- Improvement path: Implement a push-based webhook system via Loki alerting.
 
 ## Fragile Areas
 
-**Tenant Resolution:**
-- Issue: `TENANT_MAP` is parsed from a JSON string in environment variables.
-- Files: `middleware/src/config.ts`
-- Why fragile: Invalid JSON in `.env` will crash the middleware on start. Manual mapping is error-prone.
-- Safe modification: Validate JSON schema during startup (partially done with Zod).
-- Test coverage: Gaps.
+**Tenant Resolution Logic:**
+- Issue: Tenant mapping depends on environment variable JSON strings or manual SQL entries.
+- Files: `middleware/src/config.ts`, `middleware/src/handlers/tenant.ts`
+- Why fragile: Syntax errors in mapping can crash service or misroute messages.
+- Safe modification: Use a centralized configuration API or a strictly validated schema.
+
+## Scaling Limits
+
+**Single-Node Origin:**
+- Current capacity: e2-standard-4 (16GB RAM).
+- Limit: Running Chatwoot, Dify, Evolution, and Middleware on one node will eventually hit memory limits as tenant counts increase.
+- Scaling path: Horizontal scaling via multi-node Docker Swarm or Kubernetes.
 
 ## Test Coverage Gaps
 
-**Middleware Handlers:**
-- What's not tested: The core `/webhooks/chatwoot` logic that handles different message types and tenant resolution.
+**Middleware Webhooks:**
+- What's not tested: Core `/webhooks/chatwoot` logic.
 - Files: `middleware/src/handlers/chatwoot-webhook.ts`
+- Risk: Critical message routing failures.
 - Priority: High.
 
-**Self-Healing Analysis Logic:**
-- What's not tested: The fingerprinting logic and the analysis workflow invocation.
-- Files: `agents/self-healing/src/index.ts`
+**Terraform State:**
+- What's not tested: Infrastructure state drift.
 - Priority: Medium.
 
 ---
 
-*Concerns audit: 2025-01-24*
+*Concerns audit: 2026-04-14*

@@ -37,4 +37,10 @@ done
 echo "==> Limpando backups com mais de ${BACKUP_KEEP_DAYS} dias"
 find "$BACKUP_DIR" -type f -name '*.sql.gz' -mtime +"$BACKUP_KEEP_DAYS" -print -delete || true
 
+# Sincronização opcional com GCS (Google Cloud Storage)
+if [[ -n "${BACKUP_GCS_BUCKET:-}" ]]; then
+  echo "==> Sincronizando com GCS: gs://${BACKUP_GCS_BUCKET}"
+  gsutil -m rsync -r -d "$BACKUP_DIR" "gs://${BACKUP_GCS_BUCKET}"
+fi
+
 echo "==> Backup concluído em $(date -Is)"
