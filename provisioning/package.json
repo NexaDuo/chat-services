@@ -1,0 +1,31 @@
+{
+  "name": "provisioning",
+  "version": "1.0.0",
+  "description": "NexaDuo Provisioning CLI",
+  "type": "module",
+  "main": "dist/cli.js",
+  "bin": {
+    "provision-tenant": "dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/cli.js",
+    "dev": "node --loader ts-node/esm src/cli.ts",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "axios": "^1.7.9",
+    "commander": "^12.1.0",
+    "dotenv": "^16.4.7",
+    "pg": "^8.13.3",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.5",
+    "@types/pg": "^8.11.11",
+    "typescript": "^5.7.3"
+  }
+}

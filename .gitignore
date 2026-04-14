@@ -47,8 +47,11 @@ _override.tf
 _override.tf.json
 .terraformrc
 terraform.rc
-*.json
+# *.json # commented out to allow project files
 !**/.planning/**/*.json
 !**/dify-apps/*.yml
 !**/.env.example
 !**/*.tfvars.example
+!**/package.json
+!**/tsconfig.json
+!**/tenants.json
