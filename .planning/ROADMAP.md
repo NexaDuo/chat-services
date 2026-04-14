@@ -2,10 +2,10 @@
 
 ## Phases
 
-- [ ] **Phase 1: Foundation (Terraform & GCP)** - Provision core infrastructure on GCP using Infrastructure as Code.
-- [ ] **Phase 2: Management & Edge Connectivity** - Setup Coolify and secure Cloudflare Tunnels for portless origin access.
-- [ ] **Phase 3: Edge Logic & Subdomain Routing** - Implement Cloudflare Workers for header injection and multi-tenant routing.
-- [ ] **Phase 4: Core Service Deployment** - Deploy Chatwoot, Dify, and Middleware in a multi-tenant configuration.
+- [x] **Phase 1: Foundation (Terraform & GCP)** - Provision core infrastructure on GCP using Infrastructure as Code.
+- [x] **Phase 2: Management & Edge Connectivity** - Setup Coolify and secure Cloudflare Tunnels for portless origin access.
+- [x] **Phase 3: Edge Logic & Subdomain Routing** - Implement Cloudflare Workers for header injection and multi-tenant routing.
+- [x] **Phase 4: Core Service Deployment** - Deploy Chatwoot, Dify, and Middleware in a multi-tenant configuration.
 - [ ] **Phase 5: Automated Provisioning** - Automate tenant lifecycle management and resource allocation.
 
 ## Phase Details
@@ -18,7 +18,8 @@
   1. GCP Compute Instance (e2-standard-4) is provisioned and accessible via SSH.
   2. VPC and Firewall rules restrict all non-essential ingress traffic.
   3. Persistent SSD storage is successfully attached and ready for application data.
-**Plans**: TBD
+**Plans**: 1 plan
+- [x] 01-01-PLAN.md — Provision core GCP infrastructure.
 
 ### Phase 2: Management & Edge Connectivity
 **Goal**: Install the orchestration layer and establish secure, portless connectivity to Cloudflare.
@@ -28,8 +29,10 @@
   1. Coolify v4 dashboard is accessible via a secure Cloudflare-managed domain.
   2. All ingress traffic to the GCP VM flows exclusively through Cloudflare Tunnels.
   3. Wildcard DNS records (`*.chat.nexaduo.com`) are configured and pointing to Cloudflare.
-**Plans**: TBD
-**UI hint**: yes
+**Plans**: 3 plans
+- [ ] 02-01-PLAN.md — Coolify Initialization & Hardening.
+- [ ] 02-02-PLAN.md — Cloudflare Edge Connectivity.
+- [ ] 02-03-PLAN.md — Backup Automation.
 
 ### Phase 3: Edge Logic & Subdomain Routing
 **Goal**: Implement tenant identification and routing logic at the network edge to support multiple tenants.
@@ -41,16 +44,16 @@
   3. Edge logic correctly handles WebSocket upgrades for Chatwoot's real-time features.
 **Plans**: TBD
 
-### Phase 4: Core Service Deployment
-**Goal**: Deploy and verify the full application stack in a multi-tenant-ready environment.
+### Phase 4: Automated Core Service Deployment
+**Goal**: Deploy and verify the full application stack (Chatwoot, Dify, Middleware, Observability) using Terraform/IaC to ensure a reproducible, multi-tenant-ready environment.
 **Depends on**: Phase 3
-**Requirements**: DEPLOY-01, DEPLOY-02, DEPLOY-03, DEPLOY-04
+**Requirements**: DEPLOY-01, DEPLOY-02, DEPLOY-03, DEPLOY-04, INFRA-06
 **Success Criteria** (what must be TRUE):
-  1. Chatwoot is fully functional (including assets and WebSockets) under a tenant-specific subdomain.
-  2. Dify is accessible and able to communicate with the Middleware bridge.
+  1. Chatwoot, Dify, and Middleware are fully functional (including assets and WebSockets).
+  2. The complete application stack is provisioned via `terraform apply` (no manual UI setup).
   3. Observability dashboards (Grafana) show live metrics from all deployed services.
-**Plans**: TBD
-**UI hint**: yes
+**Plans**: 1 plan
+- [x] [04-PLAN.md](.planning/phases/04-core-service-deployment/04-PLAN.md) — Automated core service deployment.
 
 ### Phase 5: Automated Provisioning
 **Goal**: Streamline the onboarding of new tenants through automated infrastructure updates.
@@ -66,8 +69,8 @@
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Foundation | 0/1 | Not started | - |
-| 2. Management | 0/1 | Not started | - |
+| 1. Foundation | 1/1 | Complete | 2025-01-24 |
+| 2. Management | 0/3 | In Progress | - |
 | 3. Edge Logic | 0/1 | Not started | - |
-| 4. Core Service Deployment | 0/1 | Not started | - |
+| 4. Core Service Deployment | 1/1 | Complete | 2026-04-14 |
 | 5. Automated Provisioning | 0/1 | Not started | - |
