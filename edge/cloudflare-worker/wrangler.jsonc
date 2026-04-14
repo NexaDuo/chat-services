@@ -3,10 +3,14 @@
   "name": "nexaduo-edge-worker",
   "main": "src/index.ts",
   "compatibility_date": "2026-04-14",
+  "routes": [
+    "chat.nexaduo.com/*",
+    "dify.nexaduo.com/*"
+  ],
   "vars": {
     "CHAT_ORIGIN": "chat-origin.nexaduo.com",
     "DIFY_ORIGIN": "dify-origin.nexaduo.com",
     "MIDDLEWARE_URL": "https://middleware.nexaduo.com",
-    "SHARED_SECRET": "placeholder-secret-change-me"
+    "SHARED_SECRET": "28369644b8f8d9a3dcfe617686c0e757"
   }
 }
