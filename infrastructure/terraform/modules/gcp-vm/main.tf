@@ -74,6 +74,22 @@ resource "google_compute_firewall" "allow_ssh_iap" {
   source_ranges = ["35.235.240.0/20"] # Google IAP range
 }
 
+data "http" "cloudflare_ips" {
+  url = "https://api.cloudflare.com/client/v4/ips"
+}
+
+resource "google_compute_firewall" "allow_cloudflare" {
+  name    = "${var.name}-allow-cloudflare"
+  network = google_compute_network.vpc.name
+
+  allow {
+    protocol = "tcp"
+    ports    = ["80", "443"]
+  }
+
+  source_ranges = jsondecode(data.http.cloudflare_ips.response_body).result.ipv4_cidrs
+}
+
 resource "google_compute_instance" "vm" {
   name         = var.name
   machine_type = var.machine_type
@@ -100,7 +116,7 @@ resource "google_compute_instance" "vm" {
 
   metadata_startup_script = file("${path.module}/scripts/install-coolify.sh")
 
-  tags = ["http-server", "https-server"]
+  tags = ["ssh-iap"]
 }
 
 output "public_ip" {
