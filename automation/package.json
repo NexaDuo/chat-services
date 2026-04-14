@@ -1,0 +1,14 @@
+{
+  "name": "nexaduo-automation",
+  "version": "1.0.0",
+  "description": "Initial setup automation for NexaDuo Stack",
+  "main": "initial-setup.js",
+  "type": "module",
+  "scripts": {
+    "setup": "node initial-setup.js"
+  },
+  "dependencies": {
+    "playwright": "^1.42.1",
+    "dotenv": "^16.4.5"
+  }
+}
