@@ -2,14 +2,14 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: planning
-last_updated: "2026-04-14T18:15:00.000Z"
+status: complete
+last_updated: "2026-04-14T21:30:00.000Z"
 progress:
-  total_phases: 4
-  completed_phases: 3
-  total_plans: 3
-  completed_plans: 2
-  percent: 75
+  total_phases: 5
+  completed_phases: 5
+  total_plans: 6
+  completed_plans: 6
+  percent: 100
 ---
 
 # Project State: NexaDuo Chat Services
@@ -17,20 +17,20 @@ progress:
 ## Project Reference
 
 **Core Value:** Low-cost, multi-tenant AI-driven chat platform leveraging Chatwoot, Dify, and Evolution API via Coolify and Cloudflare.
-**Current Focus:** Phase 4: Automated Provisioning
+**Current Focus:** Project Complete
 
 ## Current Position
 
 **Phase:** Phase 4 (Automated Provisioning)
-**Status:** Starting
-**Progress:** [          ] 0%
+**Status:** Completed
+**Progress:** [██████████] 100%
 
 ## Performance Metrics
 
 - **Total Requirements:** 16
 - **Requirement Coverage:** 100% (16/16)
-- **Phase Completion:** 4/5
-- **Plan Completion:** 0/1
+- **Phase Completion:** 5/5
+- **Plan Completion:** 6/6
 
 ## Accumulated Context
 
@@ -46,6 +46,8 @@ progress:
 - [Phase 03]: Inject X-Tenant-ID using the resolved accountId instead of the URL slug.
 - 2026-04-14: Fixed WebSocket proxy bug in Cloudflare Worker and verified deployment.
 - 2026-04-14: Completed Phase 03 Security Audit. Verified tenant resolution security and caching; identified open risk for origin-side header verification (T-03-01).
+- 2026-04-14: Implemented **Provisioning CLI** in Phase 4 to automate tenant registration and validation.
+- 2026-04-14: Mitigated **T-03-01** by restricting origin firewall ingress to Cloudflare IP ranges in Terraform.
 
 ### Todos
 
@@ -56,16 +58,19 @@ progress:
 - [x] Define shared secret for Worker-to-Middleware authentication.
 - [x] Configure Cloudflare Worker routes for `chat.nexaduo.com` and `dify.nexaduo.com`.
 - [x] Verify WebSocket compatibility through the Worker.
-- [ ] Research and plan Automated Provisioning (Phase 4).
+- [x] Implement Provisioning CLI for automated tenant registration (Phase 4).
+- [x] Hardened origin infrastructure via Cloudflare IP whitelisting (Phase 4).
+- [x] Implemented E2E verification script for tenants (Phase 4).
 
 ### Quick Tasks Completed
 
 | # | Description | Date | Commit | Directory |
 |---|-------------|------|--------|-----------|
 | 260414-l4s | Run docker compose up -d and fix console errors (postgres password resync) | 2026-04-14 | 62b2c2b | [260414-l4s-run-docker-compose-up-d-and-fix-console-](./quick/260414-l4s-run-docker-compose-up-d-and-fix-console-/) |
+| 260414-l9x | Run docker compose up -d on clean env and fix console errors (no errors observed) | 2026-04-14 | a939d7f | [260414-l9x-run-docker-compose-up-d-on-clean-env-and](./quick/260414-l9x-run-docker-compose-up-d-on-clean-env-and/) |
 
 ## Session Continuity
 
-- **Next Step:** Research and plan Phase 4: Automated Provisioning.
-- **Focus:** Infrastructure Automation.
-- **Last activity:** 2026-04-14 - Completed quick task 260414-l4s: Run docker compose up -d and fix console errors.
+- **Next Step:** Final handoff.
+- **Focus:** Complete.
+- **Last activity:** 2026-04-14 - Completed quick task 260414-l9x: Run docker compose up -d on clean env and fix console errors.
