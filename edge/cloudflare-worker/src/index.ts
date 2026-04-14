@@ -101,14 +101,11 @@ app.all('/:tenant/*', async (c) => {
     wsUrl.pathname = wsUrl.pathname.replace(`/${tenant}`, '') || '/'
     
     // Inject headers for WebSockets
-    const headers = new Headers(c.req.raw.headers)
-    headers.set('X-Tenant-ID', accountId)
-    headers.set('Host', originHostname)
+    const proxyRequest = new Request(wsUrl.toString(), c.req.raw)
+    proxyRequest.headers.set('X-Tenant-ID', accountId)
+    proxyRequest.headers.set('Host', originHostname)
 
-    return fetch(wsUrl.toString(), {
-      ...c.req.raw,
-      headers
-    })
+    return fetch(proxyRequest)
   }
 
   // 4. Prepare Proxy Request
