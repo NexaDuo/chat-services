@@ -7,7 +7,7 @@ const EnvSchema = z.object({
     .default("info"),
 
   CHATWOOT_BASE_URL: z.string().url(),
-  CHATWOOT_API_TOKEN: z.string().min(1, "CHATWOOT_API_TOKEN is required"),
+  CHATWOOT_API_TOKEN: z.string().default(""),
 
   DIFY_BASE_URL: z.string().url(),
   DIFY_REQUEST_TIMEOUT_MS: z.coerce.number().int().positive().default(30000),

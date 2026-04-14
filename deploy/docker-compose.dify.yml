@@ -13,6 +13,10 @@ services:
     container_name: nexaduo-dify-api
     restart: unless-stopped
     depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
       dify-init:
         condition: service_completed_successfully
       dify-sandbox:
@@ -24,6 +28,7 @@ services:
     env_file: ../.env
     environment:
       MODE: api
+      MIGRATION_ENABLED: "true"
       SECRET_KEY: ${DIFY_SECRET_KEY}
       DB_USERNAME: ${POSTGRES_USER}
       DB_PASSWORD: ${POSTGRES_PASSWORD}
@@ -41,6 +46,8 @@ services:
       CODE_EXECUTION_API_KEY: ${DIFY_SANDBOX_API_KEY}
       PLUGIN_DAEMON_URL: http://dify-plugin-daemon:5002
       PLUGIN_DAEMON_KEY: ${DIFY_PLUGIN_DAEMON_KEY}
+      WEB_API_CORS_ALLOW_ORIGINS: "*"
+      CONSOLE_CORS_ALLOW_ORIGINS: "*"
     volumes:
       - dify-api-storage:/app/api/storage
     ports:
@@ -51,6 +58,11 @@ services:
     image: langgenius/dify-api:1.13.3
     container_name: nexaduo-dify-worker
     restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     env_file: ../.env
     environment:
       MODE: worker
@@ -71,6 +83,9 @@ services:
     container_name: nexaduo-dify-web
     restart: unless-stopped
     env_file: ../.env
+    environment:
+      CONSOLE_API_URL: ${DIFY_CONSOLE_API_URL:-http://localhost:5001}
+      APP_API_URL: ${DIFY_APP_API_URL:-http://localhost:5001}
     ports:
       - "3001:3000"
     networks:
@@ -87,14 +102,31 @@ services:
     image: langgenius/dify-plugin-daemon:0.5.3-local
     container_name: nexaduo-dify-plugin-daemon
     restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     env_file: ../.env
     environment:
+      SERVER_KEY: ${DIFY_PLUGIN_DAEMON_KEY}
+      DIFY_INNER_API_URL: http://dify-api:5001
+      DIFY_INNER_API_KEY: ${DIFY_PLUGIN_DIFY_INNER_API_KEY}
+      PLUGIN_REMOTE_INSTALLING_HOST: "0.0.0.0"
+      PLUGIN_REMOTE_INSTALLING_PORT: "5003"
+      PLUGIN_WORKING_PATH: /app/storage/cwd
+      PLUGIN_STORAGE_TYPE: local
+      PLUGIN_STORAGE_LOCAL_ROOT: /app/storage
+      FORCE_VERIFYING_SIGNATURE: "false"
       DB_HOST: ${POSTGRES_HOST:-postgres}
+      DB_PORT: ${POSTGRES_PORT:-5432}
       DB_USERNAME: ${POSTGRES_USER}
       DB_PASSWORD: ${POSTGRES_PASSWORD}
       DB_DATABASE: dify_plugin
       REDIS_HOST: ${REDIS_HOST:-redis}
       REDIS_PASSWORD: ${REDIS_PASSWORD}
+    volumes:
+      - dify-plugin-storage:/app/storage
     networks:
       - chat-network
   dify-ssrf-proxy:
@@ -105,6 +137,7 @@ services:
       - chat-network
 volumes:
   dify-api-storage:
+  dify-plugin-storage:
 networks:
   chat-network:
     name: ${COMPOSE_PROJECT_NAME:-nexaduo}-network

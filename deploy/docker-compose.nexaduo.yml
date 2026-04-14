@@ -3,11 +3,17 @@ services:
     image: atendai/evolution-api:v2.1.1
     container_name: nexaduo-evolution-api
     restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     env_file: ../.env
     environment:
       SERVER_TYPE: http
       SERVER_PORT: 8080
       AUTHENTICATION_API_KEY: ${EVOLUTION_AUTHENTICATION_API_KEY}
+      DATABASE_PROVIDER: postgresql
       DATABASE_CONNECTION_URI: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/evolution
       CACHE_REDIS_URI: redis://:${REDIS_PASSWORD}@redis:6379/2
     volumes:
@@ -23,6 +29,9 @@ services:
     image: nexaduo/middleware:dev
     container_name: nexaduo-middleware
     restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
     env_file: ../.env
     environment:
       PORT: 4000
@@ -40,6 +49,7 @@ services:
     image: grafana/loki:3.2.0
     container_name: nexaduo-loki
     restart: unless-stopped
+    user: "0"
     command: -config.file=/etc/loki/loki.yaml
     volumes:
       - ../observability/loki/loki.yaml:/etc/loki/loki.yaml:ro
@@ -76,6 +86,9 @@ services:
       dockerfile: Dockerfile
     container_name: nexaduo-self-healing-agent
     restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
     env_file: ../.env
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/self_healing
