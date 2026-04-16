@@ -8,6 +8,7 @@ const EnvSchema = z.object({
 
   CHATWOOT_BASE_URL: z.string().url(),
   CHATWOOT_API_TOKEN: z.string().default(""),
+  CHATWOOT_WEBHOOK_TOKEN: z.string().optional(),
 
   DIFY_BASE_URL: z.string().url(),
   DIFY_REQUEST_TIMEOUT_MS: z.coerce.number().int().positive().default(30000),
@@ -27,6 +28,7 @@ export type AppConfig = {
   chatwoot: {
     baseUrl: string;
     apiToken: string;
+    webhookToken?: string;
   };
   dify: {
     baseUrl: string;
@@ -57,6 +59,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     chatwoot: {
       baseUrl: data.CHATWOOT_BASE_URL.replace(/\/+$/, ""),
       apiToken: data.CHATWOOT_API_TOKEN,
+      webhookToken: data.CHATWOOT_WEBHOOK_TOKEN,
     },
     dify: {
       baseUrl: data.DIFY_BASE_URL.replace(/\/+$/, ""),

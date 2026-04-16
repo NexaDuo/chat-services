@@ -58,6 +58,17 @@ export async function registerChatwootWebhookRoute(
   const pool = new pg.Pool({ connectionString: config.databaseUrl });
 
   app.post("/webhooks/chatwoot", async (req, reply) => {
+    // 1. Authenticate webhook if token is configured
+    if (config.chatwoot.webhookToken) {
+      const token = req.headers["x-chatwoot-webhook-token"];
+      if (!token || token !== config.chatwoot.webhookToken) {
+        req.log.warn({ hasToken: !!token }, "webhook: unauthorized (invalid token)");
+        return reply.code(401).send({ error: "unauthorized" });
+      }
+    } else {
+      req.log.warn("webhook: CHATWOOT_WEBHOOK_TOKEN not configured, skipping auth");
+    }
+
     const parsed = WebhookSchema.safeParse(req.body);
     if (!parsed.success) {
       req.log.warn({ issues: parsed.error.issues }, "webhook: invalid payload");
