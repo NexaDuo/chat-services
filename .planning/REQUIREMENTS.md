@@ -25,6 +25,12 @@
 - **PROV-02**: Automate DNS record creation for new tenants via Terraform.
 - **PROV-03**: Automate Cloudflare Worker routing table updates for new tenants.
 
+## Secret Management (VAULT)
+- **VAULT-01**: Securely store all infrastructure and application secrets in a self-hosted vault.
+- **VAULT-02**: Eliminate local `.tfvars` files for sensitive data in production.
+- **VAULT-03**: Integrate the vault with Terraform for automatic secret injection.
+- **VAULT-04**: Secure vault access via Tailscale.
+
 ## Traceability
 
 | Requirement | Phase | Status |
@@ -38,11 +44,15 @@
 | ROUTE-02 | Phase 3 | Completed |
 | ROUTE-03 | Phase 3 | Completed |
 | ROUTE-04 | Phase 2 | Completed |
-| DEPLOY-01 | Phase 4 | Completed |
-| DEPLOY-02 | Phase 4 | Completed |
-| DEPLOY-03 | Phase 4 | Completed |
-| DEPLOY-04 | Phase 4 | Completed |
-| PROV-01 | Phase 5 | Pending |
-| PROV-02 | Phase 5 | Pending |
-| PROV-03 | Phase 5 | Pending |
-| INFRA-06 | Phase 6 | Pending |
+| DEPLOY-01 | Phase 5 | Completed |
+| DEPLOY-02 | Phase 5 | Completed |
+| DEPLOY-03 | Phase 5 | Completed |
+| DEPLOY-04 | Phase 5 | Completed |
+| PROV-01 | Phase 4 | Completed |
+| PROV-02 | Phase 4 | Completed |
+| PROV-03 | Phase 4 | Completed |
+| INFRA-06 | Phase 5 | Completed |
+| VAULT-01 | Phase 6 | Pending |
+| VAULT-02 | Phase 6 | Pending |
+| VAULT-03 | Phase 6 | Pending |
+| VAULT-04 | Phase 6 | Pending |
