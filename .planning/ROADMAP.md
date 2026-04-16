@@ -41,5 +41,4 @@
 | 2. Management | 1/1 | Complete | 2025-01-24 |
 | 3. Edge Logic | 2/2 | Complete | 2026-04-14 |
 | 4. Automated Provisioning | 1/1 | Complete | 2026-04-14 |
-
 | 5. Core Service Deployment | 1/1 | Complete (Manual) | 2026-04-14 |
