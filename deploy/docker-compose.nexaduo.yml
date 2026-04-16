@@ -102,4 +102,5 @@ volumes:
   grafana-data:
 networks:
   chat-network:
-    name: ${COMPOSE_PROJECT_NAME:-nexaduo}-network
+    external: true
+    name: nexaduo-network

@@ -92,4 +92,5 @@ volumes:
   chatwoot-public:
 networks:
   chat-network:
-    name: ${COMPOSE_PROJECT_NAME:-nexaduo}-network
+    external: true
+    name: nexaduo-network

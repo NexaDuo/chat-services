@@ -140,4 +140,5 @@ volumes:
   dify-plugin-storage:
 networks:
   chat-network:
-    name: ${COMPOSE_PROJECT_NAME:-nexaduo}-network
+    external: true
+    name: nexaduo-network
