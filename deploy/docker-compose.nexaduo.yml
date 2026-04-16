@@ -23,10 +23,7 @@ services:
     networks:
       - chat-network
   middleware:
-    build:
-      context: ../middleware
-      dockerfile: Dockerfile
-    image: nexaduo/middleware:dev
+    image: ${MIDDLEWARE_IMAGE}
     container_name: nexaduo-middleware
     restart: unless-stopped
     depends_on:
@@ -80,10 +77,22 @@ services:
       - "3002:3000"
     networks:
       - chat-network
+  prometheus:
+    image: prom/prometheus:v2.55.0
+    container_name: nexaduo-prometheus
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=30d
+    volumes:
+      - ../observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "9090:9090"
+    networks:
+      - chat-network
   self-healing-agent:
-    build:
-      context: ../agents/self-healing
-      dockerfile: Dockerfile
+    image: ${SELF_HEALING_IMAGE}
     container_name: nexaduo-self-healing-agent
     restart: unless-stopped
     depends_on:
@@ -100,6 +109,7 @@ volumes:
   evolution-instances:
   loki-data:
   grafana-data:
+  prometheus-data:
 networks:
   chat-network:
     external: true
