@@ -62,6 +62,10 @@ progress:
 - [x] Hardened origin infrastructure via Cloudflare IP whitelisting (Phase 4).
 - [x] Implemented E2E verification script for tenants (Phase 4).
 
+### Pending Todos
+
+- [ ] Harden repo for public GitHub security (`.planning/todos/pending/2026-04-16-harden-repo-for-public-github-security.md`)
+
 ### Quick Tasks Completed
 
 | # | Description | Date | Commit | Directory |
