@@ -13,12 +13,17 @@ const DIFY_API_URL = process.env.DIFY_API_URL || 'http://dify-api:5001/v1';
 const MIDDLEWARE_URL = process.env.MIDDLEWARE_URL || 'http://middleware:4000';
 const HANDOFF_SHARED_SECRET = process.env.HANDOFF_SHARED_SECRET || '';
 
+if (!process.env.DATABASE_URL) {
+  logger.error('FATAL: DATABASE_URL environment variable is required');
+  process.exit(1);
+}
+
 let difyApiKey = '';
 const POLL_INTERVAL_MS = parseInt(process.env.POLL_INTERVAL_MS || '300000'); // 5 minutes
 const COOLDOWN_HOURS = 24;
 
 const pool = new Pool({
-  connectionString: process.env.DATABASE_URL || 'postgresql://postgres:postgres@postgres:5432/self_healing',
+  connectionString: process.env.DATABASE_URL,
 });
 
 /**
