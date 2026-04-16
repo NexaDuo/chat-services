@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-last_updated: "2026-04-16T14:18:14.725Z"
+last_updated: "2026-04-16T14:28:45.212Z"
 last_activity: 2026-04-16
 progress:
   total_phases: 2
   completed_phases: 1
   total_plans: 8
-  completed_plans: 4
-  percent: 50
+  completed_plans: 5
+  percent: 63
 ---
 
 # Project State: NexaDuo Chat Services
@@ -24,7 +24,7 @@ progress:
 
 **Phase:** Phase 4 (Automated Provisioning)
 **Status:** Ready to execute
-**Progress:** [█████░░░░░] 50%
+**Progress:** [██████░░░░] 63%
 
 ## Performance Metrics
 
@@ -52,6 +52,9 @@ progress:
 - [Phase 05]: Added Coolify secret variables and tfvars placeholders for Phase 5 stack deployment.
 - [Phase 05]: Standardized all stack compose files on external network nexaduo-network to avoid Coolify COMPOSE_PROJECT_NAME collisions.
 - [Phase 05]: Implemented shared stack deployment resources with SSH network bootstrap and post-deploy health probe.
+- [Phase 05]: Deploy Chatwoot as an independent Coolify stack with shared-stack health dependency ordering.
+- [Phase 05]: Inject Chatwoot env/secrets through coolify_service_envs with is_literal on sensitive keys.
+- [Phase 05]: Gate apply success with verify_chatwoot SSH probe requiring Docker healthy status and HTTP 200 on localhost:3000.
 
 ### Todos
 
@@ -77,6 +80,7 @@ progress:
 | 260414-l4s | Run docker compose up -d and fix console errors (postgres password resync) | 2026-04-14 | 62b2c2b | [260414-l4s-run-docker-compose-up-d-and-fix-console-](./quick/260414-l4s-run-docker-compose-up-d-and-fix-console-/) |
 | 260414-l9x | Run docker compose up -d on clean env and fix console errors (no errors observed) | 2026-04-14 | a939d7f | [260414-l9x-run-docker-compose-up-d-on-clean-env-and](./quick/260414-l9x-run-docker-compose-up-d-on-clean-env-and/) |
 | Phase 05 P01 | 753 | 3 tasks | 8 files |
+| Phase 05 P02 | 374 | 1 tasks | 2 files |
 
 ## Session Continuity
 
