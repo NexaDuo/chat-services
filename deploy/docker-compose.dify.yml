@@ -46,8 +46,8 @@ services:
       CODE_EXECUTION_API_KEY: ${DIFY_SANDBOX_API_KEY}
       PLUGIN_DAEMON_URL: http://dify-plugin-daemon:5002
       PLUGIN_DAEMON_KEY: ${DIFY_PLUGIN_DAEMON_KEY}
-      WEB_API_CORS_ALLOW_ORIGINS: "*"
-      CONSOLE_CORS_ALLOW_ORIGINS: "*"
+      WEB_API_CORS_ALLOW_ORIGINS: "${DIFY_CORS_ALLOW_ORIGINS:-*}"
+      CONSOLE_CORS_ALLOW_ORIGINS: "${DIFY_CORS_ALLOW_ORIGINS:-*}"
     volumes:
       - dify-api-storage:/app/api/storage
     ports:
@@ -117,7 +117,7 @@ services:
       PLUGIN_WORKING_PATH: /app/storage/cwd
       PLUGIN_STORAGE_TYPE: local
       PLUGIN_STORAGE_LOCAL_ROOT: /app/storage
-      FORCE_VERIFYING_SIGNATURE: "false"
+      FORCE_VERIFYING_SIGNATURE: "true"
       DB_HOST: ${POSTGRES_HOST:-postgres}
       DB_PORT: ${POSTGRES_PORT:-5432}
       DB_USERNAME: ${POSTGRES_USER}
