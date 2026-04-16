@@ -8,7 +8,8 @@
 - [x] **Phase 4: Automated Provisioning** - Automate tenant lifecycle management and resource allocation. (Completed: 2026-04-14)
 - [x] **Phase 5: Core Service Deployment** - Deploy Chatwoot, Dify, and Middleware in a multi-tenant configuration. (Completed: 2026-04-16)
 - [x] **Phase 6: Secret Management & Security Hardening** - Move sensitive data to GCP Secret Manager for centralized and secure handling. (Completed: 2026-04-16)
-- [ ] **Phase 7: Repository Hardening for Public Release** - Address security audit findings (rotate secrets, remove fallbacks, webhook auth, image pinning) before making the repo public. (Planned)
+- [x] **Phase 7: Repository Hardening for Public Release** - Address security audit findings (rotate secrets, remove fallbacks, webhook auth, image pinning) before making the repo public. (Completed: 2026-04-16)
+- [ ] **Phase 8: Production Provisioning & Rollout** - Finalize production VM via Terraform apply, verify Cloudflare Tunnel connectivity, and perform initial tenant onboarding. (In Progress)
 
 ## Phase Details
 
@@ -19,10 +20,27 @@
 
 ### Phase 7: Repository Hardening for Public Release
 **Goal**: Remove all committed secrets and insecure defaults to allow for safe public GitHub release.
-**Target Completion**: 2026-04-17
+**Completed**: 2026-04-16
+**Success Criteria** (what must be TRUE):
+  1. No hardcoded secrets in .env.example, compose files, or source code. (PASSED)
+  2. Webhook auth implemented for Chatwoot. (PASSED)
+  3. Container images pinned to specific versions. (PASSED)
+  4. Wildcard CORS removed from service configs. (PASSED)
 **Plans**:
-- [ ] .planning/phases/07-repository-hardening/07-01-PLAN.md — Global Secret Scrubbing & Image Pinning.
-- [ ] .planning/phases/07-repository-hardening/07-02-PLAN.md — Webhook Security & Ingress Hardening.
+- [x] .planning/phases/07-repository-hardening/07-01-PLAN.md — Global Secret Scrubbing & Image Pinning.
+- [x] .planning/phases/07-repository-hardening/07-02-PLAN.md — Webhook Security & Ingress Hardening.
+
+### Phase 8: Production Provisioning & Rollout
+**Goal**: Provision the final production infrastructure and verify end-to-end connectivity.
+**Target Completion**: 2026-04-17
+**Success Criteria** (what must be TRUE):
+  1. `terraform apply` completes successfully without manual intervention.
+  2. Cloudflare Tunnel is established and reachable via edge paths.
+  3. All services (Chatwoot, Dify, Middleware) report healthy.
+  4. Initial tenant connectivity is verified through the edge.
+**Plans**:
+- [ ] .planning/phases/08-production-provisioning/08-01-PLAN.md — Production VM Provisioning and Service Verification.
+- [ ] .planning/phases/08-production-provisioning/08-02-PLAN.md — Edge Connectivity & Multi-tenant Verification.
 
 ## Progress
 
@@ -34,4 +52,40 @@
 | 4. Automated Provisioning | 3/3 | Complete | 2026-04-14 |
 | 5. Core Service Deployment | 5/5 | Complete | 2026-04-16 |
 | 6. Secret Management | 1/1 | Complete | 2026-04-16 |
-| 7. Repository Hardening | 0/2 | In-Progress | - |
+| 7. Repository Hardening | 2/2 | Complete | 2026-04-16 |
+| 8. Production Provisioning | 0/2 | In Progress | - |
+
+## Traceability (Requirements)
+
+| Requirement | Phase | Status |
+|-------------|-------|--------|
+| INFRA-01 | Phase 1 | Completed |
+| INFRA-02 | Phase 1 | Completed |
+| INFRA-03 | Phase 1 | Completed |
+| INFRA-04 | Phase 2 | Completed |
+| INFRA-05 | Phase 2 | Completed |
+| ROUTE-01 | Phase 2 | Completed |
+| ROUTE-02 | Phase 3 | Completed |
+| ROUTE-03 | Phase 3 | Completed |
+| ROUTE-04 | Phase 2 | Completed |
+| ROUTE-05 | Phase 2 | Completed |
+| DEPLOY-01 | Phase 5 | Completed |
+| DEPLOY-02 | Phase 5 | Completed |
+| DEPLOY-03 | Phase 5 | Completed |
+| DEPLOY-04 | Phase 5 | Completed |
+| DEPLOY-05 | Phase 5 | Completed |
+| DEPLOY-06 | Phase 5 | Completed |
+| PROV-01 | Phase 4 | Completed |
+| PROV-02 | Phase 4 | Completed |
+| PROV-03 | Phase 4 | Completed |
+| INFRA-06 | Phase 5 | Completed |
+| VAULT-01 | Phase 6 | Completed |
+| VAULT-02 | Phase 6 | Completed |
+| VAULT-03 | Phase 6 | Completed |
+| VAULT-04 | Phase 6 | Completed |
+| VAULT-05 | Phase 6 | Completed |
+| HARD-01 | Phase 7 | Completed |
+| HARD-02 | Phase 7 | Completed |
+| HARD-03 | Phase 7 | Completed |
+| HARD-04 | Phase 7 | Completed |
+| HARD-05 | Phase 7 | Completed |
