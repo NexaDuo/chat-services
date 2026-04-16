@@ -1,6 +1,6 @@
 services:
   dify-init:
-    image: alpine:latest
+    image: alpine:3.19
     container_name: nexaduo-dify-init
     restart: "no"
     volumes:
@@ -130,7 +130,7 @@ services:
     networks:
       - chat-network
   dify-ssrf-proxy:
-    image: ubuntu/squid:latest
+    image: ubuntu/squid:22.04-22.04_beta
     container_name: nexaduo-dify-ssrf-proxy
     restart: unless-stopped
     networks:

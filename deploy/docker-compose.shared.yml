@@ -24,7 +24,7 @@ services:
       - chat-network
 
   redis:
-    image: redis:7-alpine
+    image: redis:7.2.4-alpine
     container_name: nexaduo-redis
     restart: unless-stopped
     command:
