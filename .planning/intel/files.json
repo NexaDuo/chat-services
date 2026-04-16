@@ -1,0 +1,129 @@
+{
+  "_meta": {
+    "updated_at": "2026-04-16T18:53:16.545Z",
+    "version": 2
+  },
+  "entries": {
+    "middleware/src/index.ts": {
+      "exports": [],
+      "imports": [
+        "fastify",
+        "@fastify/sensible",
+        "./config.js",
+        "./logger.js",
+        "./metrics.js",
+        "./chatwoot.js",
+        "./handlers/health.js",
+        "./handlers/chatwoot-webhook.js",
+        "./handlers/handoff.js",
+        "./handlers/config.js",
+        "./handlers/tenant.js"
+      ],
+      "type": "entry-point"
+    },
+    "middleware/src/chatwoot.ts": {
+      "exports": [
+        "ChatwootClient"
+      ],
+      "imports": [
+        "axios",
+        "pino"
+      ],
+      "type": "module"
+    },
+    "middleware/src/dify.ts": {
+      "exports": [
+        "DifyClient"
+      ],
+      "imports": [
+        "axios",
+        "pino"
+      ],
+      "type": "module"
+    },
+    "middleware/src/config.ts": {
+      "exports": [
+        "loadConfig",
+        "resolveTenant"
+      ],
+      "imports": [
+        "pino"
+      ],
+      "type": "config"
+    },
+    "provisioning/src/cli.ts": {
+      "exports": [],
+      "imports": [
+        "commander",
+        "./api.js",
+        "./db.js"
+      ],
+      "type": "entry-point"
+    },
+    "provisioning/src/api.ts": {
+      "exports": [
+        "validateTenantReachability"
+      ],
+      "imports": [
+        "axios"
+      ],
+      "type": "module"
+    },
+    "provisioning/src/db.ts": {
+      "exports": [
+        "default",
+        "query",
+        "registerTenantInDb"
+      ],
+      "imports": [
+        "pg"
+      ],
+      "type": "module"
+    },
+    "edge/cloudflare-worker/src/index.ts": {
+      "exports": [
+        "default"
+      ],
+      "imports": [
+        "hono"
+      ],
+      "type": "entry-point"
+    },
+    "infrastructure/terraform/envs/production/main.tf": {
+      "exports": [],
+      "imports": [
+        "../../modules/gcp-vm",
+        "../../modules/gcp-storage",
+        "../../modules/cloudflare-dns",
+        "../../modules/cloudflare-tunnel",
+        "../../modules/coolify-management"
+      ],
+      "type": "script"
+    },
+    "infrastructure/terraform/envs/production/variables.tf": {
+      "exports": [],
+      "imports": [],
+      "type": "config"
+    },
+    "infrastructure/terraform/envs/production/providers.tf": {
+      "exports": [],
+      "imports": [],
+      "type": "config"
+    },
+    "scripts/generate-env.sh": {
+      "exports": [],
+      "imports": [],
+      "type": "script"
+    },
+    "scripts/sync-secrets-gcp.sh": {
+      "exports": [],
+      "imports": [],
+      "type": "script"
+    },
+    "docker-compose.yml": {
+      "exports": [],
+      "imports": [],
+      "type": "config"
+    }
+  }
+}

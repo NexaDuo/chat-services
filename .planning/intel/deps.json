@@ -1,0 +1,84 @@
+{
+  "_meta": {
+    "updated_at": "2026-04-16T18:53:16.616Z",
+    "version": 2
+  },
+  "entries": {
+    "fastify": {
+      "version": "^5.1.0",
+      "type": "production",
+      "invocation": "import",
+      "used_by": [
+        "middleware/src/index.ts",
+        "middleware/src/handlers/"
+      ]
+    },
+    "axios": {
+      "version": "^1.7.7",
+      "type": "production",
+      "invocation": "import",
+      "used_by": [
+        "middleware/src/chatwoot.ts",
+        "middleware/src/dify.ts",
+        "provisioning/src/api.ts"
+      ]
+    },
+    "pg": {
+      "version": "^8.20.0",
+      "type": "production",
+      "invocation": "import",
+      "used_by": [
+        "middleware/src/config.ts",
+        "provisioning/src/db.ts"
+      ]
+    },
+    "pino": {
+      "version": "^9.5.0",
+      "type": "production",
+      "invocation": "import",
+      "used_by": [
+        "middleware/src/logger.ts"
+      ]
+    },
+    "prom-client": {
+      "version": "^15.1.3",
+      "type": "production",
+      "invocation": "import",
+      "used_by": [
+        "middleware/src/metrics.ts"
+      ]
+    },
+    "hono": {
+      "version": "^4.12.12",
+      "type": "production",
+      "invocation": "import",
+      "used_by": [
+        "edge/cloudflare-worker/src/index.ts"
+      ]
+    },
+    "commander": {
+      "version": "^12.1.0",
+      "type": "production",
+      "invocation": "import",
+      "used_by": [
+        "provisioning/src/cli.ts"
+      ]
+    },
+    "wrangler": {
+      "version": "^4.4.0",
+      "type": "development",
+      "invocation": "npm run dev",
+      "used_by": [
+        "edge/cloudflare-worker/package.json"
+      ]
+    },
+    "tsx": {
+      "version": "^4.19.2",
+      "type": "development",
+      "invocation": "npm run dev",
+      "used_by": [
+        "middleware/package.json"
+      ]
+    }
+  }
+}

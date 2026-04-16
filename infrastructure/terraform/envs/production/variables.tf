@@ -41,22 +41,12 @@ variable "ssh_key" {
   type = string
 }
 
-variable "cloudflare_api_token" {
-  type      = string
-  sensitive = true
-}
-
 variable "cloudflare_account_id" {
   type = string
 }
 
 variable "cloudflare_zone_id" {
   type = string
-}
-
-variable "coolify_api_token" {
-  type      = string
-  sensitive = true
 }
 
 variable "dns_subdomain" {
@@ -74,7 +64,7 @@ variable "base_domain" {
   default = "nexaduo.com"
 }
 
-# ---------------------------------------------------------- Phase 5: Coolify stack secrets ---
+# ---------------------------------------------------------- Phase 5: Coolify stack non-secrets ---
 variable "ssh_private_key_path" {
   type        = string
   description = "Path to the private SSH key file used by null_resource provisioners (matches public key in var.ssh_key)."
@@ -85,43 +75,18 @@ variable "postgres_user" {
   default = "postgres"
 }
 
-variable "postgres_password" {
-  type      = string
-  sensitive = true
-}
-
-variable "redis_password" {
-  type      = string
-  sensitive = true
-}
-
 variable "tz" {
   type    = string
   default = "America/Sao_Paulo"
 }
 
 # Chatwoot
-variable "chatwoot_secret_key_base" {
-  type      = string
-  sensitive = true
-}
-
 variable "chatwoot_frontend_url" {
   type    = string
   default = "https://chat.nexaduo.com"
 }
 
-variable "chatwoot_api_token" {
-  type      = string
-  sensitive = true
-}
-
 # Dify
-variable "dify_secret_key" {
-  type      = string
-  sensitive = true
-}
-
 variable "dify_console_api_url" {
   type    = string
   default = "https://dify.nexaduo.com"
@@ -132,40 +97,10 @@ variable "dify_app_api_url" {
   default = "https://dify.nexaduo.com"
 }
 
-variable "dify_sandbox_api_key" {
-  type      = string
-  sensitive = true
-}
-
-variable "dify_plugin_daemon_key" {
-  type      = string
-  sensitive = true
-}
-
-variable "dify_plugin_dify_inner_api_key" {
-  type      = string
-  sensitive = true
-}
-
 # Evolution / Middleware / Observability
-variable "evolution_authentication_api_key" {
-  type      = string
-  sensitive = true
-}
-
-variable "handoff_shared_secret" {
-  type      = string
-  sensitive = true
-}
-
 variable "grafana_admin_user" {
   type    = string
   default = "admin"
-}
-
-variable "grafana_admin_password" {
-  type      = string
-  sensitive = true
 }
 
 # Image registry tags (Phase 5 build-context workaround)

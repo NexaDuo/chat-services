@@ -118,12 +118,12 @@ resource "coolify_service_envs" "shared" {
   }
   env {
     key        = "POSTGRES_PASSWORD"
-    value      = var.postgres_password
+    value      = data.google_secret_manager_secret_version.postgres_password.secret_data
     is_literal = true
   }
   env {
     key        = "REDIS_PASSWORD"
-    value      = var.redis_password
+    value      = data.google_secret_manager_secret_version.redis_password.secret_data
     is_literal = true
   }
   env {
@@ -199,12 +199,12 @@ resource "coolify_service_envs" "chatwoot" {
   }
   env {
     key        = "POSTGRES_PASSWORD"
-    value      = var.postgres_password
+    value      = data.google_secret_manager_secret_version.postgres_password.secret_data
     is_literal = true
   }
   env {
     key        = "REDIS_PASSWORD"
-    value      = var.redis_password
+    value      = data.google_secret_manager_secret_version.redis_password.secret_data
     is_literal = true
   }
   env {
@@ -215,7 +215,7 @@ resource "coolify_service_envs" "chatwoot" {
   # Chatwoot-specific
   env {
     key        = "CHATWOOT_SECRET_KEY_BASE"
-    value      = var.chatwoot_secret_key_base
+    value      = data.google_secret_manager_secret_version.chatwoot_secret_key_base.secret_data
     is_literal = true
   }
   env {
@@ -313,7 +313,7 @@ resource "coolify_service_envs" "dify" {
   }
   env {
     key        = "POSTGRES_PASSWORD"
-    value      = var.postgres_password
+    value      = data.google_secret_manager_secret_version.postgres_password.secret_data
     is_literal = true
   }
   env {
@@ -322,7 +322,7 @@ resource "coolify_service_envs" "dify" {
   }
   env {
     key        = "REDIS_PASSWORD"
-    value      = var.redis_password
+    value      = data.google_secret_manager_secret_version.redis_password.secret_data
     is_literal = true
   }
   env {
@@ -333,7 +333,7 @@ resource "coolify_service_envs" "dify" {
   # Dify core
   env {
     key        = "DIFY_SECRET_KEY"
-    value      = var.dify_secret_key
+    value      = data.google_secret_manager_secret_version.dify_secret_key.secret_data
     is_literal = true
   }
   env {
@@ -358,17 +358,17 @@ resource "coolify_service_envs" "dify" {
   # Sandbox + plugin-daemon
   env {
     key        = "DIFY_SANDBOX_API_KEY"
-    value      = var.dify_sandbox_api_key
+    value      = data.google_secret_manager_secret_version.dify_sandbox_api_key.secret_data
     is_literal = true
   }
   env {
     key        = "DIFY_PLUGIN_DAEMON_KEY"
-    value      = var.dify_plugin_daemon_key
+    value      = data.google_secret_manager_secret_version.dify_plugin_daemon_key.secret_data
     is_literal = true
   }
   env {
     key        = "DIFY_PLUGIN_DIFY_INNER_API_KEY"
-    value      = var.dify_plugin_dify_inner_api_key
+    value      = data.google_secret_manager_secret_version.dify_plugin_dify_inner_api_key.secret_data
     is_literal = true
   }
 
@@ -465,12 +465,12 @@ resource "coolify_service_envs" "nexaduo" {
   }
   env {
     key        = "POSTGRES_PASSWORD"
-    value      = var.postgres_password
+    value      = data.google_secret_manager_secret_version.postgres_password.secret_data
     is_literal = true
   }
   env {
     key        = "REDIS_PASSWORD"
-    value      = var.redis_password
+    value      = data.google_secret_manager_secret_version.redis_password.secret_data
     is_literal = true
   }
   env {
@@ -481,7 +481,7 @@ resource "coolify_service_envs" "nexaduo" {
   # Evolution API
   env {
     key        = "EVOLUTION_AUTHENTICATION_API_KEY"
-    value      = var.evolution_authentication_api_key
+    value      = data.google_secret_manager_secret_version.evolution_authentication_api_key.secret_data
     is_literal = true
   }
 
@@ -492,7 +492,7 @@ resource "coolify_service_envs" "nexaduo" {
   }
   env {
     key        = "CHATWOOT_API_TOKEN"
-    value      = var.chatwoot_api_token
+    value      = data.google_secret_manager_secret_version.chatwoot_api_token.secret_data
     is_literal = true
   }
   env {
@@ -501,7 +501,7 @@ resource "coolify_service_envs" "nexaduo" {
   }
   env {
     key        = "HANDOFF_SHARED_SECRET"
-    value      = var.handoff_shared_secret
+    value      = data.google_secret_manager_secret_version.handoff_shared_secret.secret_data
     is_literal = true
   }
   env {
@@ -518,7 +518,7 @@ resource "coolify_service_envs" "nexaduo" {
   }
   env {
     key        = "GRAFANA_ADMIN_PASSWORD"
-    value      = var.grafana_admin_password
+    value      = data.google_secret_manager_secret_version.grafana_admin_password.secret_data
     is_literal = true
   }
 }

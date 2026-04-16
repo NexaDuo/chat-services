@@ -12,13 +12,16 @@
 - **ROUTE-01**: Configure Cloudflare DNS for unified subdomains (`chat.nexaduo.com`, `dify.nexaduo.com`).
 - **ROUTE-02**: Implement Cloudflare Worker for path-based tenant identification (`/tenant/`).
 - **ROUTE-03**: Inject `X-Tenant-ID` header at the edge for backend consumption.
-- **ROUTE-04**: Secure origin by restricting access to Cloudflare IPs or using Cloudflare Tunnels.
+- **ROUTE-04**: Secure origin by restricting access to Cloudflare IPs.
+- **ROUTE-05**: Implement Cloudflare Tunnels (Argo) to provide portless ingress to the origin.
 
 ## Application Deployment (DEPLOY)
 - **DEPLOY-01**: Orchestrate Chatwoot, Dify, and Evolution API using Coolify/Docker Compose.
 - **DEPLOY-02**: Configure Chatwoot and Dify for path-based multi-tenancy via Cloudflare Workers.
 - **DEPLOY-03**: Deploy the Middleware bridge to handle Chatwoot-Dify communication.
-- **DEPLOY-04**: Deploy Observability stack (Prometheus/Grafana) within the same environment.
+- **DEPLOY-04**: Deploy full observability stack (Prometheus, Grafana, Loki, Promtail, OTEL Collector) for monitoring and log aggregation.
+- **DEPLOY-05**: Implement Self-Healing Agent to autonomously analyze service logs and diagnose root causes.
+- **DEPLOY-06**: Enable seamless human handoff from AI agents to Chatwoot operators via Middleware.
 
 ## Multi-tenancy & Provisioning (PROV)
 - **PROV-01**: Define a standardized tenant configuration schema.
@@ -45,10 +48,13 @@
 | ROUTE-02 | Phase 3 | Completed |
 | ROUTE-03 | Phase 3 | Completed |
 | ROUTE-04 | Phase 2 | Completed |
+| ROUTE-05 | Phase 2 | Completed |
 | DEPLOY-01 | Phase 5 | Completed |
 | DEPLOY-02 | Phase 5 | Completed |
 | DEPLOY-03 | Phase 5 | Completed |
 | DEPLOY-04 | Phase 5 | Completed |
+| DEPLOY-05 | Phase 5 | Completed |
+| DEPLOY-06 | Phase 5 | Completed |
 | PROV-01 | Phase 4 | Completed |
 | PROV-02 | Phase 4 | Completed |
 | PROV-03 | Phase 4 | Completed |

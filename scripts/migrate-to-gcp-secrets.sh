@@ -38,7 +38,10 @@ while IFS= read -r line; do
         
         # Only migrate secrets (you can filter by common secret names)
         case "$key" in
-            *password*|*token*|*secret*|*api_key*|*credentials*)
+            ssh_key)
+                # Skip public key
+                ;;
+            *password*|*token*|*secret*|*api_key*|*credentials*|*key*)
                 push_secret "$key" "$value"
                 ;;
             *)

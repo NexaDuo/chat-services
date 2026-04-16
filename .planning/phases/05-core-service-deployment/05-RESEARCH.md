@@ -641,27 +641,25 @@ networks:
 
 ---
 
-## Open Questions
+## Open Questions Resolution (Closed)
 
-1. **Build context for middleware and self-healing-agent images**
-   - What we know: Both services use `build:` directives pointing to sibling directories.
-   - What's unclear: Whether Coolify's `coolify_service` with `compose = file(...)` resolves these paths relative to the Coolify server's working directory, and whether the repo is cloned there.
-   - Recommendation: Planner should either (a) add a pre-build step (docker build + push to registry) before Terraform apply, or (b) test Coolify's compose build behavior in the PoC environment first.
+All previously open questions are now resolved by the finalized Phase 05 plans:
 
-2. **Docker volume name continuity for PoC data**
-   - What we know: PoC was deployed manually; volumes exist with `nexaduo_` prefix. Coolify will likely create volumes with a UUID prefix.
-   - What's unclear: Whether the planner wants to preserve existing Postgres data or start fresh.
-   - Recommendation: Include a plan step that explicitly documents the choice and, if preserving data, adds a volume rename step.
+1. **Build context for middleware and self-healing-agent images — RESOLVED**
+   - Resolution: 05-04 Task 1 replaces `build:` directives with `${MIDDLEWARE_IMAGE}` and `${SELF_HEALING_IMAGE}` image references.
+   - Impact: Coolify no longer depends on relative build contexts; operator supplies pre-built image tags through Terraform vars.
 
-3. **Terraform apply execution environment**
-   - What we know: Terraform binary is not present on the local dev machine.
-   - What's unclear: Whether the plan should add a Terraform install step, document a CI pipeline, or assume it runs from the GCP VM.
-   - Recommendation: Planner should document the expected apply environment; suggest running from the GCP VM (Terraform available) or GitHub Actions.
+2. **Docker volume name continuity for PoC data — RESOLVED**
+   - Resolution: Phase intent accepts Terraform-managed stack rollout as the source of truth; plan set does not include in-place volume rename/migration.
+   - Impact: Existing manual-PoC volume naming is treated as non-blocking for this deployment phase.
 
-4. **HANDOFF_SHARED_SECRET hardcoded in `.env.example`**
-   - What we know: `HANDOFF_SHARED_SECRET=28369644b8f8d9a3dcfe617686c0e757` is committed in `.env.example`. STATE.md lists "Harden repo for public GitHub security" as a pending todo.
-   - What's unclear: Whether Phase 5 plans should include this cleanup or treat it as out of scope.
-   - Recommendation: Include it as a task in the shared plan (30-second fix) to unblock the public GitHub hardening todo.
+3. **Terraform apply execution environment — RESOLVED**
+   - Resolution: Plans target Terraform execution from the production IaC environment (where Coolify/GCP credentials and SSH connectivity exist), not the local workstation.
+   - Impact: No additional local Terraform installation task is required in Phase 05 plans.
+
+4. **HANDOFF_SHARED_SECRET hardcoded in `.env.example` — RESOLVED**
+   - Resolution: Included in the Phase 05 plan set and referenced explicitly in 05-05 checkpoint context as cleaned up.
+   - Impact: Secret leakage blocker removed from this phase scope.
 
 ---
 

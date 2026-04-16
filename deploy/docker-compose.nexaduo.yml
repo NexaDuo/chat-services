@@ -19,11 +19,14 @@ services:
     volumes:
       - evolution-instances:/evolution/instances
     ports:
-      - "8080:8080"
+      - "8082:8080"
     networks:
       - chat-network
   middleware:
     image: ${MIDDLEWARE_IMAGE}
+    build:
+      context: ../middleware
+      dockerfile: Dockerfile
     container_name: nexaduo-middleware
     restart: unless-stopped
     depends_on:
@@ -93,6 +96,9 @@ services:
       - chat-network
   self-healing-agent:
     image: ${SELF_HEALING_IMAGE}
+    build:
+      context: ../agents/self-healing
+      dockerfile: Dockerfile
     container_name: nexaduo-self-healing-agent
     restart: unless-stopped
     depends_on:

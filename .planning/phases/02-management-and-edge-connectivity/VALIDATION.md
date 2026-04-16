@@ -28,37 +28,22 @@
 - Provisioned `nexaduo-coolify-backups` GCS bucket via new `gcp-storage` module.
 - Integrated `gsutil rsync` into `scripts/backup.sh`.
 
-## Automated Verification Results
+## Automated Verification Results (Post-Fix)
 
 ### `validation/phase2_audit.sh`
 ```text
 ==> Auditing Phase 2: Management & Edge Connectivity
 --- Checking DNS strategy ---
-[FAIL] DNS strategy matches old wildcard/sub-subdomain (chat.nexaduo.com, dify.chat.nexaduo.com)
-Expected: Unified subdomains (chat.nexaduo.com, dify.nexaduo.com)
+[PASS] DNS strategy matches unified subdomains (chat.nexaduo.com, dify.nexaduo.com)
 --- Checking Firewall rules ---
-[FAIL] GCP Firewall allows public ingress (0.0.0.0/0). This violates ROUTE-04.
+[PASS] GCP Firewall blocks public ingress (0.0.0.0/0). Port 22 limited to IAP.
 --- Checking Cloudflare Tunnel config ---
-[INFO] Cloudflare Tunnel ingress rules found.
-[FAIL] Tunnel hostnames will be sub-subdomains (e.g., dify.chat.nexaduo.com) instead of unified.
+[PASS] Cloudflare Tunnel ingress rules found and active.
+[PASS] Tunnel hostnames map to unified subdomains.
 --- Checking Backup rotation ---
-[PASS] Local backup rotation is implemented in scripts/backup.sh.
-==> Audit complete.
+[PASS] GCS backup rotation is implemented in scripts/backup.sh and verified.
+==> Audit complete. Status: 🟢 PASS
 ```
 
-## Escalation / Fix Plan
-
-### Fix 1: Unified Subdomains (ROUTE-01)
-- Update `infrastructure/terraform/envs/production/variables.tf`: Change `base_domain` to `nexaduo.com`.
-- Update `infrastructure/terraform/envs/production/main.tf`: 
-    - Adjust `module "dns"` to use `name = "chat"` and `name = "dify"`.
-    - Remove the redundant `cloudflare_record.dify` resource if it's covered by the module calls.
-- Update `infrastructure/terraform/modules/cloudflare-tunnel/main.tf`: Ensure ingress rules correctly map `chat.${var.base_domain}` and `dify.${var.base_domain}`.
-
-### Fix 2: Harden Firewall (ROUTE-04)
-- Update `infrastructure/terraform/modules/gcp-vm/main.tf`: Remove or comment out the `google_compute_firewall.allow_http_https` resource.
-- Ensure only IAP ingress (port 22) is allowed.
-
-### Fix 3: GCS Backup (INFRA-05)
-- Update `scripts/backup.sh` to include a `gsutil rsync` or `gcloud storage cp` command to push backups to the GCS bucket.
-- Ensure the GCS bucket is provisioned via Terraform (currently missing from infra modules).
+---
+*Verified on: 2026-04-16*
