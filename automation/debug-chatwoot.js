@@ -7,7 +7,12 @@ dotenv.config({ path: path.resolve(process.cwd(), '../.env') });
 
 const CHATWOOT_URL = process.env.CHATWOOT_FRONTEND_URL || 'http://localhost:3000';
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'alexandre@nexaduo.com';
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'NexaDuo@2025';
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
+
+if (!ADMIN_PASSWORD) {
+  console.error('FATAL: ADMIN_PASSWORD must be set in environment variables.');
+  process.exit(1);
+}
 
 async function debugChatwoot() {
   console.log('Debugging Chatwoot Setup...');
