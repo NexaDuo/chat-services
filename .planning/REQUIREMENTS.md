@@ -35,6 +35,13 @@
 - **VAULT-04**: Sync GCP Secret Manager with local `.env` via scripts for consistent development.
 - **VAULT-05**: Secure secret access using GCP IAM (Service Accounts) and local user authentication.
 
+## Repository Hardening (HARD)
+- **HARD-01**: Rotate and remove hardcoded secrets from tracked files (env examples, wrangler configs).
+- **HARD-02**: Remove insecure credential fallbacks and enforce fail-fast behavior in code and scripts.
+- **HARD-03**: Implement Chatwoot webhook authentication to verify incoming requests.
+- **HARD-04**: Pin all container images to immutable versions in Docker Compose.
+- **HARD-05**: Restrict origin network access (ports, CORS, plugin signature verification).
+
 ## Traceability
 
 | Requirement | Phase | Status |
@@ -59,8 +66,13 @@
 | PROV-02 | Phase 4 | Completed |
 | PROV-03 | Phase 4 | Completed |
 | INFRA-06 | Phase 5 | Completed |
-| VAULT-01 | Phase 6 | In-Progress |
-| VAULT-02 | Phase 6 | In-Progress |
-| VAULT-03 | Phase 6 | In-Progress |
-| VAULT-04 | Phase 6 | In-Progress |
-| VAULT-05 | Phase 6 | In-Progress |
+| VAULT-01 | Phase 6 | Completed |
+| VAULT-02 | Phase 6 | Completed |
+| VAULT-03 | Phase 6 | Completed |
+| VAULT-04 | Phase 6 | Completed |
+| VAULT-05 | Phase 6 | Completed |
+| HARD-01 | Phase 7 | Planned |
+| HARD-02 | Phase 7 | Planned |
+| HARD-03 | Phase 7 | Planned |
+| HARD-04 | Phase 7 | Planned |
+| HARD-05 | Phase 7 | Planned |
