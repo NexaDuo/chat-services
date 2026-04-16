@@ -26,10 +26,11 @@
 - **PROV-03**: Automate Cloudflare Worker routing table updates for new tenants.
 
 ## Secret Management (VAULT)
-- **VAULT-01**: Securely store all infrastructure and application secrets in a self-hosted vault.
-- **VAULT-02**: Eliminate local `.tfvars` files for sensitive data in production.
-- **VAULT-03**: Integrate the vault with Terraform for automatic secret injection.
-- **VAULT-04**: Secure vault access via Tailscale.
+- **VAULT-01**: Securely store all infrastructure and application secrets in GCP Secret Manager (Single Source of Truth).
+- **VAULT-02**: Eliminate local `.tfvars` files for sensitive data in local and production environments.
+- **VAULT-03**: Integrate GCP Secret Manager with Terraform for automatic secret injection into Coolify.
+- **VAULT-04**: Sync GCP Secret Manager with local `.env` via scripts for consistent development.
+- **VAULT-05**: Secure secret access using GCP IAM (Service Accounts) and local user authentication.
 
 ## Traceability
 
@@ -52,7 +53,8 @@
 | PROV-02 | Phase 4 | Completed |
 | PROV-03 | Phase 4 | Completed |
 | INFRA-06 | Phase 5 | Completed |
-| VAULT-01 | Phase 6 | Pending |
-| VAULT-02 | Phase 6 | Pending |
-| VAULT-03 | Phase 6 | Pending |
-| VAULT-04 | Phase 6 | Pending |
+| VAULT-01 | Phase 6 | In-Progress |
+| VAULT-02 | Phase 6 | In-Progress |
+| VAULT-03 | Phase 6 | In-Progress |
+| VAULT-04 | Phase 6 | In-Progress |
+| VAULT-05 | Phase 6 | In-Progress |

@@ -23,8 +23,10 @@ progress:
 ## Current Position
 
 **Phase:** Phase 6 (Secret Management & Security Hardening)
-**Status:** Planning
+**Status:** Planning / Infrastructure Pending
 **Progress:** [████████░░] 80%
+
+**Note:** The production server has not been provisioned yet. Configurations for core services are prepared but pending deployment to the target VM.
 
 ## Performance Metrics
 
@@ -38,16 +40,15 @@ progress:
 ### Decisions
 
 - ... (previous decisions)
-- [Phase 06]: Use **Infisical** as the self-hosted vault solution.
-- [Phase 06]: Secure vault access via **Tailscale** private network.
-- [Phase 06]: Use **Infisical Terraform Provider** for dynamic secret injection.
+- [Phase 06]: Use **GCP Secret Manager** as the central secret management solution.
+- [Phase 06]: Integrate GCP Secret Manager with Terraform for dynamic secret injection.
 
 ### Todos
 
 - ... (completed tasks)
-- [ ] Deploy Infisical vault via Coolify (Phase 6).
-- [ ] Migrate `terraform.tfvars` to Infisical (Phase 6).
-- [ ] Integrate Infisical with Terraform provider (Phase 6).
+- [ ] Migrate `terraform.tfvars` to GCP Secret Manager (Phase 6).
+- [ ] Integrate GCP Secret Manager with Terraform provider (Phase 6).
+- [ ] Implement `sync-secrets-gcp.sh` for local dev parity (Phase 6).
 
 ### Pending Todos
 
