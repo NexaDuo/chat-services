@@ -27,6 +27,13 @@ Não inclui: automação de provisionamento de novos tenants (Phase 4), novas in
 - **D-04:** Planos cobrem **Terraform completo**: recursos Coolify para todos os serviços + rede interna Coolify + env vars injetadas via Terraform. Um plano por stack + um plano de verificação E2E.
 - **D-05:** Cada plano de stack inclui validação de saúde pós-deploy (health check do serviço no Coolify ou endpoint de status).
 
+### Estratégia de execução (agora destrutivo vs depois não-destrutivo)
+
+- **D-06:** Enquanto o ambiente ainda não está em uso real, priorizar **bootstrap destrutivo controlado** para validar a Fase 05 mais rápido (recriar stacks/estado quando necessário para convergência limpa).
+- **D-07:** Mesmo no modo destrutivo, manter **fonte de verdade no Terraform** (sem drift manual via UI do Coolify) para evitar retrabalho na transição.
+- **D-08:** Após validação final da Fase 05, mudar imediatamente para **operação não-destrutiva por padrão** (mudanças incrementais, apply idempotente, sem recriação total de stack salvo incidente).
+- **D-09:** Tratar qualquer operação destrutiva pós-validação como exceção operacional explícita (com justificativa e janela de manutenção), não como fluxo normal.
+
 ### Referências de Compose Existentes
 
 - Os arquivos `deploy/docker-compose.*.yml` já existem e são a fonte de verdade para a definição dos serviços. Os planos Terraform referenciam esses arquivos via recurso Coolify (Docker Compose source).
@@ -90,6 +97,7 @@ Não inclui: automação de provisionamento de novos tenants (Phase 4), novas in
 
 - O PoC já está rodando manualmente — os planos Terraform formalizam o estado atual, não reimplementam do zero
 - Isolamento por stack no Coolify é crítico para operação: permite restart/update de Chatwoot sem derrubar Dify
+- Melhor estratégia prática no momento: **destrutivo controlado agora para fechar validação**, e **não-destrutivo como padrão imediatamente após o aceite da fase**
 
 </specifics>
 
