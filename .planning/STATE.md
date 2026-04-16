@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-last_updated: "2026-04-16T14:28:45.212Z"
+last_updated: "2026-04-16T14:40:52.062Z"
 last_activity: 2026-04-16
 progress:
   total_phases: 2
   completed_phases: 1
   total_plans: 8
-  completed_plans: 5
-  percent: 63
+  completed_plans: 6
+  percent: 75
 ---
 
 # Project State: NexaDuo Chat Services
@@ -24,7 +24,7 @@ progress:
 
 **Phase:** Phase 4 (Automated Provisioning)
 **Status:** Ready to execute
-**Progress:** [██████░░░░] 63%
+**Progress:** [████████░░] 75%
 
 ## Performance Metrics
 
@@ -55,6 +55,9 @@ progress:
 - [Phase 05]: Deploy Chatwoot as an independent Coolify stack with shared-stack health dependency ordering.
 - [Phase 05]: Inject Chatwoot env/secrets through coolify_service_envs with is_literal on sensitive keys.
 - [Phase 05]: Gate apply success with verify_chatwoot SSH probe requiring Docker healthy status and HTTP 200 on localhost:3000.
+- [Phase 05]: Deployed Dify as an independent Coolify Terraform stack ordered after verified shared services.
+- [Phase 05]: Injected Dify URL, DB, Redis, sandbox, and plugin keys through coolify_service_envs with literal secret handling.
+- [Phase 05]: Added verify_dify SSH readiness gate requiring HTTP 200 on /console/api/setup before apply succeeds.
 
 ### Todos
 
@@ -81,6 +84,7 @@ progress:
 | 260414-l9x | Run docker compose up -d on clean env and fix console errors (no errors observed) | 2026-04-14 | a939d7f | [260414-l9x-run-docker-compose-up-d-on-clean-env-and](./quick/260414-l9x-run-docker-compose-up-d-on-clean-env-and/) |
 | Phase 05 P01 | 753 | 3 tasks | 8 files |
 | Phase 05 P02 | 374 | 1 tasks | 2 files |
+| Phase 05 P03 | 86 | 1 tasks | 1 files |
 
 ## Session Continuity
 
