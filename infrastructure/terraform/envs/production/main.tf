@@ -273,6 +273,149 @@ output "coolify_chatwoot_service_uuid" {
   value = coolify_service.chatwoot.uuid
 }
 
+# ---------------------------------------------------------------------------
+# Stack 3/4 — Dify (api + worker + web + sandbox + plugin-daemon + ssrf-proxy).
+# Joins nexaduo-network so Postgres + Redis (shared stack) are reachable.
+# Independent of chatwoot stack — both can deploy in parallel from
+# Terraform's POV (both depend only on shared).
+# ---------------------------------------------------------------------------
+resource "coolify_service" "dify" {
+  name             = "nexaduo-dify"
+  server_uuid      = tolist(data.coolify_servers.main.servers)[0].uuid
+  project_uuid     = coolify_project.main.uuid
+  environment_name = "production"
+  instant_deploy   = false
+
+  compose = file("${path.root}/../../../../deploy/docker-compose.dify.yml")
+
+  depends_on = [
+    coolify_service.shared,
+    coolify_service_envs.shared,
+    null_resource.verify_shared,
+  ]
+}
+
+resource "coolify_service_envs" "dify" {
+  uuid = coolify_service.dify.uuid
+
+  # Shared infra references
+  env {
+    key   = "POSTGRES_HOST"
+    value = "postgres"
+  }
+  env {
+    key   = "POSTGRES_PORT"
+    value = "5432"
+  }
+  env {
+    key   = "POSTGRES_USER"
+    value = var.postgres_user
+  }
+  env {
+    key        = "POSTGRES_PASSWORD"
+    value      = var.postgres_password
+    is_literal = true
+  }
+  env {
+    key   = "REDIS_HOST"
+    value = "redis"
+  }
+  env {
+    key        = "REDIS_PASSWORD"
+    value      = var.redis_password
+    is_literal = true
+  }
+  env {
+    key   = "TZ"
+    value = var.tz
+  }
+
+  # Dify core
+  env {
+    key        = "DIFY_SECRET_KEY"
+    value      = var.dify_secret_key
+    is_literal = true
+  }
+  env {
+    key   = "DIFY_LOG_LEVEL"
+    value = "INFO"
+  }
+  env {
+    key   = "DIFY_VECTOR_STORE"
+    value = "pgvector"
+  }
+
+  # Public URLs (DEPLOY-02): Cloudflare Worker handles /{tenant}/ path routing
+  env {
+    key   = "DIFY_CONSOLE_API_URL"
+    value = var.dify_console_api_url
+  }
+  env {
+    key   = "DIFY_APP_API_URL"
+    value = var.dify_app_api_url
+  }
+
+  # Sandbox + plugin-daemon
+  env {
+    key        = "DIFY_SANDBOX_API_KEY"
+    value      = var.dify_sandbox_api_key
+    is_literal = true
+  }
+  env {
+    key        = "DIFY_PLUGIN_DAEMON_KEY"
+    value      = var.dify_plugin_daemon_key
+    is_literal = true
+  }
+  env {
+    key        = "DIFY_PLUGIN_DIFY_INNER_API_KEY"
+    value      = var.dify_plugin_dify_inner_api_key
+    is_literal = true
+  }
+
+  # Metrics (consumed by Prometheus in nexaduo stack via otel-collector)
+  env {
+    key   = "DIFY_API_ENABLE_METRICS"
+    value = "true"
+  }
+  env {
+    key   = "INNER_API_METRICS_ENABLED"
+    value = "true"
+  }
+}
+
+# ---------------------------------------------------------------------------
+# Post-deploy health probe (D-05): wait for nexaduo-dify-api healthy AND
+# serve HTTP 200 on /console/api/setup via host-published port 5001.
+# ---------------------------------------------------------------------------
+resource "null_resource" "verify_dify" {
+  depends_on = [coolify_service.dify, coolify_service_envs.dify]
+
+  connection {
+    type        = "ssh"
+    user        = var.ssh_user
+    private_key = file(var.ssh_private_key_path)
+    host        = module.vm.public_ip
+  }
+
+  provisioner "remote-exec" {
+    inline = [
+      "echo 'Waiting for nexaduo-dify-api to start (up to 5 min)'",
+      "timeout 300 bash -c 'until docker inspect nexaduo-dify-api >/dev/null 2>&1; do sleep 5; done'",
+      "echo 'Probing http://localhost:5001/console/api/setup for HTTP 200 (up to 3 min)'",
+      "timeout 180 bash -c 'until [ \"$(curl -s -o /dev/null -w %%{http_code} http://localhost:5001/console/api/setup)\" = \"200\" ]; do sleep 5; done'",
+      "echo 'OK dify stack healthy'"
+    ]
+  }
+
+  triggers = {
+    compose_hash = filesha256("${path.root}/../../../../deploy/docker-compose.dify.yml")
+  }
+}
+
+output "coolify_dify_service_uuid" {
+  value = coolify_service.dify.uuid
+}
+
 output "coolify_project_uuid" {
   value = coolify_project.main.uuid
 }
