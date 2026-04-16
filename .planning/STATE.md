@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-last_updated: "2026-04-16T14:40:52.062Z"
+last_updated: "2026-04-16T14:53:18.866Z"
 last_activity: 2026-04-16
 progress:
   total_phases: 2
   completed_phases: 1
   total_plans: 8
-  completed_plans: 6
-  percent: 75
+  completed_plans: 7
+  percent: 88
 ---
 
 # Project State: NexaDuo Chat Services
@@ -24,7 +24,7 @@ progress:
 
 **Phase:** Phase 4 (Automated Provisioning)
 **Status:** Ready to execute
-**Progress:** [████████░░] 75%
+**Progress:** [█████████░] 88%
 
 ## Performance Metrics
 
@@ -58,6 +58,8 @@ progress:
 - [Phase 05]: Deployed Dify as an independent Coolify Terraform stack ordered after verified shared services.
 - [Phase 05]: Injected Dify URL, DB, Redis, sandbox, and plugin keys through coolify_service_envs with literal secret handling.
 - [Phase 05]: Added verify_dify SSH readiness gate requiring HTTP 200 on /console/api/setup before apply succeeds.
+- [Phase 05]: Use pre-built image env substitutions for middleware and self-healing to avoid Coolify build-context resolution failures.
+- [Phase 05]: Keep Terraform compose/filesha path depth aligned with existing 05-01..05-03 resources (../../../../) for compatibility.
 
 ### Todos
 
@@ -85,6 +87,7 @@ progress:
 | Phase 05 P01 | 753 | 3 tasks | 8 files |
 | Phase 05 P02 | 374 | 1 tasks | 2 files |
 | Phase 05 P03 | 86 | 1 tasks | 1 files |
+| Phase 05 P04 | 5m | 2 tasks | 2 files |
 
 ## Session Continuity
 
