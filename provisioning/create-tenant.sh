@@ -39,6 +39,7 @@ fi
 ACCOUNT_NAME="$1"
 ADMIN_EMAIL="$2"
 ADMIN_NAME="$3"
+TENANTS_FILE="$(cd "$(dirname "$0")" && pwd)/tenants.json"
 
 command -v jq >/dev/null || { echo "ERROR: jq não encontrado. Instale antes."; exit 1; }
 
@@ -83,6 +84,21 @@ curl -sS -X POST \
   -d "$(jq -nc --arg uid "$USER_ID" '{user_id:($uid|tonumber), role:"administrator"}')" \
   > /dev/null
 echo "    ✓ vinculado"
+
+echo "==> Registrando tenant em provisioning/tenants.json"
+SLUG="$(echo "$ACCOUNT_NAME" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g; s/^-+|-+$//g')"
+tmp_file="$(mktemp)"
+if [[ ! -f "$TENANTS_FILE" ]]; then
+  echo '[]' > "$TENANTS_FILE"
+fi
+jq --arg name "$ACCOUNT_NAME" --arg slug "$SLUG" --arg accountId "$ACCOUNT_ID" '
+  (map(select(.accountId == $accountId)) | length) as $exists
+  | if $exists > 0 then .
+    else . + [{name: $name, slug: $slug, accountId: $accountId}]
+    end
+' "$TENANTS_FILE" > "$tmp_file"
+mv "$tmp_file" "$TENANTS_FILE"
+echo "    ✓ tenant salvo (slug=${SLUG}, accountId=${ACCOUNT_ID})"
 
 cat <<NEXT
 

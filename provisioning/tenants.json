@@ -1,6 +1,12 @@
 [
   {
+    "name": "Acme",
     "slug": "acme",
     "accountId": "123"
+  },
+  {
+    "name": "NexaDuo Main",
+    "slug": "nexaduo-main",
+    "accountId": "1"
   }
 ]
