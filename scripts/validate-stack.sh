@@ -58,10 +58,15 @@ grep -Eq "OK Chatwoot Admin created successfully|Chatwoot is already configured"
 grep -Eq "OK Dify Admin created successfully|Dify is already configured" "$LOG_DIR/automation.log" \
   || fail "Dify automation did not succeed" "$LOG_DIR/automation.log"
 
-# 7. Sanity: no container should be in restart loop
+# 7. Run All Verification Tests
+step "running all verification tests"
+(cd "$AUTOMATION_DIR" && npm run test:all) >"$LOG_DIR/tests.log" 2>&1 \
+  || fail "verification tests failed" "$LOG_DIR/tests.log"
+
+# 8. Sanity: no container should be in restart loop
 bad=$(docker ps --filter "name=nexaduo-" --format '{{.Names}} {{.Status}}' | grep -Ei 'restart|unhealthy' || true)
 [[ -z "$bad" ]] || { echo "$bad" >&2; fail "unhealthy/restarting containers detected"; }
 
-echo "OK stack validated — all services healthy, automation idempotent"
+echo "OK stack validated — all services healthy, automation idempotent, tests passed"
 trap - EXIT
 rm -rf "$LOG_DIR"
