@@ -9,6 +9,14 @@ Automação (semi-manual) para criar um novo tenant (cliente) no stack NexaDuo.
 - **Dify:** [dify.nexaduo.com](https://dify.nexaduo.com)
 - **Evolution API (Manager):** `https://chat.nexaduo.com/evolution/manager` <!-- VERIFY: check correct public URL for evolution manager -->
 
+### Troubleshooting rápido (404 nas URLs públicas)
+
+Se `chat.nexaduo.com`, `dify.nexaduo.com` ou `coolify.nexaduo.com` estiverem respondendo 404 após deploy, execute:
+
+```bash
+./scripts/refresh-coolify-routes.sh
+```
+
 ### Estratégia de Multi-tenancy (Futuro)
 O roteamento para múltiplos tenants será baseado em paths:
 - **Chatwoot:** `chat.nexaduo.com/{tenant}/`
