@@ -61,3 +61,4 @@ progress:
 
 - [x] Provision production VM and deploy stack using Terraform (Phase 08 Plan 01).
 - [ ] Verify edge connectivity and onboard first production tenant (Phase 08 Plan 02).
+- [ ] Add Grafana production DNS record (`grafana.nexaduo.com`).
