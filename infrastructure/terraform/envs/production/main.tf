@@ -29,6 +29,15 @@ module "dns_dify" {
   proxied = true
 }
 
+module "dns_grafana" {
+  source = "../../modules/cloudflare-dns"
+
+  zone_id = var.cloudflare_zone_id
+  name    = "grafana"
+  value   = "${module.tunnel.tunnel_id}.cfargotunnel.com"
+  proxied = true
+}
+
 module "backup_storage" {
   source = "../../modules/gcp-storage"
 
