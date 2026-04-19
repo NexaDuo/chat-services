@@ -43,17 +43,21 @@ resource "cloudflare_zero_trust_tunnel_cloudflared_config" "config" {
   tunnel_id  = cloudflare_zero_trust_tunnel_cloudflared.main.id
 
   config {
+    # All hostnames route to Traefik (port 80) on the VM so it can perform
+    # host-based routing and correctly handle WebSocket upgrades (Action Cable
+    # for Chatwoot real-time, etc.). The Host header is preserved by the tunnel
+    # and Traefik uses it to dispatch to the right backend container.
     ingress_rule {
       hostname = "coolify.${var.base_domain}"
-      service  = "http://localhost:3000"
+      service  = "http://coolify-proxy:80"
     }
     ingress_rule {
       hostname = "chat.${var.base_domain}"
-      service  = "http://localhost:80"
+      service  = "http://coolify-proxy:80"
     }
     ingress_rule {
       hostname = "dify.${var.base_domain}"
-      service  = "http://localhost:80"
+      service  = "http://coolify-proxy:80"
     }
     ingress_rule {
       service = "http_status:404"

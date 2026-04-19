@@ -54,7 +54,10 @@ data "google_secret_manager_secret_version" "grafana_admin_password" {
   secret = "grafana_admin_password"
 }
 
-# (Optional) If coolify_api_token is in Secret Manager too:
 data "google_secret_manager_secret_version" "coolify_api_token" {
   secret = "coolify_api_token"
+}
+
+data "google_secret_manager_secret_version" "coolify_destination_uuid" {
+  secret = "coolify_destination_uuid"
 }

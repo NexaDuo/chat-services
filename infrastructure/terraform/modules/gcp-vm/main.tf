@@ -90,6 +90,18 @@ resource "google_compute_firewall" "allow_cloudflare" {
   source_ranges = jsondecode(data.http.cloudflare_ips.response_body).result.ipv4_cidrs
 }
 
+resource "google_compute_firewall" "allow_coolify" {
+  name    = "${var.name}-allow-coolify"
+  network = google_compute_network.vpc.name
+
+  allow {
+    protocol = "tcp"
+    ports    = ["8000"]
+  }
+
+  source_ranges = ["0.0.0.0/0"] # Temporary for setup; can be restricted later
+}
+
 resource "google_compute_instance" "vm" {
   name         = var.name
   machine_type = var.machine_type

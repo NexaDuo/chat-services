@@ -3,12 +3,6 @@ services:
     image: chatwoot/chatwoot:v4.1.0
     container_name: nexaduo-chatwoot-init
     restart: "no"
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    env_file: ../.env
     environment:
       NODE_ENV: production
       RAILS_ENV: production
@@ -37,7 +31,6 @@ services:
     depends_on:
       chatwoot-init:
         condition: service_completed_successfully
-    env_file: ../.env
     environment:
       NODE_ENV: production
       RAILS_ENV: production
@@ -70,7 +63,6 @@ services:
     restart: unless-stopped
     depends_on:
       - chatwoot-rails
-    env_file: ../.env
     environment:
       NODE_ENV: production
       RAILS_ENV: production

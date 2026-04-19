@@ -1,11 +1,61 @@
-# =============================================================================
-# NexaDuo — Omnichannel AI Stack
-# Aggregator file for local development.
-# Uses the segmented files from the deploy/ directory.
-# =============================================================================
-
+# docker-compose.yml (Local Unified Setup)
 include:
-  - path: deploy/docker-compose.shared.yml
-  - path: deploy/docker-compose.chatwoot.yml
-  - path: deploy/docker-compose.dify.yml
-  - path: deploy/docker-compose.nexaduo.yml
+  - deploy/docker-compose.shared.yml
+  - deploy/docker-compose.chatwoot.yml
+  - deploy/docker-compose.dify.yml
+  - deploy/docker-compose.nexaduo.yml
+
+services:
+  # Local overrides to enforce cross-stack dependencies which Coolify ignores
+  chatwoot-init:
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  dify-api:
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      dify-init:
+        condition: service_completed_successfully
+      dify-sandbox:
+        condition: service_started
+      dify-plugin-daemon:
+        condition: service_started
+      dify-ssrf-proxy:
+        condition: service_started
+
+  dify-worker:
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  dify-plugin-daemon:
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  evolution-api:
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  middleware:
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  self-healing-agent:
+    depends_on:
+      postgres:
+        condition: service_healthy

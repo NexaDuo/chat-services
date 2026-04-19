@@ -13,10 +13,6 @@ services:
     container_name: nexaduo-dify-api
     restart: unless-stopped
     depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
       dify-init:
         condition: service_completed_successfully
       dify-sandbox:
@@ -25,7 +21,6 @@ services:
         condition: service_started
       dify-ssrf-proxy:
         condition: service_started
-    env_file: ../.env
     environment:
       MODE: api
       MIGRATION_ENABLED: "true"
@@ -58,12 +53,6 @@ services:
     image: langgenius/dify-api:1.13.3
     container_name: nexaduo-dify-worker
     restart: unless-stopped
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    env_file: ../.env
     environment:
       MODE: worker
       SECRET_KEY: ${DIFY_SECRET_KEY}
@@ -82,7 +71,6 @@ services:
     image: langgenius/dify-web:1.13.3
     container_name: nexaduo-dify-web
     restart: unless-stopped
-    env_file: ../.env
     environment:
       CONSOLE_API_URL: ${DIFY_CONSOLE_API_URL:-http://localhost:5001}
       APP_API_URL: ${DIFY_APP_API_URL:-http://localhost:5001}
@@ -102,12 +90,6 @@ services:
     image: langgenius/dify-plugin-daemon:0.5.3-local
     container_name: nexaduo-dify-plugin-daemon
     restart: unless-stopped
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    env_file: ../.env
     environment:
       SERVER_KEY: ${DIFY_PLUGIN_DAEMON_KEY}
       DIFY_INNER_API_URL: http://dify-api:5001
@@ -130,7 +112,7 @@ services:
     networks:
       - chat-network
   dify-ssrf-proxy:
-    image: ubuntu/squid:22.04-22.04_beta
+    image: ubuntu/squid:latest
     container_name: nexaduo-dify-ssrf-proxy
     restart: unless-stopped
     networks:

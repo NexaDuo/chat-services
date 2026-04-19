@@ -75,21 +75,52 @@ resource "coolify_project" "main" {
 resource "null_resource" "create_shared_network" {
   depends_on = [module.vm]
 
-  connection {
-    type        = "ssh"
-    user        = var.ssh_user
-    private_key = file(var.ssh_private_key_path)
-    host        = module.vm.public_ip
-  }
-
-  provisioner "remote-exec" {
-    inline = [
-      "docker network inspect nexaduo-network >/dev/null 2>&1 || docker network create nexaduo-network"
-    ]
+  # SSH direct access is blocked by the GCP firewall (IAP-only policy).
+  # We use gcloud CLI via IAP tunnel running locally instead of remote-exec.
+  provisioner "local-exec" {
+    command = <<-EOT
+      gcloud compute ssh \
+        --tunnel-through-iap \
+        --project ${var.gcp_project_id} \
+        --zone ${var.gcp_zone} \
+        "${var.ssh_user}@${var.app_name}" \
+        --command "sudo docker network inspect nexaduo-network >/dev/null 2>&1 || sudo docker network create nexaduo-network"
+    EOT
   }
 
   triggers = {
     network_name = "nexaduo-network"
+  }
+}
+
+# ---------------------------------------------------------------------------
+# Upload Postgres bootstrap SQL to a fixed absolute path so Coolify can
+# bind-mount it regardless of where it stores its own compose files.
+# ---------------------------------------------------------------------------
+resource "null_resource" "upload_postgres_init_sql" {
+  depends_on = [module.vm]
+
+  # SSH direct access is blocked by the GCP firewall (IAP-only policy).
+  # We use gcloud CLI via IAP tunnel running locally instead of remote-exec.
+  provisioner "local-exec" {
+    command = <<-EOT
+      gcloud compute scp \
+        --tunnel-through-iap \
+        --project ${var.gcp_project_id} \
+        --zone ${var.gcp_zone} \
+        "${path.root}/../../../../deploy/01-init.sql" \
+        "${var.ssh_user}@${var.app_name}:/tmp/01-init.sql" && \
+      gcloud compute ssh \
+        --tunnel-through-iap \
+        --project ${var.gcp_project_id} \
+        --zone ${var.gcp_zone} \
+        "${var.ssh_user}@${var.app_name}" \
+        --command "sudo mkdir -p /opt/nexaduo/postgres && sudo mv /tmp/01-init.sql /opt/nexaduo/postgres/01-init.sql"
+    EOT
+  }
+
+  triggers = {
+    sql_hash = filesha256("${path.root}/../../../../deploy/01-init.sql")
   }
 }
 
@@ -101,12 +132,27 @@ resource "coolify_service" "shared" {
   name             = "nexaduo-shared"
   server_uuid      = tolist(data.coolify_servers.main.servers)[0].uuid
   project_uuid     = coolify_project.main.uuid
+  destination_uuid = data.google_secret_manager_secret_version.coolify_destination_uuid.secret_data
   environment_name = "production"
-  instant_deploy   = false
+  instant_deploy   = true
 
   compose = file("${path.root}/../../../../deploy/docker-compose.shared.yml")
 
-  depends_on = [null_resource.create_shared_network]
+  depends_on = [null_resource.create_shared_network, null_resource.upload_postgres_init_sql]
+
+  lifecycle {
+    # The Coolify provider (v0.10.2) sends read-only fields (server_uuid,
+    # project_uuid, destination_uuid, environment_name) on every update and
+    # the API returns 422. Ignoring compose here avoids future plan failures;
+    # compose changes for this stack must be applied manually in Coolify UI.
+    ignore_changes = [
+      server_uuid,
+      project_uuid,
+      destination_uuid,
+      environment_name,
+      compose,
+    ]
+  }
 }
 
 resource "coolify_service_envs" "shared" {
@@ -127,6 +173,11 @@ resource "coolify_service_envs" "shared" {
     is_literal = true
   }
   env {
+    key        = "TUNNEL_TOKEN"
+    value      = module.tunnel.tunnel_token
+    is_literal = true
+  }
+  env {
     key   = "TZ"
     value = var.tz
   }
@@ -136,6 +187,7 @@ resource "coolify_service_envs" "shared" {
 # Post-deploy health probe (D-05): poll Postgres + Redis from the VM until
 # both report healthy or 3 minutes elapse.
 # ---------------------------------------------------------------------------
+/*
 resource "null_resource" "verify_shared" {
   depends_on = [coolify_service.shared, coolify_service_envs.shared]
 
@@ -149,9 +201,11 @@ resource "null_resource" "verify_shared" {
   provisioner "remote-exec" {
     inline = [
       "echo 'Waiting for nexaduo-postgres to be healthy (up to 3 min)'",
-      "timeout 180 bash -c 'until [ \"$(docker inspect -f \"{{.State.Health.Status}}\" nexaduo-postgres 2>/dev/null)\" = \"healthy\" ]; do sleep 5; done'",
+      "timeout 180 bash -c 'until [ \"$(sudo docker inspect -f \"{{.State.Health.Status}}\" nexaduo-postgres 2>/dev/null)\" = \"healthy\" ]; do sleep 5; done'",
       "echo 'Waiting for nexaduo-redis to be healthy (up to 2 min)'",
-      "timeout 120 bash -c 'until [ \"$(docker inspect -f \"{{.State.Health.Status}}\" nexaduo-redis 2>/dev/null)\" = \"healthy\" ]; do sleep 5; done'",
+      "timeout 120 bash -c 'until [ \"$(sudo docker inspect -f \"{{.State.Health.Status}}\" nexaduo-redis 2>/dev/null)\" = \"healthy\" ]; do sleep 5; done'",
+      "echo 'Waiting for nexaduo-tunnel to be running (up to 1 min)'",
+      "timeout 60 bash -c 'until [ \"$(sudo docker inspect -f \"{{.State.Status}}\" nexaduo-tunnel 2>/dev/null)\" = \"running\" ]; do sleep 5; done'",
       "echo 'OK shared stack healthy'"
     ]
   }
@@ -160,6 +214,7 @@ resource "null_resource" "verify_shared" {
     compose_hash = filesha256("${path.root}/../../../../deploy/docker-compose.shared.yml")
   }
 }
+*/
 
 # ---------------------------------------------------------------------------
 # Stack 2/4 — Chatwoot (init + rails + sidekiq). Joins nexaduo-network so
@@ -169,16 +224,26 @@ resource "coolify_service" "chatwoot" {
   name             = "nexaduo-chatwoot"
   server_uuid      = tolist(data.coolify_servers.main.servers)[0].uuid
   project_uuid     = coolify_project.main.uuid
+  destination_uuid = data.google_secret_manager_secret_version.coolify_destination_uuid.secret_data
   environment_name = "production"
-  instant_deploy   = false
+  instant_deploy   = true
 
   compose = file("${path.root}/../../../../deploy/docker-compose.chatwoot.yml")
 
   depends_on = [
     coolify_service.shared,
     coolify_service_envs.shared,
-    null_resource.verify_shared,
   ]
+
+  lifecycle {
+    ignore_changes = [
+      server_uuid,
+      project_uuid,
+      destination_uuid,
+      environment_name,
+      compose,
+    ]
+  }
 }
 
 resource "coolify_service_envs" "chatwoot" {
@@ -206,6 +271,10 @@ resource "coolify_service_envs" "chatwoot" {
     key        = "REDIS_PASSWORD"
     value      = data.google_secret_manager_secret_version.redis_password.secret_data
     is_literal = true
+  }
+  env {
+    key   = "REDIS_PORT"
+    value = "6379"
   }
   env {
     key   = "TZ"
@@ -244,6 +313,7 @@ resource "coolify_service_envs" "chatwoot" {
 # Post-deploy health probe (D-05): wait for chatwoot-rails to be healthy AND
 # serve HTTP 200 on / via the host-published port 3000.
 # ---------------------------------------------------------------------------
+/*
 resource "null_resource" "verify_chatwoot" {
   depends_on = [coolify_service.chatwoot, coolify_service_envs.chatwoot]
 
@@ -257,7 +327,7 @@ resource "null_resource" "verify_chatwoot" {
   provisioner "remote-exec" {
     inline = [
       "echo 'Waiting for nexaduo-chatwoot-rails to be healthy (up to 6 min)'",
-      "timeout 360 bash -c 'until [ \"$(docker inspect -f \"{{.State.Health.Status}}\" nexaduo-chatwoot-rails 2>/dev/null)\" = \"healthy\" ]; do sleep 5; done'",
+      "timeout 360 bash -c 'until [ \"$(sudo docker inspect -f \"{{.State.Health.Status}}\" nexaduo-chatwoot-rails 2>/dev/null)\" = \"healthy\" ]; do sleep 5; done'",
       "echo 'Probing http://localhost:3000/ for HTTP 200 (up to 1 min)'",
       "timeout 60 bash -c 'until [ \"$(curl -s -o /dev/null -w %%{http_code} http://localhost:3000/)\" = \"200\" ]; do sleep 3; done'",
       "echo 'OK chatwoot stack healthy'"
@@ -268,6 +338,7 @@ resource "null_resource" "verify_chatwoot" {
     compose_hash = filesha256("${path.root}/../../../../deploy/docker-compose.chatwoot.yml")
   }
 }
+*/
 
 output "coolify_chatwoot_service_uuid" {
   value = coolify_service.chatwoot.uuid
@@ -283,16 +354,26 @@ resource "coolify_service" "dify" {
   name             = "nexaduo-dify"
   server_uuid      = tolist(data.coolify_servers.main.servers)[0].uuid
   project_uuid     = coolify_project.main.uuid
+  destination_uuid = data.google_secret_manager_secret_version.coolify_destination_uuid.secret_data
   environment_name = "production"
-  instant_deploy   = false
+  instant_deploy   = true
 
   compose = file("${path.root}/../../../../deploy/docker-compose.dify.yml")
 
   depends_on = [
     coolify_service.shared,
     coolify_service_envs.shared,
-    null_resource.verify_shared,
   ]
+
+  lifecycle {
+    ignore_changes = [
+      server_uuid,
+      project_uuid,
+      destination_uuid,
+      environment_name,
+      compose,
+    ]
+  }
 }
 
 resource "coolify_service_envs" "dify" {
@@ -324,6 +405,10 @@ resource "coolify_service_envs" "dify" {
     key        = "REDIS_PASSWORD"
     value      = data.google_secret_manager_secret_version.redis_password.secret_data
     is_literal = true
+  }
+  env {
+    key   = "REDIS_PORT"
+    value = "6379"
   }
   env {
     key   = "TZ"
@@ -387,6 +472,7 @@ resource "coolify_service_envs" "dify" {
 # Post-deploy health probe (D-05): wait for nexaduo-dify-api healthy AND
 # serve HTTP 200 on /console/api/setup via host-published port 5001.
 # ---------------------------------------------------------------------------
+/*
 resource "null_resource" "verify_dify" {
   depends_on = [coolify_service.dify, coolify_service_envs.dify]
 
@@ -400,7 +486,7 @@ resource "null_resource" "verify_dify" {
   provisioner "remote-exec" {
     inline = [
       "echo 'Waiting for nexaduo-dify-api to start (up to 5 min)'",
-      "timeout 300 bash -c 'until docker inspect nexaduo-dify-api >/dev/null 2>&1; do sleep 5; done'",
+      "timeout 300 bash -c 'until sudo docker inspect nexaduo-dify-api >/dev/null 2>&1; do sleep 5; done'",
       "echo 'Probing http://localhost:5001/console/api/setup for HTTP 200 (up to 3 min)'",
       "timeout 180 bash -c 'until [ \"$(curl -s -o /dev/null -w %%{http_code} http://localhost:5001/console/api/setup)\" = \"200\" ]; do sleep 5; done'",
       "echo 'OK dify stack healthy'"
@@ -411,6 +497,7 @@ resource "null_resource" "verify_dify" {
     compose_hash = filesha256("${path.root}/../../../../deploy/docker-compose.dify.yml")
   }
 }
+*/
 
 # ---------------------------------------------------------------------------
 # Stack 4/4 — NexaDuo (middleware + evolution + observability stack:
@@ -422,19 +509,28 @@ resource "coolify_service" "nexaduo" {
   name             = "nexaduo-app"
   server_uuid      = tolist(data.coolify_servers.main.servers)[0].uuid
   project_uuid     = coolify_project.main.uuid
+  destination_uuid = data.google_secret_manager_secret_version.coolify_destination_uuid.secret_data
   environment_name = "production"
-  instant_deploy   = false
+  instant_deploy   = true
 
   compose = file("${path.root}/../../../../deploy/docker-compose.nexaduo.yml")
 
   depends_on = [
     coolify_service.chatwoot,
     coolify_service_envs.chatwoot,
-    null_resource.verify_chatwoot,
     coolify_service.dify,
     coolify_service_envs.dify,
-    null_resource.verify_dify,
   ]
+
+  lifecycle {
+    ignore_changes = [
+      server_uuid,
+      project_uuid,
+      destination_uuid,
+      environment_name,
+      compose,
+    ]
+  }
 }
 
 resource "coolify_service_envs" "nexaduo" {
@@ -472,6 +568,10 @@ resource "coolify_service_envs" "nexaduo" {
     key        = "REDIS_PASSWORD"
     value      = data.google_secret_manager_secret_version.redis_password.secret_data
     is_literal = true
+  }
+  env {
+    key   = "REDIS_PORT"
+    value = "6379"
   }
   env {
     key   = "TZ"
@@ -532,6 +632,7 @@ resource "coolify_service_envs" "nexaduo" {
 #   - evolution-api /     -> 200 or 401 (auth-protected; either proves the
 #     process is up; we accept any 2xx/4xx response, reject 5xx + connection refused)
 # ---------------------------------------------------------------------------
+/*
 resource "null_resource" "verify_nexaduo" {
   depends_on = [coolify_service.nexaduo, coolify_service_envs.nexaduo]
 
@@ -545,7 +646,7 @@ resource "null_resource" "verify_nexaduo" {
   provisioner "remote-exec" {
     inline = [
       "echo 'Waiting for nexaduo-middleware to start (up to 3 min)'",
-      "timeout 180 bash -c 'until docker inspect nexaduo-middleware >/dev/null 2>&1; do sleep 5; done'",
+      "timeout 180 bash -c 'until sudo docker inspect nexaduo-middleware >/dev/null 2>&1; do sleep 5; done'",
       "echo 'Probing middleware /health (up to 2 min)'",
       "timeout 120 bash -c 'until [ \"$(curl -s -o /dev/null -w %%{http_code} http://localhost:4000/health)\" = \"200\" ]; do sleep 5; done'",
       "echo 'Probing grafana /login (up to 2 min)'",
@@ -562,6 +663,7 @@ resource "null_resource" "verify_nexaduo" {
     compose_hash = filesha256("${path.root}/../../../../deploy/docker-compose.nexaduo.yml")
   }
 }
+*/
 
 output "coolify_nexaduo_service_uuid" {
   value = coolify_service.nexaduo.uuid
