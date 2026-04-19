@@ -164,8 +164,12 @@ jobs:
           wait_for_http "Chatwoot" "http://localhost:3000/" "200" 90 5
           wait_for_http "Dify setup API" "http://localhost:5001/console/api/setup" "200" 90 5
           wait_for_http "Dify web" "http://localhost:3001/install" "200" 90 5
-          wait_for_http "Middleware" "http://localhost:4000/health" "200" 90 5
           wait_for_http "Grafana" "http://localhost:3002/login" "200" 90 5
+
+      - name: Reuse middleware health script
+        working-directory: ${{ github.workspace }}
+        run: |
+          bash scripts/verify-middleware-health.sh
 
       - name: Run existing Playwright checks
         working-directory: ${{ github.workspace }}/automation
