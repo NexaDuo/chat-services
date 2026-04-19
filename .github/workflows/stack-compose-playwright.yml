@@ -15,6 +15,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 70
     env:
+      STACK_ROOT: ${{ github.workspace }}
+      MIDDLEWARE_IMAGE_TAG: 0.1.0
+      SELF_HEALING_IMAGE_TAG: 0.1.0
       COMPOSE_FILES: >-
         -f deploy/docker-compose.shared.yml
         -f deploy/docker-compose.chatwoot.yml
@@ -31,7 +34,7 @@ jobs:
           node-version: '22'
 
       - name: Install Playwright dependencies
-        working-directory: /home/runner/work/chat-services/chat-services/automation
+        working-directory: ${{ github.workspace }}/automation
         run: |
           npm ci
           npx playwright install --with-deps chromium
@@ -40,7 +43,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          cat > /home/runner/work/chat-services/chat-services/.env <<'EOF'
+          cat > "$STACK_ROOT/.env" <<EOF
           COMPOSE_PROJECT_NAME=nexaduo
           TZ=UTC
           ADMIN_EMAIL=admin@example.com
@@ -91,7 +94,7 @@ jobs:
           MIDDLEWARE_PORT=4000
           MIDDLEWARE_LOG_LEVEL=info
           CHATWOOT_BASE_URL=http://chatwoot-rails:3000
-          CHATWOOT_API_TOKEN=
+          CHATWOOT_API_TOKEN=ci-placeholder-token
           CHATWOOT_WEBHOOK_TOKEN=chatwoot-webhook-token-ci
           DIFY_BASE_URL=http://dify-api:5001/v1
           TENANT_MAP={}
@@ -103,35 +106,35 @@ jobs:
           GRAFANA_ADMIN_USER=admin
           GRAFANA_ADMIN_PASSWORD=grafana-pass-ci
 
-          MIDDLEWARE_IMAGE=ghcr.io/nexaduo/middleware:0.1.0
-          SELF_HEALING_IMAGE=ghcr.io/nexaduo/self-healing-agent:0.1.0
+          MIDDLEWARE_IMAGE=ghcr.io/nexaduo/middleware:${MIDDLEWARE_IMAGE_TAG}
+          SELF_HEALING_IMAGE=ghcr.io/nexaduo/self-healing-agent:${SELF_HEALING_IMAGE_TAG}
           TUNNEL_TOKEN=disabled-in-ci
           EOF
 
           sudo mkdir -p /opt/nexaduo/postgres
-          sudo cp /home/runner/work/chat-services/chat-services/deploy/01-init.sql /opt/nexaduo/postgres/01-init.sql
+          sudo cp "$STACK_ROOT/deploy/01-init.sql" /opt/nexaduo/postgres/01-init.sql
 
           sudo mkdir -p /opt/nexaduo/observability/loki
           sudo mkdir -p /opt/nexaduo/observability/promtail
           sudo mkdir -p /opt/nexaduo/observability/prometheus
           sudo mkdir -p /opt/nexaduo/observability/grafana
 
-          sudo cp /home/runner/work/chat-services/chat-services/observability/loki/loki.yaml /opt/nexaduo/observability/loki/loki.yaml
-          sudo cp /home/runner/work/chat-services/chat-services/observability/promtail/promtail.yaml /opt/nexaduo/observability/promtail/promtail.yaml
-          sudo cp /home/runner/work/chat-services/chat-services/observability/prometheus/prometheus.yml /opt/nexaduo/observability/prometheus/prometheus.yml
-          sudo cp -R /home/runner/work/chat-services/chat-services/observability/grafana/provisioning /opt/nexaduo/observability/grafana/
+          sudo cp "$STACK_ROOT/observability/loki/loki.yaml" /opt/nexaduo/observability/loki/loki.yaml
+          sudo cp "$STACK_ROOT/observability/promtail/promtail.yaml" /opt/nexaduo/observability/promtail/promtail.yaml
+          sudo cp "$STACK_ROOT/observability/prometheus/prometheus.yml" /opt/nexaduo/observability/prometheus/prometheus.yml
+          sudo cp -R "$STACK_ROOT/observability/grafana/provisioning" /opt/nexaduo/observability/grafana/
 
       - name: Build local images used by compose
         run: |
-          docker build -t ghcr.io/nexaduo/middleware:0.1.0 /home/runner/work/chat-services/chat-services/middleware
-          docker build -t ghcr.io/nexaduo/self-healing-agent:0.1.0 /home/runner/work/chat-services/chat-services/agents/self-healing
+          docker build -t ghcr.io/nexaduo/middleware:${MIDDLEWARE_IMAGE_TAG} "$STACK_ROOT/middleware"
+          docker build -t ghcr.io/nexaduo/self-healing-agent:${SELF_HEALING_IMAGE_TAG} "$STACK_ROOT/agents/self-healing"
 
       - name: Start stack with Docker Compose
         run: |
           set -euo pipefail
           docker network create nexaduo-network || true
-          docker compose $COMPOSE_FILES --env-file /home/runner/work/chat-services/chat-services/.env config > /tmp/compose-config.txt
-          docker compose $COMPOSE_FILES --env-file /home/runner/work/chat-services/chat-services/.env up -d --remove-orphans --scale cloudflared=0
+          # cloudflared requires a valid tunnel token and is not part of CI smoke checks.
+          docker compose $COMPOSE_FILES --env-file "$STACK_ROOT/.env" up -d --remove-orphans --scale cloudflared=0
 
       - name: Wait for core services
         run: |
@@ -161,10 +164,11 @@ jobs:
           wait_for_http "Chatwoot" "http://localhost:3000/" "200" 90 5
           wait_for_http "Dify setup API" "http://localhost:5001/console/api/setup" "200" 90 5
           wait_for_http "Dify web" "http://localhost:3001/install" "200" 90 5
+          wait_for_http "Middleware" "http://localhost:4000/health" "200" 90 5
           wait_for_http "Grafana" "http://localhost:3002/login" "200" 90 5
 
       - name: Run existing Playwright checks
-        working-directory: /home/runner/work/chat-services/chat-services/automation
+        working-directory: ${{ github.workspace }}/automation
         run: |
           npm run setup
           npm run verify:dify-install
@@ -174,8 +178,8 @@ jobs:
         if: always()
         run: |
           mkdir -p /tmp/docker-logs
-          docker compose $COMPOSE_FILES --env-file /home/runner/work/chat-services/chat-services/.env ps > /tmp/docker-logs/compose-ps.txt || true
-          docker compose $COMPOSE_FILES --env-file /home/runner/work/chat-services/chat-services/.env logs --no-color > /tmp/docker-logs/compose-logs.txt || true
+          docker compose $COMPOSE_FILES --env-file "$STACK_ROOT/.env" ps > /tmp/docker-logs/compose-ps.txt || true
+          docker compose $COMPOSE_FILES --env-file "$STACK_ROOT/.env" logs --no-color > /tmp/docker-logs/compose-logs.txt || true
 
       - name: Upload diagnostics artifacts
         if: always()
@@ -185,10 +189,10 @@ jobs:
           path: |
             /tmp/docker-logs/compose-ps.txt
             /tmp/docker-logs/compose-logs.txt
-            /home/runner/work/chat-services/chat-services/automation/*.png
+            ${{ github.workspace }}/automation/*.png
           if-no-files-found: ignore
 
       - name: Teardown stack
         if: always()
         run: |
-          docker compose $COMPOSE_FILES --env-file /home/runner/work/chat-services/chat-services/.env down -v --remove-orphans || true
+          docker compose $COMPOSE_FILES --env-file "$STACK_ROOT/.env" down -v --remove-orphans || true
