@@ -39,7 +39,7 @@
   3. All services (Chatwoot, Dify, Middleware) report healthy.
   4. Initial tenant connectivity is verified through the edge.
 **Plans**:
-- [ ] .planning/phases/08-production-provisioning/08-01-PLAN.md — Production VM Provisioning and Service Verification.
+- [x] .planning/phases/08-production-provisioning/08-01-PLAN.md — Production VM Provisioning and Service Verification.
 - [ ] .planning/phases/08-production-provisioning/08-02-PLAN.md — Edge Connectivity & Multi-tenant Verification.
 
 ## Progress
@@ -53,7 +53,7 @@
 | 5. Core Service Deployment | 5/5 | Complete | 2026-04-16 |
 | 6. Secret Management | 1/1 | Complete | 2026-04-16 |
 | 7. Repository Hardening | 2/2 | Complete | 2026-04-16 |
-| 8. Production Provisioning | 0/2 | In Progress | - |
+| 8. Production Provisioning | 1/2 | In Progress | - |
 
 ## Traceability (Requirements)
 
