@@ -1,3 +1,18 @@
+---
+gsd_state_version: 1.0
+milestone: v1.0
+milestone_name: milestone
+status: planning
+last_updated: "2026-04-16T20:20:00.000Z"
+last_activity: 2026-04-16
+progress:
+  total_phases: 8
+  completed_phases: 7
+  total_plans: 18
+  completed_plans: 16
+  percent: 89
+---
+
 # Project State: NexaDuo Chat Services
 
 ## Project Reference
@@ -8,15 +23,15 @@
 ## Current Position
 
 **Phase:** Phase 08 (Production Provisioning & Rollout)
-**Status:** PLANNING
-**Progress:** [░░░░░░░░░░] 0%
+**Status:** IN-PROGRESS
+**Progress:** [████████░░] 89%
 
-**Note:** Production infrastructure plans created. Ready to execute Terraform apply and verify end-to-end edge connectivity.
+**Note:** Planning for Phase 08 is complete. Plan 01 (Production VM Provisioning) is ready for execution.
 
 ## Performance Metrics
 
-- **Total Requirements:** 30
-- **Requirement Coverage:** 100% (30/30)
+- **Total Requirements:** 25
+- **Requirement Coverage:** 100% (25/25)
 - **Phase Completion:** 7/8
 - **Plan Completion:** 16/18
 
@@ -24,17 +39,15 @@
 
 ### Decisions
 
+- ... (previous decisions)
 - [Phase 06]: Use **GCP Secret Manager** as the central secret management solution.
-- [Phase 07]: Use `alpine:3.19` and `redis:7.2.4-alpine` for consistent environment pinning.
-- [Phase 07]: Enforce fail-fast behavior for all service credentials and database URLs.
-- [Phase 07]: Implement `X-Chatwoot-Webhook-Token` validation for all incoming webhooks.
-- [Phase 08]: Perform a **targeted Terraform apply** for base infrastructure (VM, Tunnel) before deploying Coolify services to handle API token initialization.
+- [Phase 08]: Two-step Terraform rollout (Infrastructure -> pause for API tokens -> Services).
+- [Phase 08]: Verify multi-tenancy via production Cloudflare edge paths.
 
 ### Completed Todos
 
-- [x] Phase 1–5: Core platform foundation and multi-tenant stack deployment.
-- [x] Phase 6: Secret management hardening (GCP Secret Manager integration).
-- [x] Phase 7: Repository Hardening (Scrubbing, Pinning, Webhook Auth, Ingress).
+- [x] Phase 1–7: Foundation, multi-tenant deployment, and repository hardening.
+- [x] Phase 8 Planning: Production Provisioning and Verification.
 
 ### Deferred Gaps (Phase 05/06)
 
@@ -45,19 +58,5 @@
 
 ### Pending Todos
 
-- [ ] Execute `08-01-PLAN.md` to provision production VM and deploy stack.
-- [ ] Execute `08-02-PLAN.md` to verify edge connectivity and onboard first tenant.
----
-gsd_state_version: 1.0
-milestone: v1.0
-milestone_name: milestone
-status: planning
-last_updated: "2026-04-16T21:00:00.000Z"
-last_activity: 2026-04-16
-progress:
-  total_phases: 8
-  completed_phases: 7
-  total_plans: 18
-  completed_plans: 16
-  percent: 88
----
+- [ ] Provision production VM and deploy stack using Terraform (Phase 08 Plan 01).
+- [ ] Verify edge connectivity and onboard first production tenant (Phase 08 Plan 02).
