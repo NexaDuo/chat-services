@@ -41,6 +41,13 @@ check_local_not_404() {
   [[ "${code}" != "404" ]]
 }
 
+check_local_dify_setup() {
+  local code
+  code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 15 -H "Host: dify.${BASE_DOMAIN}" http://127.0.0.1/console/api/setup || true)"
+  echo "Local Traefik dify.${BASE_DOMAIN}/console/api/setup -> HTTP ${code}"
+  [[ "${code}" == "200" ]]
+}
+
 container_by_subname() {
   local subname="$1"
   sudo docker ps -a \
@@ -63,13 +70,16 @@ sleep 5
 
 if ! check_local_not_404 "chat.${BASE_DOMAIN}" \
   || ! check_local_not_404 "dify.${BASE_DOMAIN}" \
-  || ! check_local_not_404 "coolify.${BASE_DOMAIN}"; then
-  echo "Dynamic rebuild still returning 404; applying deterministic fallback routes..."
+  || ! check_local_not_404 "coolify.${BASE_DOMAIN}" \
+  || ! check_local_dify_setup; then
+  echo "Dynamic rebuild still incomplete; applying deterministic fallback routes..."
 
   chat_container="$(container_by_subname chatwoot-rails)"
   dify_container="$(container_by_subname dify-web)"
+  dify_api_container="$(container_by_subname dify-api)"
   [[ -n "${chat_container}" ]] || { echo "chatwoot-rails container not found" >&2; exit 1; }
   [[ -n "${dify_container}" ]] || { echo "dify-web container not found" >&2; exit 1; }
+  [[ -n "${dify_api_container}" ]] || { echo "dify-api container not found" >&2; exit 1; }
 
   tmp_file="$(mktemp)"
   cat > "${tmp_file}" <<EOF
@@ -83,6 +93,11 @@ http:
       rule: "Host(\`dify.${BASE_DOMAIN}\`)"
       entryPoints: [http, https]
       service: nexaduo-dify-svc
+    nexaduo-dify-api:
+      rule: "Host(\`dify.${BASE_DOMAIN}\`) && PathPrefix(\`/console/api\`)"
+      priority: 200
+      entryPoints: [http, https]
+      service: nexaduo-dify-api-svc
     nexaduo-coolify:
       rule: "Host(\`coolify.${BASE_DOMAIN}\`)"
       entryPoints: [http, https]
@@ -96,6 +111,10 @@ http:
       loadBalancer:
         servers:
           - url: "http://${dify_container}:3000"
+    nexaduo-dify-api-svc:
+      loadBalancer:
+        servers:
+          - url: "http://${dify_api_container}:5001"
     nexaduo-coolify-svc:
       loadBalancer:
         servers:
@@ -110,6 +129,7 @@ EOF
   check_local_not_404 "chat.${BASE_DOMAIN}" || { echo "chat route still 404 after fallback." >&2; exit 1; }
   check_local_not_404 "dify.${BASE_DOMAIN}" || { echo "dify route still 404 after fallback." >&2; exit 1; }
   check_local_not_404 "coolify.${BASE_DOMAIN}" || { echo "coolify route still 404 after fallback." >&2; exit 1; }
+  check_local_dify_setup || { echo "dify setup API still failing after fallback." >&2; exit 1; }
 fi
 REMOTE
 
@@ -117,5 +137,9 @@ echo "Checking public domains..."
 check_public_not_404 "chat.${BASE_DOMAIN}"
 check_public_not_404 "dify.${BASE_DOMAIN}"
 check_public_not_404 "coolify.${BASE_DOMAIN}"
+echo "Checking Dify setup API..."
+setup_code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 "https://dify.${BASE_DOMAIN}/console/api/setup")"
+echo "Public dify.${BASE_DOMAIN}/console/api/setup -> HTTP ${setup_code}"
+[[ "${setup_code}" == "200" ]] || { echo "Dify setup API still failing at edge." >&2; exit 1; }
 
 echo "Coolify routes refreshed and domains are no longer returning 404."
