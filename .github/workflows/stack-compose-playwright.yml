@@ -13,7 +13,7 @@ permissions:
 
 jobs:
   stack-e2e:
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     timeout-minutes: 70
     env:
       STACK_ROOT: ${{ github.workspace }}
