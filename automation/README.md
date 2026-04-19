@@ -20,7 +20,24 @@ Este diretório contém scripts do Playwright para automatizar a configuração 
     npm run setup
     ```
 
-4.  **Validar rota de instalação do Dify (Playwright):**
+4.  **Executar todos os testes de validação:**
+    ```bash
+    npm run test:all
+    ```
+
+### Atalhos na Raiz:
+Para facilitar o ciclo completo (Clean -> Up -> Setup -> Test), você pode usar os comandos na raiz do projeto:
+```bash
+# Via script bash
+./run-tests.sh
+
+# Via Makefile
+make test
+```
+
+## Scripts Individuais:
+
+1.  **Validar rota de instalação do Dify (Playwright):**
     ```bash
     npm run verify:dify-install
     ```

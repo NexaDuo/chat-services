@@ -9,7 +9,7 @@
 - [x] **Phase 5: Core Service Deployment** - Deploy Chatwoot, Dify, and Middleware in a multi-tenant configuration. (Completed: 2026-04-16)
 - [x] **Phase 6: Secret Management & Security Hardening** - Move sensitive data to GCP Secret Manager for centralized and secure handling. (Completed: 2026-04-16)
 - [x] **Phase 7: Repository Hardening for Public Release** - Address security audit findings (rotate secrets, remove fallbacks, webhook auth, image pinning) before making the repo public. (Completed: 2026-04-16)
-- [ ] **Phase 8: Production Provisioning & Rollout** - Finalize production VM via Terraform apply, verify Cloudflare Tunnel connectivity, and perform initial tenant onboarding. (In Progress)
+- [x] **Phase 8: Production Provisioning & Rollout** - Finalize production VM via Terraform apply, verify Cloudflare Tunnel connectivity, and perform initial tenant onboarding. (Completed: 2026-04-19)
 
 ## Phase Details
 
@@ -40,7 +40,7 @@
   4. Initial tenant connectivity is verified through the edge.
 **Plans**:
 - [x] .planning/phases/08-production-provisioning/08-01-PLAN.md — Production VM Provisioning and Service Verification.
-- [ ] .planning/phases/08-production-provisioning/08-02-PLAN.md — Edge Connectivity & Multi-tenant Verification.
+- [x] .planning/phases/08-production-provisioning/08-02-PLAN.md — Edge Connectivity & Multi-tenant Verification.
 
 ## Progress
 
@@ -53,7 +53,7 @@
 | 5. Core Service Deployment | 5/5 | Complete | 2026-04-16 |
 | 6. Secret Management | 1/1 | Complete | 2026-04-16 |
 | 7. Repository Hardening | 2/2 | Complete | 2026-04-16 |
-| 8. Production Provisioning | 1/2 | In Progress | - |
+| 8. Production Provisioning | 2/2 | Complete | 2026-04-19 |
 
 ## Traceability (Requirements)
 
