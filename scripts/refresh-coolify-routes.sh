@@ -70,6 +70,7 @@ sleep 5
 
 if ! check_local_not_404 "chat.${BASE_DOMAIN}" \
   || ! check_local_not_404 "dify.${BASE_DOMAIN}" \
+  || ! check_local_not_404 "grafana.${BASE_DOMAIN}" \
   || ! check_local_not_404 "coolify.${BASE_DOMAIN}" \
   || ! check_local_dify_setup; then
   echo "Dynamic rebuild still incomplete; applying deterministic fallback routes..."
@@ -77,9 +78,11 @@ if ! check_local_not_404 "chat.${BASE_DOMAIN}" \
   chat_container="$(container_by_subname chatwoot-rails)"
   dify_container="$(container_by_subname dify-web)"
   dify_api_container="$(container_by_subname dify-api)"
+  grafana_container="$(container_by_subname grafana)"
   [[ -n "${chat_container}" ]] || { echo "chatwoot-rails container not found" >&2; exit 1; }
   [[ -n "${dify_container}" ]] || { echo "dify-web container not found" >&2; exit 1; }
   [[ -n "${dify_api_container}" ]] || { echo "dify-api container not found" >&2; exit 1; }
+  [[ -n "${grafana_container}" ]] || { echo "grafana container not found" >&2; exit 1; }
 
   tmp_file="$(mktemp)"
   cat > "${tmp_file}" <<EOF
@@ -102,6 +105,10 @@ http:
       rule: "Host(\`coolify.${BASE_DOMAIN}\`)"
       entryPoints: [http, https]
       service: nexaduo-coolify-svc
+    nexaduo-grafana:
+      rule: "Host(\`grafana.${BASE_DOMAIN}\`)"
+      entryPoints: [http, https]
+      service: nexaduo-grafana-svc
   services:
     nexaduo-chat-svc:
       loadBalancer:
@@ -119,6 +126,10 @@ http:
       loadBalancer:
         servers:
           - url: "http://coolify:8080"
+    nexaduo-grafana-svc:
+      loadBalancer:
+        servers:
+          - url: "http://${grafana_container}:3000"
 EOF
   sudo install -o root -g root -m 0644 "${tmp_file}" /data/coolify/proxy/dynamic/nexaduo-routes.yaml
   rm -f "${tmp_file}"
@@ -128,6 +139,7 @@ EOF
 
   check_local_not_404 "chat.${BASE_DOMAIN}" || { echo "chat route still 404 after fallback." >&2; exit 1; }
   check_local_not_404 "dify.${BASE_DOMAIN}" || { echo "dify route still 404 after fallback." >&2; exit 1; }
+  check_local_not_404 "grafana.${BASE_DOMAIN}" || { echo "grafana route still 404 after fallback." >&2; exit 1; }
   check_local_not_404 "coolify.${BASE_DOMAIN}" || { echo "coolify route still 404 after fallback." >&2; exit 1; }
   check_local_dify_setup || { echo "dify setup API still failing after fallback." >&2; exit 1; }
 fi
@@ -136,6 +148,7 @@ REMOTE
 echo "Checking public domains..."
 check_public_not_404 "chat.${BASE_DOMAIN}"
 check_public_not_404 "dify.${BASE_DOMAIN}"
+check_public_not_404 "grafana.${BASE_DOMAIN}"
 check_public_not_404 "coolify.${BASE_DOMAIN}"
 echo "Checking Dify setup API..."
 setup_code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 "https://dify.${BASE_DOMAIN}/console/api/setup")"

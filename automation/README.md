@@ -25,9 +25,14 @@ Este diretório contém scripts do Playwright para automatizar a configuração 
     npm run verify:dify-install
     ```
 
-5.  **Validar envio de mensagem no Chatwoot + evidência no middleware (Playwright):**
+5.  **Validar login e acesso de conversa no Chatwoot (Playwright):**
     ```bash
     npm run verify:chatwoot-message
+    ```
+
+6.  **Validar acesso público e login no Grafana (Playwright):**
+    ```bash
+    npm run verify:grafana-access
     ```
 
 ## Configuração:
@@ -38,6 +43,9 @@ O script lê as credenciais do arquivo `.env` na raiz do projeto:
 - `DIFY_CONSOLE_WEB_URL`
 - `CHATWOOT_ADMIN_EMAIL` (opcional; fallback: `ADMIN_EMAIL`)
 - `CHATWOOT_ADMIN_PASSWORD` (opcional; fallback: `ADMIN_PASSWORD`)
-- `GCP_PROJECT_ID` (opcional, default: `nexaduo-492818`)
-- `GCP_ZONE` (opcional, default: `us-central1-b`)
-- `GCP_VM_NAME` (opcional, default: `nexaduo-chat-services`)
+- `CHATWOOT_ACCOUNT_ID` (opcional; força conta específica no smoke test de mensagens)
+- `CHATWOOT_CONVERSATION_ID` (opcional; abre conversa específica quando o inbox está vazio no filtro)
+- `CHATWOOT_CONTACT_HINT` (opcional; texto para localizar conversa quando não há card visível)
+- `GRAFANA_URL` (opcional; default: `https://grafana.nexaduo.com`)
+- `GRAFANA_ADMIN_USER`
+- `GRAFANA_ADMIN_PASSWORD`

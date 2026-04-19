@@ -7,7 +7,8 @@
   "scripts": {
     "setup": "node initial-setup.js",
     "verify:dify-install": "node verify-dify-install.js",
-    "verify:chatwoot-message": "node verify-chatwoot-message.js"
+    "verify:chatwoot-message": "node verify-chatwoot-message.js",
+    "verify:grafana-access": "node verify-grafana-access.js"
   },
   "dependencies": {
     "playwright": "^1.42.1",
