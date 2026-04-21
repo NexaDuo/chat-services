@@ -10,25 +10,9 @@
 - [x] **Phase 6: Secret Management & Security Hardening** - Move sensitive data to GCP Secret Manager for centralized and secure handling. (Completed: 2026-04-16)
 - [x] **Phase 7: Repository Hardening for Public Release** - Address security audit findings (rotate secrets, remove fallbacks, webhook auth, image pinning) before making the repo public. (Completed: 2026-04-16)
 - [x] **Phase 8: Production Provisioning & Rollout** - Finalize production VM via Terraform apply, verify Cloudflare Tunnel connectivity, and perform initial tenant onboarding. (Completed: 2026-04-19)
+- [x] **Phase 09: Architectural Infrastructure Refactor** - Separate Infrastructure (Foundation) and Tenant (Applications) layers to resolve coupling and provider initialization timeouts. (Completed: 2024-04-21)
 
 ## Phase Details
-
-### Phase 6: Secret Management & Security Hardening
-**Goal**: Centralize secrets in GCP Secret Manager.
-**Plans**:
-- [x] .planning/phases/06-secret-management-and-security/06-01-PLAN.md — Migrate to GCP Secret Manager.
-
-### Phase 7: Repository Hardening for Public Release
-**Goal**: Remove all committed secrets and insecure defaults to allow for safe public GitHub release.
-**Completed**: 2026-04-16
-**Success Criteria** (what must be TRUE):
-  1. No hardcoded secrets in .env.example, compose files, or source code. (PASSED)
-  2. Webhook auth implemented for Chatwoot. (PASSED)
-  3. Container images pinned to specific versions. (PASSED)
-  4. Wildcard CORS removed from service configs. (PASSED)
-**Plans**:
-- [x] .planning/phases/07-repository-hardening/07-01-PLAN.md — Global Secret Scrubbing & Image Pinning.
-- [x] .planning/phases/07-repository-hardening/07-02-PLAN.md — Webhook Security & Ingress Hardening.
 
 ### Phase 8: Production Provisioning & Rollout
 **Goal**: Provision the final production infrastructure and verify end-to-end connectivity.
@@ -42,6 +26,13 @@
 - [x] .planning/phases/08-production-provisioning/08-01-PLAN.md — Production VM Provisioning and Service Verification.
 - [x] .planning/phases/08-production-provisioning/08-02-PLAN.md — Edge Connectivity & Multi-tenant Verification.
 
+### Phase 09: Architectural Infrastructure Refactor
+**Goal**: Separate Infrastructure (Foundation) and Tenant (Applications) layers to resolve coupling and provider initialization timeouts.
+**Plans**: 3 plans
+- [x] .planning/phases/09-architectural-infrastructure-refactor/09-01-PLAN.md — Foundation Layer Isolation.
+- [x] .planning/phases/09-architectural-infrastructure-refactor/09-02-PLAN.md — Bootstrap Script & Secret Bridging.
+- [x] .planning/phases/09-architectural-infrastructure-refactor/09-03-PLAN.md — Tenant Layer Isolation & Documentation.
+
 ## Progress
 
 | Phase | Plans Complete | Status | Completed |
@@ -54,6 +45,7 @@
 | 6. Secret Management | 1/1 | Complete | 2026-04-16 |
 | 7. Repository Hardening | 2/2 | Complete | 2026-04-16 |
 | 8. Production Provisioning | 2/2 | Complete | 2026-04-19 |
+| 9. Infra Refactor | 3/3 | Complete | 2026-04-21 |
 
 ## Traceability (Requirements)
 
