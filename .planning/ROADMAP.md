@@ -16,7 +16,7 @@
 ### Phase 6: Secret Management & Security Hardening
 **Goal**: Centralize secrets in GCP Secret Manager.
 **Plans**:
-- [x] .planning/quick/20260416-harden-secret-management/PLAN.md — Migrate to GCP Secret Manager.
+- [x] .planning/phases/06-secret-management-and-security/06-01-PLAN.md — Migrate to GCP Secret Manager.
 
 ### Phase 7: Repository Hardening for Public Release
 **Goal**: Remove all committed secrets and insecure defaults to allow for safe public GitHub release.

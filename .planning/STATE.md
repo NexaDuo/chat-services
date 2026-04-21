@@ -55,9 +55,6 @@ progress:
 
 ### Deferred Gaps
 
-- [ ] [P01] Phase 01: Produce formal PLAN artifacts (context exists, files missing).
 - [ ] [P05] Chatwoot tenant-path + websocket functionality verification (requires live edge).
 - [ ] [P05] Dify↔Middleware communication live integration proof.
-- [ ] [P05] Grafana dashboard coverage validation for all services.
-- [ ] [P06] Centralize Phase 06 PLAN/SUMMARY from `quick/` to `phases/06-.../`.
 
