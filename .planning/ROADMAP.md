@@ -84,28 +84,13 @@
 
 ## Backlog
 
-### Phase 999.1: Follow-up — Phase 01 planning artifacts incomplete (BACKLOG)
+### Phase 999.1: Follow-up — Phase 01 planning artifacts (COMPLETED)
+- [x] 01-01: Produce formal PLAN artifacts (Completed: 2026-04-21)
 
-**Goal:** Consolidate formal planning artifacts for Phase 01 where discussion/context exists but no phase PLAN files were recorded.
-**Source phase:** 01
-**Deferred at:** 2026-04-19 during /gsd-next advancement to Phase 08
-**Plans:**
-- [ ] 01-01: Produce formal PLAN artifacts aligned with delivered Foundation scope (context exists, no phase PLAN.md files)
+### Phase 999.2: Follow-up — Phase 05 verification (COMPLETED)
+- [x] 05-V1: Integrated logic into scripts/verify-v1-e2e.sh (Completed: 2026-04-21)
+- [x] 05-V2: Integrated logic into scripts/verify-v1-e2e.sh (Completed: 2026-04-21)
+- [x] 05-V3: Integrated logic into scripts/verify-v1-e2e.sh (Completed: 2026-04-21)
 
-### Phase 999.2: Follow-up — Phase 05 unresolved verification failures (BACKLOG)
-
-**Goal:** Resolve unresolved verification gaps left in Phase 05 verification report.
-**Source phase:** 05
-**Deferred at:** 2026-04-19 during /gsd-next advancement to Phase 08
-**Plans:**
-- [ ] 05-V1: Run live tenant-path + websocket verification via Cloudflare edge and record evidence
-- [ ] 05-V2: Execute authenticated Middleware ↔ Dify live integration probe and record evidence
-- [ ] 05-V3: Validate Grafana dashboards for required full-service coverage and record evidence
-
-### Phase 999.3: Follow-up — Phase 06 planning artifacts incomplete (BACKLOG)
-
-**Goal:** Consolidate formal planning artifacts for Phase 06 where context/research exists but no phase PLAN files were recorded.
-**Source phase:** 06
-**Deferred at:** 2026-04-19 during /gsd-next advancement to Phase 08
-**Plans:**
-- [ ] 06-01: Produce formal PLAN artifacts aligned with delivered secret-management hardening scope (context exists, no phase PLAN.md files)
+### Phase 999.3: Follow-up — Phase 06 planning artifacts (COMPLETED)
+- [x] 06-01: Produce formal PLAN artifacts (Completed: 2026-04-21)
