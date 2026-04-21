@@ -198,6 +198,3 @@ Ver `docs/plans/first-setup.plan.md`. Itens que ficam fora desta primeira itera√
 - Console API do Dify no `create-tenant.sh` (hoje √© semi-manual).
 - Exporter Postgres/Redis para Prometheus.
 - Restore script interativo.
-
-## Claude session
-`claude --resume "omnichannel-ai-stack-setup"`
