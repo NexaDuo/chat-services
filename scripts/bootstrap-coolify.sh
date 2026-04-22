@@ -178,17 +178,24 @@ echo "Destination UUID: $DESTINATION_UUID"
 echo "Updating Secret Manager (SSOT)..."
 ensure_secret "coolify_api_token"
 echo -n "$COOLIFY_TOKEN" | gcloud secrets versions add coolify_api_token \
-  --project "$PROJECT_ID" --data-file=- >/dev/null
+  --project "$PROJECT_ID" --data-file=- --quiet >/dev/null
 
 ensure_secret "coolify_destination_uuid"
 echo -n "$DESTINATION_UUID" | gcloud secrets versions add coolify_destination_uuid \
-  --project "$PROJECT_ID" --data-file=- >/dev/null
+  --project "$PROJECT_ID" --data-file=- --quiet >/dev/null
 
 ensure_secret "coolify_url"
 echo -n "http://$VM_IP:8000/api/v1" | gcloud secrets versions add coolify_url \
-  --project "$PROJECT_ID" --data-file=- >/dev/null
+  --project "$PROJECT_ID" --data-file=- --quiet >/dev/null
 
-echo "Secret Manager updated with new token, destination UUID, and URL."
+# Sync Tunnel Token from Foundation Output
+echo "Syncing Tunnel Token from Foundation..."
+NEW_TUNNEL_TOKEN=$(cd "${PROJECT_ROOT}/infrastructure/terraform/envs/production/foundation" && terraform output -raw tunnel_token)
+ensure_secret "tunnel_token"
+echo -n "$NEW_TUNNEL_TOKEN" | gcloud secrets versions add tunnel_token \
+  --project "$PROJECT_ID" --data-file=- --quiet >/dev/null
+
+echo "Secret Manager updated with new token, destination UUID, URL, and Tunnel Token."
 
 # 6. Upload 01-init.sql
 echo "Uploading 01-init.sql to VM..."
@@ -214,7 +221,7 @@ else
   echo "01-init.sql uploaded to /opt/nexaduo/postgres/01-init.sql"
 fi
 
-# 7. Create Docker network
+# 7. Create Docker network and GHCR login
 echo "Ensuring Docker network 'nexaduo-network'..."
 gcloud compute ssh \
   --tunnel-through-iap \
@@ -222,5 +229,20 @@ gcloud compute ssh \
   --zone "$ZONE" \
   "$SSH_USER@$VM_NAME" \
   --command "sudo docker network inspect nexaduo-network >/dev/null 2>&1 || sudo docker network create nexaduo-network" >/dev/null 2>&1
+
+echo "Authenticating with GHCR..."
+# Get GHCR token from Secret Manager
+GHCR_TOKEN=$(gcloud secrets versions access latest --secret="ghcr_token" --project="$PROJECT_ID" 2>/dev/null || echo "")
+if [ -n "$GHCR_TOKEN" ]; then
+  gcloud compute ssh \
+    --tunnel-through-iap \
+    --project "$PROJECT_ID" \
+    --zone "$ZONE" \
+    "$SSH_USER@$VM_NAME" \
+    --command "echo '$GHCR_TOKEN' | sudo docker login ghcr.io -u NexaDuo --password-stdin" >/dev/null 2>&1
+  echo "GHCR authentication successful."
+else
+  echo "Warning: ghcr_token secret not found in Secret Manager. NexaDuo app may fail to pull images."
+fi
 
 echo "Bootstrap complete! The Tenant layer can now be deployed."

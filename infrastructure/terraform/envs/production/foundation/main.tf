@@ -55,3 +55,12 @@ module "tunnel" {
   base_domain = var.base_domain
   proxied     = true
 }
+
+output "tunnel_token" {
+  value     = module.tunnel.tunnel_token
+  sensitive = true
+}
+
+output "tunnel_id" {
+  value = module.tunnel.tunnel_id
+}
