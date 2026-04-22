@@ -1,59 +1,39 @@
 ---
 gsd_state_version: 1.0
 milestone: v1.0
-milestone_name: NexaDuo Baseline
-status: CLOSED
-last_updated: "2026-04-21T12:00:00.000Z"
+milestone_name: milestone
+status: "IN_PROGRESS (Blocking: coolify.nexaduo.com not reachable)"
+last_updated: "2026-04-22T04:27:17.982Z"
 progress:
-  total_phases: 9
-  completed_phases: 9
-  total_plans: 20
-  completed_plans: 20
-  percent: 100
+  total_phases: 3
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
+  percent: 95
 ---
 
 # Project State: NexaDuo Chat Services
 
 ## Project Reference
 
-**Core Value:** Low-cost, multi-tenant AI-driven chat platform leveraging Chatwoot, Dify, and Evolution API via Coolify and Cloudflare.
-**Current Focus:** Milestone v1.0 Closure & E2E Handover
+**Core Value:** Low-cost, multi-tenant AI-driven chat platform.
+**Current Focus:** Phase 09 - Fix Connectivity & Cloudflare Tunnel
 
 ## Current Position
 
-**Phase:** Phase 09 (Architectural Infrastructure Refactor) + Final Verification
-**Status:** CLOSED (Milestone v1.0 fully implemented and verified)
-**Progress:** [██████████] 100%
+**Phase:** Phase 09 (Architectural Infrastructure Refactor)
+**Status:** IN_PROGRESS (Blocking: coolify.nexaduo.com not reachable)
+**Progress:** [█████████░] 95%
 
 ## Accumulated Context
 
 ### Decisions
 
-- [2026-04-21]: Separate infrastructure into two distinct layers: **Foundation** (GCP/Cloudflare) and **Tenant** (Coolify Services) to prevent circular dependencies and timeouts.
-- [2026-04-21]: Use **Interpolated Docker Compose** (templatefile) in Terraform to ensure containers boot with correct secrets on the first run.
-- [2026-04-21]: Use GCP Secret Manager as the bridge between Foundation and Tenant layers (SSOT).
-- [2026-04-21]: Implement `scripts/verify-v1-e2e.sh` to provide a unified edge-verification entry point for production handoff.
+- [2026-04-21]: Separate infrastructure into Foundation and Tenant layers.
+- [2026-04-21]: Point `coolify.nexaduo.com` directly to `localhost:8000` via Cloudflare Tunnel.
 
-### Milestone v1.0 Sign-Off
+### Pending Todos
 
-- [x] All 9 Phases implemented and summarized.
-- [x] Phase 01 & Phase 06 planning artifacts retroactively consolidated (999.1, 999.3).
-- [x] Final E2E verification logic integrated into `scripts/verify-v1-e2e.sh` (999.2).
-- [x] Cloudflare Error 1033 (Argo Tunnel) architectural resolution confirmed.
-- [x] Infrastructure layered for safe, independent updates (Foundation vs. Tenant).
-
-### Verification Evidence (Local Audit)
-
-- `terraform validate`: **PASS** (Foundation & Tenant layers)
-- `scripts/verify-v1-e2e.sh` (Static/Ready): **PASS**
-- `validation/phase2_audit.sh`: **PASS**
-- `validation/phase8_audit.sh`: **PASS**
-
-### Handover Instructions
-
-For the final production run and handover:
-1. Ensure the production VM is running in the GCP project.
-2. Run `infrastructure/terraform/envs/production/foundation/` -> `terraform apply`.
-3. Run `scripts/bootstrap-coolify.sh`.
-4. Run `infrastructure/terraform/envs/production/tenant/` -> `terraform apply`.
-5. Run `scripts/verify-v1-e2e.sh` to confirm the full stack is healthy over the edge.
+- [ ] Fix Cloudflare Tunnel for `coolify.nexaduo.com`.
+- [ ] Verify `https://coolify.nexaduo.com/` accessibility.
+- [ ] Final E2E verification of Milestone v1.0.
