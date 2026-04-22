@@ -22,13 +22,13 @@ Para suporte a múltiplos tenants em uma stack compartilhada, o roteamento será
 ## Arquitetura
 
 ```
-          ┌────────────┐       ┌────────────┐     ┌─────────────────────┐
-WhatsApp ▶│ Evolution  │──────▶│  Chatwoot  │────▶│   Middleware (TS)   │
-          │  API v2    │       │  (hub/CRM) │     │  /webhooks/chatwoot │
-          └────────────┘       └────────────┘     └──────────┬──────────┘
-                                     ▲                        │
-                                     │  resposta do agente    │
-                                     │                        ▼
+           ┌────────────┐       ┌────────────┐      ┌─────────────────────┐
+WhatsApp ─>│ Evolution  │──────>│  Chatwoot  │─────>│   Middleware (TS)   │
+           │  API v2    │       │  (hub/CRM) │      │  /webhooks/chatwoot │
+           └────────────┘       └────────────┘      └──────────┬──────────┘
+                                     ▲                         │
+                                     │  resposta do agente     │
+                                     │                         ▼
                                      │               ┌─────────────────┐
                                      └───────────────│  Dify (agent +  │
                                                      │  RAG pgvector)  │
