@@ -1,14 +1,10 @@
-# infrastructure/terraform/envs/production/secrets.tf
+# infrastructure/terraform/envs/production/tenant/secrets.tf
 
 # ---------------------------------------------------------------------------
 # SSOT: GCP Secret Manager
 # All sensitive variables are fetched dynamically from Secret Manager 
 # based on the secret names established during migration.
 # ---------------------------------------------------------------------------
-
-data "google_secret_manager_secret_version" "cloudflare_api_token" {
-  secret = "cloudflare_api_token"
-}
 
 data "google_secret_manager_secret_version" "postgres_password" {
   secret = "postgres_password"
@@ -60,4 +56,8 @@ data "google_secret_manager_secret_version" "coolify_api_token" {
 
 data "google_secret_manager_secret_version" "coolify_destination_uuid" {
   secret = "coolify_destination_uuid"
+}
+
+data "google_secret_manager_secret_version" "coolify_url" {
+  secret = "coolify_url"
 }

@@ -8,20 +8,43 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
-# Load variables from terraform.tfvars or use defaults
-PROJECT_ID="nexaduo-492818"
-VM_NAME="nexaduo-chat-services"
-ZONE="us-central1-b"
-SSH_USER="ubuntu"
+# Load variables from environment or use defaults
+PROJECT_ID="${GCP_PROJECT_ID:-nexaduo-492818}"
+VM_NAME="${APP_NAME:-nexaduo-chat-services}"
+ZONE="${GCP_ZONE:-us-central1-b}"
+SSH_USER="${SSH_USER:-ubuntu}"
 DEFAULT_EMAIL="${COOLIFY_BOOTSTRAP_EMAIL:-admin@nexaduo.local}"
 DEFAULT_PASSWORD="${COOLIFY_BOOTSTRAP_PASSWORD:-$(openssl rand -hex 16)}"
 
 if [ -z "${COOLIFY_BOOTSTRAP_PASSWORD:-}" ]; then
-  echo "COOLIFY_BOOTSTRAP_PASSWORD not provided; using generated one-time bootstrap password."
+  echo "INFO: COOLIFY_BOOTSTRAP_PASSWORD not provided; using generated one-time bootstrap password."
 fi
 
+# Helper: Ensure secret exists in Secret Manager
+ensure_secret() {
+  local secret_name=$1
+  if ! gcloud secrets describe "$secret_name" --project "$PROJECT_ID" >/dev/null 2>&1; then
+    echo "Creating secret: $secret_name"
+    gcloud secrets create "$secret_name" --project "$PROJECT_ID" --replication-policy="automatic"
+  fi
+}
+
+# 0. Pre-flight Checks
+echo "Running pre-flight checks..."
+if ! command -v gcloud &> /dev/null; then
+    echo "Error: gcloud CLI is not installed."
+    exit 1
+fi
+
+# Verify GCP project access
+if ! gcloud projects describe "$PROJECT_ID" >/dev/null 2>&1; then
+    echo "Error: Cannot access GCP project $PROJECT_ID. Check authentication and project ID."
+    exit 1
+fi
+echo "Pre-flight checks passed."
+
 # 1. Get VM IP
-echo "Fetching VM IP..."
+echo "Fetching VM IP for instance $VM_NAME..."
 VM_IP=$(gcloud compute instances describe "$VM_NAME" \
   --project "$PROJECT_ID" \
   --zone "$ZONE" \
@@ -108,21 +131,21 @@ PHP
 TINKER_CMD="${TINKER_CMD//__EMAIL__/${DEFAULT_EMAIL}}"
 TINKER_CMD="${TINKER_CMD//__PASSWORD__/${DEFAULT_PASSWORD}}"
 
+# Run Tinker command via SSH IAP
 COOLIFY_TOKEN=$(gcloud compute ssh "$SSH_USER@$VM_NAME" \
   --project "$PROJECT_ID" \
   --zone "$ZONE" \
   --tunnel-through-iap \
-  --command "sudo docker exec coolify php artisan tinker --execute '$TINKER_CMD'")
+  --command "sudo docker exec coolify php artisan tinker --execute '$TINKER_CMD'" 2>/dev/null)
 
 if [[ "$COOLIFY_TOKEN" == *"Error"* ]] || [ -z "$COOLIFY_TOKEN" ]; then
   echo "Error: Failed to generate Coolify API token."
-  echo "$COOLIFY_TOKEN"
   exit 1
 fi
 
-# Clean up token output (remove gcloud warnings if any)
+# Clean up token output (remove gcloud warnings/logs)
 COOLIFY_TOKEN=$(echo "$COOLIFY_TOKEN" | grep -v "WARNING" | grep -v "To increase" | grep -v "please see" | xargs)
-echo "Token generated (hidden)."
+echo "Token generated successfully (hidden)."
 
 # 4. Create and Get Destination UUID via Tinker
 echo "Ensuring destination 'nexaduo-network' via Tinker..."
@@ -141,7 +164,7 @@ DESTINATION_UUID=$(gcloud compute ssh "$SSH_USER@$VM_NAME" \
   --project "$PROJECT_ID" \
   --zone "$ZONE" \
   --tunnel-through-iap \
-  --command "sudo docker exec coolify php artisan tinker --execute '$DEST_TINKER_CMD'")
+  --command "sudo docker exec coolify php artisan tinker --execute '$DEST_TINKER_CMD'" 2>/dev/null)
 
 DESTINATION_UUID=$(echo "$DESTINATION_UUID" | grep -v "WARNING" | grep -v "To increase" | grep -v "please see" | xargs)
 
@@ -152,43 +175,74 @@ fi
 echo "Destination UUID: $DESTINATION_UUID"
 
 # 5. Update GCP Secret Manager
-echo "Updating Secret Manager..."
+echo "Updating Secret Manager (SSOT)..."
+ensure_secret "coolify_api_token"
 echo -n "$COOLIFY_TOKEN" | gcloud secrets versions add coolify_api_token \
-  --project "$PROJECT_ID" --data-file=-
+  --project "$PROJECT_ID" --data-file=- --quiet >/dev/null
+
+ensure_secret "coolify_destination_uuid"
 echo -n "$DESTINATION_UUID" | gcloud secrets versions add coolify_destination_uuid \
-  --project "$PROJECT_ID" --data-file=-
-echo "Secret Manager updated."
+  --project "$PROJECT_ID" --data-file=- --quiet >/dev/null
+
+ensure_secret "coolify_url"
+echo -n "http://$VM_IP:8000/api/v1" | gcloud secrets versions add coolify_url \
+  --project "$PROJECT_ID" --data-file=- --quiet >/dev/null
+
+# Sync Tunnel Token from Foundation Output
+echo "Syncing Tunnel Token from Foundation..."
+NEW_TUNNEL_TOKEN=$(cd "${PROJECT_ROOT}/infrastructure/terraform/envs/production/foundation" && terraform output -raw tunnel_token)
+ensure_secret "tunnel_token"
+echo -n "$NEW_TUNNEL_TOKEN" | gcloud secrets versions add tunnel_token \
+  --project "$PROJECT_ID" --data-file=- --quiet >/dev/null
+
+echo "Secret Manager updated with new token, destination UUID, URL, and Tunnel Token."
 
 # 6. Upload 01-init.sql
-echo "Uploading 01-init.sql..."
+echo "Uploading 01-init.sql to VM..."
 INIT_SQL_PATH="${PROJECT_ROOT}/deploy/01-init.sql"
 if [ ! -f "${INIT_SQL_PATH}" ]; then
-  echo "Error: file not found: ${INIT_SQL_PATH}"
-  exit 1
+  echo "Warning: file not found: ${INIT_SQL_PATH}. Skipping upload."
+else
+  # Wait for IAP to be ready
+  sleep 5
+  gcloud compute scp \
+    --tunnel-through-iap \
+    --project "$PROJECT_ID" \
+    --zone "$ZONE" \
+    "${INIT_SQL_PATH}" \
+    "$SSH_USER@$VM_NAME:/tmp/01-init.sql" >/dev/null 2>&1
+
+  gcloud compute ssh \
+    --tunnel-through-iap \
+    --project "$PROJECT_ID" \
+    --zone "$ZONE" \
+    "$SSH_USER@$VM_NAME" \
+    --command "sudo mkdir -p /opt/nexaduo/postgres && sudo mv /tmp/01-init.sql /opt/nexaduo/postgres/01-init.sql && sudo chown -R $SSH_USER:$SSH_USER /opt/nexaduo" >/dev/null 2>&1
+  echo "01-init.sql uploaded to /opt/nexaduo/postgres/01-init.sql"
 fi
-# First, wait for IAP to be ready
-sleep 10
-gcloud compute scp \
-  --tunnel-through-iap \
-  --project "$PROJECT_ID" \
-  --zone "$ZONE" \
-  "${INIT_SQL_PATH}" \
-  "$SSH_USER@$VM_NAME:/tmp/01-init.sql"
 
+# 7. Create Docker network and GHCR login
+echo "Ensuring Docker network 'nexaduo-network'..."
 gcloud compute ssh \
   --tunnel-through-iap \
   --project "$PROJECT_ID" \
   --zone "$ZONE" \
   "$SSH_USER@$VM_NAME" \
-  --command "sudo mkdir -p /opt/nexaduo/postgres && sudo mv /tmp/01-init.sql /opt/nexaduo/postgres/01-init.sql && sudo chown -R $SSH_USER:$SSH_USER /opt/nexaduo"
+  --command "sudo docker network inspect nexaduo-network >/dev/null 2>&1 || sudo docker network create nexaduo-network" >/dev/null 2>&1
 
-# 7. Create Docker network
-echo "Creating Docker network 'nexaduo-network'..."
-gcloud compute ssh \
-  --tunnel-through-iap \
-  --project "$PROJECT_ID" \
-  --zone "$ZONE" \
-  "$SSH_USER@$VM_NAME" \
-  --command "sudo docker network inspect nexaduo-network >/dev/null 2>&1 || sudo docker network create nexaduo-network"
+echo "Authenticating with GHCR..."
+# Get GHCR token from Secret Manager
+GHCR_TOKEN=$(gcloud secrets versions access latest --secret="ghcr_token" --project="$PROJECT_ID" 2>/dev/null || echo "")
+if [ -n "$GHCR_TOKEN" ]; then
+  gcloud compute ssh \
+    --tunnel-through-iap \
+    --project "$PROJECT_ID" \
+    --zone "$ZONE" \
+    "$SSH_USER@$VM_NAME" \
+    --command "echo '$GHCR_TOKEN' | sudo docker login ghcr.io -u NexaDuo --password-stdin" >/dev/null 2>&1
+  echo "GHCR authentication successful."
+else
+  echo "Warning: ghcr_token secret not found in Secret Manager. NexaDuo app may fail to pull images."
+fi
 
-echo "Bootstrap complete!"
+echo "Bootstrap complete! The Tenant layer can now be deployed."

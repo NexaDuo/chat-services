@@ -1,0 +1,203 @@
+name: Stack Compose + Playwright
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  stack-e2e:
+    runs-on: self-hosted
+    timeout-minutes: 70
+    env:
+      STACK_ROOT: ${{ github.workspace }}
+      MIDDLEWARE_IMAGE_TAG: 0.1.0
+      SELF_HEALING_IMAGE_TAG: 0.1.0
+      COMPOSE_FILES: >-
+        -f deploy/docker-compose.shared.yml
+        -f deploy/docker-compose.chatwoot.yml
+        -f deploy/docker-compose.dify.yml
+        -f deploy/docker-compose.nexaduo.yml
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install Playwright dependencies
+        working-directory: ${{ github.workspace }}/automation
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+
+      - name: Prepare CI environment
+        run: |
+          set -euo pipefail
+
+          cat > "$STACK_ROOT/.env" <<EOF
+          COMPOSE_PROJECT_NAME=nexaduo
+          TZ=UTC
+          ADMIN_EMAIL=admin@example.com
+          ADMIN_PASSWORD=AdminPass123!
+
+          POSTGRES_USER=postgres
+          POSTGRES_PASSWORD=postgres-pass-ci
+          POSTGRES_HOST=postgres
+          POSTGRES_PORT=5432
+
+          REDIS_PASSWORD=redis-pass-ci
+          REDIS_HOST=redis
+          REDIS_PORT=6379
+
+          CHATWOOT_SECRET_KEY_BASE=chatwoot-secret-key-base-ci
+          CHATWOOT_FRONTEND_URL=http://localhost:3000
+          CHATWOOT_INSTALLATION_NAME=NexaDuo
+          CHATWOOT_DEFAULT_LOCALE=pt_BR
+          CHATWOOT_ENABLE_ACCOUNT_SIGNUP=false
+          CHATWOOT_FORCE_SSL=false
+
+          EVOLUTION_AUTHENTICATION_API_KEY=evolution-auth-key-ci
+          EVOLUTION_CHATWOOT_URL=http://chatwoot-rails:3000
+          EVOLUTION_WEBHOOK_GLOBAL_URL=
+
+          DIFY_SECRET_KEY=dify-secret-key-ci
+          DIFY_CONSOLE_API_URL=http://localhost:5001
+          DIFY_CONSOLE_WEB_URL=http://localhost:3001
+          DIFY_SERVICE_API_URL=http://localhost:5001
+          DIFY_APP_API_URL=http://localhost:5001
+          DIFY_APP_WEB_URL=http://localhost:3001
+          DIFY_LOG_LEVEL=INFO
+          DIFY_API_ENABLE_METRICS=true
+          INNER_API_METRICS_ENABLED=true
+          DIFY_VECTOR_STORE=pgvector
+          DIFY_CORS_ALLOW_ORIGINS=*
+          DIFY_SANDBOX_API_KEY=dify-sandbox-key-ci
+          DIFY_PLUGIN_DAEMON_KEY=dify-plugin-daemon-key-ci
+          DIFY_PLUGIN_DIFY_INNER_API_KEY=dify-plugin-inner-key-ci
+
+          AZURE_OPENAI_API_BASE=https://example.openai.azure.com
+          AZURE_OPENAI_API_KEY=dummy
+          AZURE_OPENAI_API_VERSION=2024-10-21
+          AZURE_OPENAI_DEPLOYMENT_AGENT=gpt-4o
+          AZURE_OPENAI_DEPLOYMENT_RAG=gpt-4o-mini
+          AZURE_OPENAI_DEPLOYMENT_EMBEDDING=text-embedding-3-small
+
+          MIDDLEWARE_PORT=4000
+          MIDDLEWARE_LOG_LEVEL=info
+          CHATWOOT_BASE_URL=http://chatwoot-rails:3000
+          CHATWOOT_API_TOKEN=ci-placeholder-token
+          CHATWOOT_WEBHOOK_TOKEN=chatwoot-webhook-token-ci
+          DIFY_BASE_URL=http://dify-api:5001/v1
+          TENANT_MAP={}
+          HANDOFF_SHARED_SECRET=handoff-shared-secret-ci
+          HANDOFF_LABEL=atendimento-humano
+          DIFY_REQUEST_TIMEOUT_MS=30000
+
+          GRAFANA_URL=http://localhost:3002
+          GRAFANA_ADMIN_USER=admin
+          GRAFANA_ADMIN_PASSWORD=grafana-pass-ci
+
+          MIDDLEWARE_IMAGE=ghcr.io/nexaduo/middleware:${MIDDLEWARE_IMAGE_TAG}
+          SELF_HEALING_IMAGE=ghcr.io/nexaduo/self-healing-agent:${SELF_HEALING_IMAGE_TAG}
+          TUNNEL_TOKEN=disabled-in-ci
+          EOF
+
+          sudo mkdir -p /opt/nexaduo/postgres
+          sudo cp "$STACK_ROOT/deploy/01-init.sql" /opt/nexaduo/postgres/01-init.sql
+
+          sudo mkdir -p /opt/nexaduo/observability/loki
+          sudo mkdir -p /opt/nexaduo/observability/promtail
+          sudo mkdir -p /opt/nexaduo/observability/prometheus
+          sudo mkdir -p /opt/nexaduo/observability/grafana
+
+          sudo cp "$STACK_ROOT/observability/loki/loki.yaml" /opt/nexaduo/observability/loki/loki.yaml
+          sudo cp "$STACK_ROOT/observability/promtail/promtail.yaml" /opt/nexaduo/observability/promtail/promtail.yaml
+          sudo cp "$STACK_ROOT/observability/prometheus/prometheus.yml" /opt/nexaduo/observability/prometheus/prometheus.yml
+          sudo cp -R "$STACK_ROOT/observability/grafana/provisioning" /opt/nexaduo/observability/grafana/
+
+      - name: Build local images used by compose
+        run: |
+          docker build -t ghcr.io/nexaduo/middleware:${MIDDLEWARE_IMAGE_TAG} "$STACK_ROOT/middleware"
+          docker build -t ghcr.io/nexaduo/self-healing-agent:${SELF_HEALING_IMAGE_TAG} "$STACK_ROOT/agents/self-healing"
+
+      - name: Start stack with Docker Compose
+        run: |
+          set -euo pipefail
+          docker network create nexaduo-network || true
+          # cloudflared requires a valid tunnel token and is not part of CI smoke checks.
+          docker compose $COMPOSE_FILES --env-file "$STACK_ROOT/.env" up -d --remove-orphans --scale cloudflared=0
+
+      - name: Wait for core services
+        run: |
+          set -euo pipefail
+
+          wait_for_http() {
+            local name="$1"
+            local url="$2"
+            local expected="$3"
+            local retries="${4:-60}"
+            local sleep_s="${5:-5}"
+
+            for i in $(seq 1 "$retries"); do
+              code="$(curl -s -o /dev/null -w '%{http_code}' "$url" || true)"
+              if [ "$code" = "$expected" ]; then
+                echo "OK $name ($code)"
+                return 0
+              fi
+              echo "waiting $name ($i/$retries): got $code"
+              sleep "$sleep_s"
+            done
+
+            echo "FAIL $name not ready (last code=$code, expected=$expected)"
+            return 1
+          }
+
+          wait_for_http "Chatwoot" "http://localhost:3000/" "200" 90 5
+          wait_for_http "Dify setup API" "http://localhost:5001/console/api/setup" "200" 90 5
+          wait_for_http "Dify web" "http://localhost:3001/install" "200" 90 5
+          wait_for_http "Grafana" "http://localhost:3002/login" "200" 90 5
+
+      - name: Reuse middleware health script
+        working-directory: ${{ github.workspace }}
+        run: |
+          bash scripts/verify-middleware-health.sh
+
+      - name: Run existing Playwright checks
+        working-directory: ${{ github.workspace }}/automation
+        run: |
+          npm run setup
+          npm run verify:dify-install
+          npm run verify:grafana-access
+
+      - name: Capture Docker diagnostics
+        if: always()
+        run: |
+          mkdir -p /tmp/docker-logs
+          docker compose $COMPOSE_FILES --env-file "$STACK_ROOT/.env" ps > /tmp/docker-logs/compose-ps.txt || true
+          docker compose $COMPOSE_FILES --env-file "$STACK_ROOT/.env" logs --no-color > /tmp/docker-logs/compose-logs.txt || true
+
+      - name: Upload diagnostics artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stack-compose-logs
+          path: |
+            /tmp/docker-logs/compose-ps.txt
+            /tmp/docker-logs/compose-logs.txt
+            ${{ github.workspace }}/automation/*.png
+          if-no-files-found: ignore
+
+      - name: Teardown stack
+        if: always()
+        run: |
+          docker compose $COMPOSE_FILES --env-file "$STACK_ROOT/.env" down -v --remove-orphans || true

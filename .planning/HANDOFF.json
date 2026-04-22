@@ -1,0 +1,37 @@
+{
+  "version": "1.0",
+  "timestamp": "2026-04-22T00:36:23.501Z",
+  "phase": "10",
+  "phase_name": "coolify-api-automation",
+  "phase_dir": ".planning/phases/10-coolify-api-automation",
+  "plan": null,
+  "task": null,
+  "total_tasks": 0,
+  "status": "paused",
+  "completed_tasks": [
+    {"id": "research", "name": "Produce 10-RESEARCH.md (finish interrupted Gemini session 21fb507a/sdtc3p)", "status": "done"}
+  ],
+  "remaining_tasks": [
+    {"id": "context", "name": "/gsd-discuss-phase 10 — capture locked decisions before planning", "status": "not_started"},
+    {"id": "pattern_map", "name": "gsd-pattern-mapper to produce 10-PATTERNS.md", "status": "not_started"},
+    {"id": "plan", "name": "gsd-planner to produce 10-XX-PLAN.md files", "status": "not_started"},
+    {"id": "verify", "name": "gsd-plan-checker revision loop (max 3 iterations)", "status": "not_started"}
+  ],
+  "blockers": [
+    {"description": "No CONTEXT.md for Phase 10 — plan-phase workflow gate requires discuss-phase first", "type": "human_action", "workaround": "Run /gsd-discuss-phase 10 as a top-level command (AskUserQuestion does not work nested)"}
+  ],
+  "human_actions_pending": [
+    {"action": "Run /gsd-discuss-phase 10 to capture design decisions", "context": "Key decisions needed: (a) migration order across the 4 stacks, (b) instant_deploy=true-with-race vs instant_deploy=false-two-step, (c) whether to retire FORCE_REDEPLOY_HASH or keep, (d) bootstrap-script fallback scope for destination creation, (e) per-env secret rotation trigger strategy", "blocking": true},
+    {"action": "After discuss-phase, re-run /gsd-plan-phase 10 in a fresh session (context was at 90% when paused)", "context": "Plan-phase spawns 2-3 subagents (pattern-mapper, planner, checker x N iterations) — needs fresh context budget", "blocking": true}
+  ],
+  "decisions": [
+    {"decision": "Keep SierraJC/coolify provider v0.10.2 — do not swap providers in Phase 10", "rationale": "Already pinned; only viable community provider for Coolify v4", "phase": "10"},
+    {"decision": "Target is layered declaration: coolify_service for topology + coolify_service_envs for runtime secrets", "rationale": "coolify_service schema does not expose health checks / deployment settings / finer granularity — provider limits dictate the ceiling", "phase": "10"},
+    {"decision": "Accept gaps as non-Terraform: destination creation, project_environment, health checks, deploy triggers", "rationale": "Provider does not support these resources in v0.10.2; attempting to force declarative will fail schema validation", "phase": "10"}
+  ],
+  "uncommitted_files": [
+    ".planning/phases/10-coolify-api-automation/10-RESEARCH.md"
+  ],
+  "next_action": "Run /gsd-discuss-phase 10 as a top-level command in a fresh session",
+  "context_notes": "Gemini session 21fb507a was abandoned mid-research of Phase 10 (sub-session sdtc3p). Completed the research file; did NOT start planning because (a) no CONTEXT.md exists, (b) context budget reached 90% during plan-phase init. Research file grounds the plan in verified provider schema (coolify_service accepts compose/environment_name/project_uuid/server_uuid only; coolify_service_envs accepts env blocks with key/value/is_literal/is_multiline flags). Main leverage point identified: migrate ~14 secrets from templatefile() into coolify_service_envs. Research explicitly documents accepted gaps so the plan-phase doesn't chase impossibilities."
+}

@@ -4,6 +4,11 @@
 !.env.example
 .ssh/
 
+# Local agent / Claude tooling
+.agents/
+.claude/
+skills-lock.json
+
 # Node
 node_modules/
 dist/

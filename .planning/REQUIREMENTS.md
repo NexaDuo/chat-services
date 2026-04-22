@@ -7,6 +7,8 @@
 - **INFRA-04**: Install and initialize Coolify v4 on the provisioned VM.
 - **INFRA-05**: Implement automated backup rotation to GCS (Google Cloud Storage).
 - **INFRA-06**: Automate Coolify v4 application and service configuration via Terraform/API.
+  - v1.0: Initial provider decoupling and service definition.
+  - v1.1: 100% declarative service provisioning (no manual UI steps).
 
 ## Routing & Edge (ROUTE)
 - **ROUTE-01**: Configure Cloudflare DNS for unified subdomains (`chat.nexaduo.com`, `dify.nexaduo.com`).
@@ -19,7 +21,7 @@
 - **DEPLOY-01**: Orchestrate Chatwoot, Dify, and Evolution API using Coolify/Docker Compose.
 - **DEPLOY-02**: Configure Chatwoot and Dify for path-based multi-tenancy via Cloudflare Workers.
 - **DEPLOY-03**: Deploy the Middleware bridge to handle Chatwoot-Dify communication.
-- **DEPLOY-04**: Deploy full observability stack (Prometheus, Grafana, Loki, Promtail, OTEL Collector) for monitoring and log aggregation.
+- **DEPLOY-04**: Deploy full observability stack (Prometheus, Grafana, Loki, Promtail, OTEL Collector).
 - **DEPLOY-05**: Implement Self-Healing Agent to autonomously analyze service logs and diagnose root causes.
 - **DEPLOY-06**: Enable seamless human handoff from AI agents to Chatwoot operators via Middleware.
 
@@ -27,6 +29,7 @@
 - **PROV-01**: Define a standardized tenant configuration schema.
 - **PROV-02**: Automate DNS record creation for new tenants via Terraform.
 - **PROV-03**: Automate Cloudflare Worker routing table updates for new tenants.
+- **PROV-04**: Implement "One-Click" tenant onboarding in the CLI (DNS + Coolify + Worker).
 
 ## Secret Management (VAULT)
 - **VAULT-01**: Securely store all infrastructure and application secrets in GCP Secret Manager (Single Source of Truth).
@@ -41,6 +44,10 @@
 - **HARD-03**: Implement Chatwoot webhook authentication to verify incoming requests.
 - **HARD-04**: Pin all container images to immutable versions in Docker Compose.
 - **HARD-05**: Restrict origin network access (ports, CORS, plugin signature verification).
+
+## Observability Refinement (OBS)
+- **OBS-01**: Custom Grafana dashboard for Self-Healing Agent (Diagnostics & Actions).
+- **OBS-02**: Custom Grafana dashboard for Middleware (Traffic, Latency, Errors, Tenant Stats).
 
 ## Traceability
 
@@ -65,14 +72,17 @@
 | PROV-01 | Phase 4 | Completed |
 | PROV-02 | Phase 4 | Completed |
 | PROV-03 | Phase 4 | Completed |
-| INFRA-06 | Phase 5 | Completed |
+| INFRA-06 | Phase 10 | ⛔ Deferred (2026-04-22) — trigger: D-10-101 |
 | VAULT-01 | Phase 6 | Completed |
 | VAULT-02 | Phase 6 | Completed |
 | VAULT-03 | Phase 6 | Completed |
 | VAULT-04 | Phase 6 | Completed |
 | VAULT-05 | Phase 6 | Completed |
-| HARD-01 | Phase 7 | Planned |
-| HARD-02 | Phase 7 | Planned |
-| HARD-03 | Phase 7 | Planned |
-| HARD-04 | Phase 7 | Planned |
-| HARD-05 | Phase 7 | Planned |
+| HARD-01 | Phase 7 | Completed |
+| HARD-02 | Phase 7 | Completed |
+| HARD-03 | Phase 7 | Completed |
+| HARD-04 | Phase 7 | Completed |
+| HARD-05 | Phase 7 | Completed |
+| OBS-01 | Phase 11 | Pending |
+| OBS-02 | Phase 11 | Pending |
+| PROV-04 | Phase 12 | Pending |

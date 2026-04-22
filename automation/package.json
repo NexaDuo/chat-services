@@ -6,6 +6,7 @@
   "type": "module",
   "scripts": {
     "setup": "node initial-setup.js",
+    "test:all": "npm run verify:dify-install && npm run verify:chatwoot-message && npm run verify:grafana-access",
     "verify:dify-install": "node verify-dify-install.js",
     "verify:chatwoot-message": "node verify-chatwoot-message.js",
     "verify:grafana-access": "node verify-grafana-access.js"

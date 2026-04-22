@@ -34,8 +34,13 @@ docker compose up -d
 
 > Dumps usam `--clean --if-exists` → restaurar **sobrescreve** o schema. Faça um snapshot do volume `postgres-data` antes se quiser um rollback rápido.
 
-## TODO
+## `generate-env.sh`
 
-- [ ] Cifrar backups (GPG) antes de enviar para storage remoto (S3/B2).
-- [ ] Script `restore.sh` interativo.
-- [ ] Healthcheck wrapper (`./scripts/status.sh`) que exibe o estado de todos os containers + filas.
+Gera o arquivo `.env` a partir do `.env.example`, preenchendo segredos aleatórios e uma senha robusta para o Chatwoot.
+
+### Uso
+
+```bash
+./scripts/generate-env.sh          # cria se não existir
+./scripts/generate-env.sh -f       # sobrescreve se já existir
+```
