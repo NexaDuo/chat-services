@@ -46,4 +46,11 @@ if [[ "${REFRESH_ROUTES_AFTER_DEPLOY:-true}" == "true" ]]; then
   "${PROJECT_ROOT}/scripts/refresh-coolify-routes.sh"
 fi
 
+if [[ "${SKIP_ONBOARDING:-false}" != "true" ]]; then
+  echo "=== Step 4/4: Onboard Chatwoot + Dify (create initial admins) ==="
+  "${PROJECT_ROOT}/scripts/onboard-prod.sh"
+else
+  echo "=== Step 4/4: Skipping onboarding (SKIP_ONBOARDING=true) ==="
+fi
+
 echo "Deployment completed successfully."
