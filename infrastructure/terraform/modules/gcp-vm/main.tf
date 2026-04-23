@@ -45,6 +45,12 @@ variable "ssh_key" {
   type = string
 }
 
+variable "service_account_email" {
+  description = "Service account attached to the VM. Defaults to the project's default Compute SA, which receives Artifact Registry reader access in the foundation layer."
+  type        = string
+  default     = null
+}
+
 resource "google_compute_network" "vpc" {
   name                    = "${var.name}-vpc"
   auto_create_subnetworks = false
@@ -103,9 +109,10 @@ resource "google_compute_firewall" "allow_coolify" {
 }
 
 resource "google_compute_instance" "vm" {
-  name         = var.name
-  machine_type = var.machine_type
-  zone         = var.zone
+  name                      = var.name
+  machine_type              = var.machine_type
+  zone                      = var.zone
+  allow_stopping_for_update = true
 
   boot_disk {
     initialize_params {
@@ -129,6 +136,11 @@ resource "google_compute_instance" "vm" {
   metadata_startup_script = file("${path.module}/scripts/install-coolify.sh")
 
   tags = ["ssh-iap"]
+
+  service_account {
+    email  = var.service_account_email
+    scopes = ["cloud-platform"]
+  }
 }
 
 output "public_ip" {

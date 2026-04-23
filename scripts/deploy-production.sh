@@ -28,6 +28,13 @@ terraform apply -auto-approve -var-file="${TFVARS}"
 echo "=== Step 2/3: Bootstrap Coolify ==="
 "${PROJECT_ROOT}/scripts/bootstrap-coolify.sh"
 
+if [[ "${SKIP_IMAGE_BUILD:-false}" != "true" ]]; then
+  echo "=== Step 2b/3: Build & push images to Artifact Registry ==="
+  "${PROJECT_ROOT}/scripts/build-push-images.sh"
+else
+  echo "=== Step 2b/3: Skipping image build (SKIP_IMAGE_BUILD=true) ==="
+fi
+
 echo "=== Step 3/3: Tenant (Coolify services + envs) ==="
 "${PROJECT_ROOT}/scripts/apply-tenant.sh"
 

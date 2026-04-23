@@ -3,8 +3,8 @@
 Este diretório contém a definição da infraestrutura como código para o NexaDuo Chat Services, utilizando GCP (Google Cloud Platform) e Cloudflare.
 
 ## Estrutura
-- `/modules`: Módulos reutilizáveis (VM, DNS).
-- `/envs/production/foundation`: Camada base (VPC, VM, Firewall, DNS).
+- `/modules`: Módulos reutilizáveis (VM, DNS, Cloudflare tunnel, GCS, Artifact Registry, WIF publisher).
+- `/envs/production/foundation`: Camada base (VPC, VM, Firewall, DNS, Tunnel, Artifact Registry, WIF).
 - `/envs/production/tenant`: Camada de aplicação (Stacks do Coolify, Envs).
 
 ## Pré-requisitos
@@ -33,10 +33,30 @@ A forma mais simples de subir o ambiente inteiro é rodar o orquestrador, que ex
 ```
 
 O script executa:
-1. `terraform apply` em `envs/production/foundation` (VM, VPC, Tunnel, DNS, bucket de backup).
-2. `scripts/bootstrap-coolify.sh` (instala Coolify, gera token de API, sincroniza secrets no GCP Secret Manager, faz login no GHCR, cria a docker network).
-3. `scripts/apply-tenant.sh` (terraform apply em `envs/production/tenant` com retry automático: quando o Coolify devolve `409 Conflict creating service envs`, limpa os envs auto-populados do compose via `scripts/clean-service-envs.sh` e tenta de novo).
-4. `scripts/refresh-coolify-routes.sh` (opcional — desative com `REFRESH_ROUTES_AFTER_DEPLOY=false`).
+1. `terraform apply` em `envs/production/foundation` (VM, VPC, Tunnel, DNS, bucket de backup, Artifact Registry, SA do GitHub publisher + Workload Identity).
+2. `scripts/bootstrap-coolify.sh` (instala Coolify, gera token de API, sincroniza secrets no GCP Secret Manager, configura o credential helper do Artifact Registry na VM — autenticação via SA padrão do Compute, nada de token em disco).
+3. `scripts/build-push-images.sh` (build local + push de `middleware` e `self-healing-agent` para o Artifact Registry; pule com `SKIP_IMAGE_BUILD=true` se o workflow de CI já publicou as imagens).
+4. `scripts/apply-tenant.sh` (terraform apply em `envs/production/tenant` com retry automático: quando o Coolify devolve `409 Conflict creating service envs`, limpa os envs auto-populados do compose via `scripts/clean-service-envs.sh` e tenta de novo).
+5. `scripts/refresh-coolify-routes.sh` (opcional — desative com `REFRESH_ROUTES_AFTER_DEPLOY=false`).
+
+## Artifact Registry e publicação de imagens
+
+As imagens `middleware` e `self-healing-agent` vivem em
+`us-central1-docker.pkg.dev/nexaduo-492818/nexaduo/{middleware,self-healing-agent}`.
+A foundation cria o repo + a SA `gh-publisher@...` + o Workload Identity
+Provider `projects/205245484827/locations/global/workloadIdentityPools/github/providers/nexaduo-chat-services`.
+
+Formas de publicar uma nova versão:
+
+- **CI (recomendado)**: crie uma tag `vX.Y.Z` — o workflow
+  `.github/workflows/publish-images.yml` faz build+push via WIF (sem
+  secret JSON) e aplica as tags `vX.Y.Z`, `sha-<short>` e `latest`.
+- **Local**: `IMAGE_TAG=0.1.0 ./scripts/build-push-images.sh` — útil
+  para o primeiro deploy, quando ainda não há tag criada.
+
+A VM não precisa de `docker login`: o credential helper `gcloud` autentica
+via metadata server com a default Compute SA, que recebe `roles/artifactregistry.reader`
+via binding da foundation.
 
 ### 3. Deploy manual passo a passo
 

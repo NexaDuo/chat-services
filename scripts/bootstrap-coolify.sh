@@ -230,19 +230,14 @@ gcloud compute ssh \
   "$SSH_USER@$VM_NAME" \
   --command "sudo docker network inspect nexaduo-network >/dev/null 2>&1 || sudo docker network create nexaduo-network" >/dev/null 2>&1
 
-echo "Authenticating with GHCR..."
-# Get GHCR token from Secret Manager
-GHCR_TOKEN=$(gcloud secrets versions access latest --secret="ghcr_token" --project="$PROJECT_ID" 2>/dev/null || echo "")
-if [ -n "$GHCR_TOKEN" ]; then
-  gcloud compute ssh \
-    --tunnel-through-iap \
-    --project "$PROJECT_ID" \
-    --zone "$ZONE" \
-    "$SSH_USER@$VM_NAME" \
-    --command "echo '$GHCR_TOKEN' | sudo docker login ghcr.io -u NexaDuo --password-stdin" >/dev/null 2>&1
-  echo "GHCR authentication successful."
-else
-  echo "Warning: ghcr_token secret not found in Secret Manager. NexaDuo app may fail to pull images."
-fi
+echo "Configuring docker auth for Artifact Registry on the VM..."
+AR_REGISTRY="${GCP_REGION:-us-central1}-docker.pkg.dev"
+gcloud compute ssh \
+  --tunnel-through-iap \
+  --project "$PROJECT_ID" \
+  --zone "$ZONE" \
+  "$SSH_USER@$VM_NAME" \
+  --command "sudo gcloud auth configure-docker ${AR_REGISTRY} --quiet" >/dev/null 2>&1
+echo "Artifact Registry credential helper installed on the VM (auth via default Compute SA)."
 
 echo "Bootstrap complete! The Tenant layer can now be deployed."

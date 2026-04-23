@@ -58,3 +58,19 @@ variable "backup_bucket_name" {
   type    = string
   default = "nexaduo-coolify-backups"
 }
+
+variable "gcp_project_number" {
+  description = "GCP project number (not ID). Used for WIF principalSet and the default Compute Engine service account."
+  type        = string
+}
+
+variable "github_repository" {
+  description = "owner/repo that is allowed to impersonate the AR publisher SA via OIDC"
+  type        = string
+  default     = "NexaDuo/chat-services"
+}
+
+variable "artifact_registry_repository_id" {
+  type    = string
+  default = "nexaduo"
+}
