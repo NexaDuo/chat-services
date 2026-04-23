@@ -238,6 +238,14 @@ resource "coolify_service_envs" "dify" {
     value = var.dify_app_api_url
   }
   env {
+    key   = "NEXT_PUBLIC_COOKIE_DOMAIN"
+    value = "dify.nexaduo.com"
+  }
+  env {
+    key   = "COOKIE_DOMAIN"
+    value = "dify.nexaduo.com"
+  }
+  env {
     key   = "HOSTNAME"
     value = "0.0.0.0"
   }
