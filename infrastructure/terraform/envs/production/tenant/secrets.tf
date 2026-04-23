@@ -61,3 +61,7 @@ data "google_secret_manager_secret_version" "coolify_destination_uuid" {
 data "google_secret_manager_secret_version" "coolify_url" {
   secret = "coolify_url"
 }
+
+data "google_secret_manager_secret_version" "tunnel_token" {
+  secret = "tunnel_token"
+}

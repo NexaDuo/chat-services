@@ -14,12 +14,17 @@ REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 step() { echo "==> $*"; }
 fail() { echo "FAIL: $1" >&2; exit 1; }
 
-# Load secrets
-if [[ -f "${REPO_ROOT}/.env" ]]; then
-  set -a; source "${REPO_ROOT}/.env"; set +a
+# Load secrets from GCP Secret Manager (SSOT for the reproducible deploy).
+# Fallback to a local .env only if HANDOFF_SHARED_SECRET is already exported.
+if [[ -z "${HANDOFF_SHARED_SECRET:-}" ]]; then
+  PROJECT_ID="${GCP_PROJECT_ID:-nexaduo-492818}"
+  if command -v gcloud >/dev/null 2>&1; then
+    HANDOFF_SHARED_SECRET="$(gcloud secrets versions access latest --secret=handoff_shared_secret --project="${PROJECT_ID}" 2>/dev/null || true)"
+    export HANDOFF_SHARED_SECRET
+  fi
 fi
 
-: "${HANDOFF_SHARED_SECRET:?HANDOFF_SHARED_SECRET not set}"
+: "${HANDOFF_SHARED_SECRET:?HANDOFF_SHARED_SECRET not set (export it or ensure gcloud+handoff_shared_secret are available)}"
 CHAT_DOMAIN="${CHAT_DOMAIN:-chat.nexaduo.com}"
 DIFY_DOMAIN="${DIFY_DOMAIN:-dify.nexaduo.com}"
 GRAFANA_DOMAIN="${GRAFANA_DOMAIN:-grafana.nexaduo.com}"

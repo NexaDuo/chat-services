@@ -1,31 +1,39 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # scripts/deploy-production.sh
-# Orchestrates the production deployment in 3 phases.
+#
+# Orchestrates the full 3-step production deploy:
+#   Step 1 (Foundation) — terraform apply in envs/production/foundation
+#   Step 2 (Bootstrap)  — bootstrap-coolify.sh (installs Coolify, syncs secrets)
+#   Step 3 (Tenant)     — apply-tenant.sh (terraform apply with 409 retry loop)
+#
+# Usage:
+#   ./scripts/deploy-production.sh
 
-set -e
+set -euo pipefail
 
-PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-TERRAFORM_DIR="$PROJECT_ROOT/infrastructure/terraform/envs/production"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+PROD_DIR="${PROJECT_ROOT}/infrastructure/terraform/envs/production"
+TFVARS="${PROD_DIR}/terraform.tfvars"
 
-cd "$TERRAFORM_DIR"
+echo "=== Step 1/3: Foundation (VM, VPC, Tunnel, DNS) ==="
+cd "${PROD_DIR}/foundation"
+if [[ ! -d .terraform ]]; then
+  terraform init \
+    -backend-config="bucket=nexaduo-terraform-state" \
+    -backend-config="prefix=terraform/foundation"
+fi
+terraform apply -auto-approve -var-file="${TFVARS}"
 
-echo "Phase 1: Provisioning Infrastructure (VM, Tunnel, DNS, Storage)..."
-terraform apply -auto-approve \
-  -target=module.vm \
-  -target=module.tunnel \
-  -target=module.dns_chat \
-  -target=module.dns_dify \
-  -target=module.backup_storage
+echo "=== Step 2/3: Bootstrap Coolify ==="
+"${PROJECT_ROOT}/scripts/bootstrap-coolify.sh"
 
-echo "Phase 2: Bootstrapping Coolify..."
-"$PROJECT_ROOT/scripts/bootstrap-coolify.sh"
-
-echo "Phase 3: Deploying Coolify Services..."
-terraform apply -auto-approve
+echo "=== Step 3/3: Tenant (Coolify services + envs) ==="
+"${PROJECT_ROOT}/scripts/apply-tenant.sh"
 
 if [[ "${REFRESH_ROUTES_AFTER_DEPLOY:-true}" == "true" ]]; then
-  echo "Phase 4: Refreshing Coolify routes and validating public domains..."
-  "$PROJECT_ROOT/scripts/refresh-coolify-routes.sh"
+  echo "=== Post-deploy: Refresh Coolify routes ==="
+  "${PROJECT_ROOT}/scripts/refresh-coolify-routes.sh"
 fi
 
-echo "Deployment completed successfully!"
+echo "Deployment completed successfully."

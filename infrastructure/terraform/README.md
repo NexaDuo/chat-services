@@ -24,30 +24,36 @@ cp terraform.tfvars.example terraform.tfvars
 nano terraform.tfvars
 ```
 
-### 2. Passo 1: Fundação (Foundation)
-Cria a VM e toda a infraestrutura de rede.
+### 2. Deploy completo (recomendado)
+
+A forma mais simples de subir o ambiente inteiro é rodar o orquestrador, que executa os 3 passos em sequência e sobrevive ao 409 do provider Coolify:
 
 ```bash
-cd foundation
+./scripts/deploy-production.sh
+```
+
+O script executa:
+1. `terraform apply` em `envs/production/foundation` (VM, VPC, Tunnel, DNS, bucket de backup).
+2. `scripts/bootstrap-coolify.sh` (instala Coolify, gera token de API, sincroniza secrets no GCP Secret Manager, faz login no GHCR, cria a docker network).
+3. `scripts/apply-tenant.sh` (terraform apply em `envs/production/tenant` com retry automático: quando o Coolify devolve `409 Conflict creating service envs`, limpa os envs auto-populados do compose via `scripts/clean-service-envs.sh` e tenta de novo).
+4. `scripts/refresh-coolify-routes.sh` (opcional — desative com `REFRESH_ROUTES_AFTER_DEPLOY=false`).
+
+### 3. Deploy manual passo a passo
+
+Caso queira rodar os passos isoladamente:
+
+```bash
+# Passo 1 — Fundação
+cd infrastructure/terraform/envs/production/foundation
 terraform init -backend-config="bucket=nexaduo-terraform-state" -backend-config="prefix=terraform/foundation"
 terraform apply -var-file=../terraform.tfvars
-```
 
-### 3. Passo 2: Bootstrap do Coolify
-Este script aguarda a VM ficar online, instala o Coolify (se necessário) e gera o token de API necessário para o próximo passo.
-
-```bash
-cd ../../../.. # Raiz do projeto
+# Passo 2 — Bootstrap do Coolify
+cd ../../../../..
 ./scripts/bootstrap-coolify.sh
-```
 
-### 4. Passo 3: Aplicação (Tenant)
-Provisiona as stacks de serviço (Chatwoot, Dify, etc) dentro do Coolify.
-
-```bash
-cd infrastructure/terraform/envs/production/tenant
-terraform init -backend-config="bucket=nexaduo-terraform-state" -backend-config="prefix=terraform/tenant"
-terraform apply -var-file=../terraform.tfvars
+# Passo 3 — Tenant (use o wrapper para tratar o 409 do Coolify)
+./scripts/apply-tenant.sh
 ```
 
 ## Como Destruir (Em 2 Passos)
