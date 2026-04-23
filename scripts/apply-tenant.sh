@@ -44,14 +44,16 @@ redeploy_services() {
     for svc in shared chatwoot dify nexaduo; do
       local uuid code
       uuid="$(cd "${TENANT_DIR}" && terraform state show "coolify_service.${svc}" 2>/dev/null \
-        | awk '/^    uuid /{gsub(/"/,""); print $3; exit}')"
+        | awk '/^    uuid /{gsub(/"/,""); print $3; exit}' || true)"
       [[ -z "${uuid}" ]] && { echo "  ${svc}: not in state, skipping"; continue; }
       code="$(curl -sS -o /dev/null -w '%{http_code}' \
         -X POST -H "Authorization: Bearer ${token}" \
         "${base}/api/v1/deploy?uuid=${uuid}")"
       echo "  deploy ${svc} (${uuid}): ${code}"
     done
-    [[ "${round}" == "1" ]] && sleep 60
+    if [[ "${round}" == "1" ]]; then
+      sleep 60
+    fi
   done
 }
 
