@@ -5,7 +5,7 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 DEPLOY_DIR="$REPO_ROOT/deploy"
-AUTOMATION_DIR="$REPO_ROOT/automation"
+AUTOMATION_DIR="$REPO_ROOT/onboarding"
 LOG_DIR="$(mktemp -d)"
 trap 'echo "Logs retained at: $LOG_DIR"' EXIT
 

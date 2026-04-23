@@ -20,7 +20,7 @@ chat-services/
 │   └── REQUIREMENTS.md  # Detailed technical requirements
 ├── agents/
 │   └── self-healing/    # LLM-powered error analysis agent
-├── automation/          # Initial setup and lifecycle scripts
+├── onboarding/          # First-run admin account creation + Playwright smoke tests
 ├── deploy/              # Docker Compose templates for services
 ├── dify-apps/           # Dify workflow/app exports (YAML)
 ├── docs/                # Planning and sample documentation

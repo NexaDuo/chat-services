@@ -1,7 +1,7 @@
 {
-  "name": "nexaduo-automation",
+  "name": "nexaduo-onboarding",
   "version": "1.0.0",
-  "description": "Initial setup automation for NexaDuo Stack",
+  "description": "First-run onboarding and verification for NexaDuo Stack (Chatwoot + Dify admin creation, Playwright smoke tests)",
   "main": "initial-setup.js",
   "type": "module",
   "scripts": {
