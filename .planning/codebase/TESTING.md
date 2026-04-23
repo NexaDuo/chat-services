@@ -14,7 +14,9 @@
 **Run Commands:**
 ```bash
 ./validation/phase2_audit.sh      # Infrastructure validation
-./scripts/validate-stack.sh      # Stack health check
+./scripts/validate-stack.sh       # Local docker-compose stack validation
+./scripts/health-check-all.sh     # Non-destructive multi-stack health probe (run on VM)
+./scripts/verify-v1-e2e.sh        # Edge/tenant E2E verification
 ```
 
 ## Test File Organization

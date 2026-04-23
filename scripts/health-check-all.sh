@@ -106,6 +106,24 @@ for probe in "${HTTP_PROBES[@]}"; do
   echo ",${expected_codes}," | grep -q ",${code}," || fail "${name} returned ${code} (expected one of ${expected_codes}) at ${url}"
 done
 
+# Middleware /config is the Bearer-authenticated endpoint internal agents
+# rely on; verify it only if HANDOFF_SHARED_SECRET is available (either
+# exported or fetchable via gcloud from Secret Manager).
+if [[ -z "${HANDOFF_SHARED_SECRET:-}" ]] && command -v gcloud >/dev/null 2>&1; then
+  HANDOFF_SHARED_SECRET="$(gcloud secrets versions access latest \
+    --secret=handoff_shared_secret \
+    --project="${GCP_PROJECT_ID:-nexaduo-492818}" 2>/dev/null || true)"
+fi
+if [[ -n "${HANDOFF_SHARED_SECRET:-}" ]]; then
+  step "Probing Middleware /config (Bearer auth)"
+  code=$(curl -s -o /dev/null -w '%{http_code}' \
+    -H "Authorization: Bearer ${HANDOFF_SHARED_SECRET}" \
+    http://localhost:4000/config || true)
+  [[ "$code" == "200" ]] || fail "Middleware /config returned ${code} (expected 200)"
+else
+  echo "WARN: skipping Middleware /config probe (HANDOFF_SHARED_SECRET unavailable)"
+fi
+
 # Loki is not host-published in production; probe from inside the container.
 loki_container="$(require_container "loki")"
 step "Probing Loki readiness inside ${loki_container} (up to 1 min)"
