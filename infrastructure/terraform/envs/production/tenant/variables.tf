@@ -44,12 +44,12 @@ variable "chatwoot_frontend_url" {
 
 variable "dify_console_api_url" {
   type    = string
-  default = "/console/api"
+  default = "https://dify.nexaduo.com"
 }
 
 variable "dify_app_api_url" {
   type    = string
-  default = "/v1"
+  default = "https://dify.nexaduo.com"
 }
 
 variable "grafana_admin_user" {
