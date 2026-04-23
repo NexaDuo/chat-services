@@ -238,6 +238,10 @@ resource "coolify_service_envs" "dify" {
     value = var.dify_app_api_url
   }
   env {
+    key   = "HOSTNAME"
+    value = "0.0.0.0"
+  }
+  env {
     key        = "DIFY_SANDBOX_API_KEY"
     value      = data.google_secret_manager_secret_version.dify_sandbox_api_key.secret_data
     is_literal = true
