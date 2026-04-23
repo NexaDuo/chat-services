@@ -1,7 +1,7 @@
 .PHONY: test validate-stack
 
 test:
-	./run-tests.sh
+	./scripts/validate-stack.sh
 
 validate-stack:
-	./run-tests.sh
+	./scripts/validate-stack.sh

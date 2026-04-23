@@ -221,7 +221,37 @@ else
   echo "01-init.sql uploaded to /opt/nexaduo/postgres/01-init.sql"
 fi
 
-# 7. Create Docker network and GHCR login
+# 6b. Upload observability configs (loki, promtail, prometheus, grafana
+# provisioning). The nexaduo-app compose mounts these files read-only from
+# /opt/nexaduo/observability, so they must exist on the VM before the
+# service deploys — otherwise the containers loop with "config file not
+# found" errors.
+OBS_SRC="${PROJECT_ROOT}/observability"
+if [ -d "${OBS_SRC}" ]; then
+  echo "Uploading observability configs to VM..."
+  TAR_TMP="$(mktemp --suffix=.tar.gz)"
+  trap 'rm -f "${TAR_TMP}"' EXIT
+  tar -C "${PROJECT_ROOT}" -czf "${TAR_TMP}" observability
+  gcloud compute scp \
+    --tunnel-through-iap \
+    --project "$PROJECT_ID" \
+    --zone "$ZONE" \
+    "${TAR_TMP}" \
+    "$SSH_USER@$VM_NAME:/tmp/observability.tar.gz" >/dev/null 2>&1
+  gcloud compute ssh \
+    --tunnel-through-iap \
+    --project "$PROJECT_ID" \
+    --zone "$ZONE" \
+    "$SSH_USER@$VM_NAME" \
+    --command "sudo mkdir -p /opt/nexaduo && sudo rm -rf /opt/nexaduo/observability && sudo tar -C /opt/nexaduo -xzf /tmp/observability.tar.gz && sudo chown -R $SSH_USER:$SSH_USER /opt/nexaduo/observability && rm -f /tmp/observability.tar.gz" >/dev/null 2>&1
+  rm -f "${TAR_TMP}"
+  trap - EXIT
+  echo "observability/ extracted to /opt/nexaduo/observability"
+else
+  echo "Warning: ${OBS_SRC} not found; skipping observability upload."
+fi
+
+# 7. Create Docker network and container registry auth
 echo "Ensuring Docker network 'nexaduo-network'..."
 gcloud compute ssh \
   --tunnel-through-iap \
@@ -230,19 +260,14 @@ gcloud compute ssh \
   "$SSH_USER@$VM_NAME" \
   --command "sudo docker network inspect nexaduo-network >/dev/null 2>&1 || sudo docker network create nexaduo-network" >/dev/null 2>&1
 
-echo "Authenticating with GHCR..."
-# Get GHCR token from Secret Manager
-GHCR_TOKEN=$(gcloud secrets versions access latest --secret="ghcr_token" --project="$PROJECT_ID" 2>/dev/null || echo "")
-if [ -n "$GHCR_TOKEN" ]; then
-  gcloud compute ssh \
-    --tunnel-through-iap \
-    --project "$PROJECT_ID" \
-    --zone "$ZONE" \
-    "$SSH_USER@$VM_NAME" \
-    --command "echo '$GHCR_TOKEN' | sudo docker login ghcr.io -u NexaDuo --password-stdin" >/dev/null 2>&1
-  echo "GHCR authentication successful."
-else
-  echo "Warning: ghcr_token secret not found in Secret Manager. NexaDuo app may fail to pull images."
-fi
+echo "Configuring docker auth for Artifact Registry on the VM..."
+AR_REGISTRY="${GCP_REGION:-us-central1}-docker.pkg.dev"
+gcloud compute ssh \
+  --tunnel-through-iap \
+  --project "$PROJECT_ID" \
+  --zone "$ZONE" \
+  "$SSH_USER@$VM_NAME" \
+  --command "sudo gcloud auth configure-docker ${AR_REGISTRY} --quiet" >/dev/null 2>&1
+echo "Artifact Registry credential helper installed on the VM (auth via default Compute SA)."
 
 echo "Bootstrap complete! The Tenant layer can now be deployed."

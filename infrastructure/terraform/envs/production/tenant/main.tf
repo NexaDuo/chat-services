@@ -54,6 +54,11 @@ resource "coolify_service_envs" "shared" {
     key   = "TZ"
     value = var.tz
   }
+  env {
+    key        = "TUNNEL_TOKEN"
+    value      = data.google_secret_manager_secret_version.tunnel_token.secret_data
+    is_literal = true
+  }
 }
 
 # ---------------------------------------------------------------------------

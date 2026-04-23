@@ -58,6 +58,20 @@ container_by_subname() {
 sudo docker inspect coolify >/dev/null 2>&1 || { echo "coolify container not found" >&2; exit 1; }
 sudo docker inspect coolify-proxy >/dev/null 2>&1 || { echo "coolify-proxy container not found" >&2; exit 1; }
 
+echo "Waiting for tenant containers to leave 'Created' state (up to 5 min)..."
+for i in $(seq 1 60); do
+  created_count=$(sudo docker ps -a \
+    --filter "label=coolify.managed=true" \
+    --filter "status=created" \
+    --format '{{.Names}}' | wc -l)
+  [[ "${created_count}" == "0" ]] && break
+  sleep 5
+done
+if [[ "${created_count}" != "0" ]]; then
+  echo "Warning: ${created_count} containers still in Created state after 5 min:" >&2
+  sudo docker ps -a --filter "label=coolify.managed=true" --filter "status=created" --format '{{.Names}}' >&2
+fi
+
 echo "Running Coolify init to regenerate dynamic proxy configuration..."
 sudo docker exec coolify php artisan app:init
 

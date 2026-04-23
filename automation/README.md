@@ -29,7 +29,7 @@ Este diretório contém scripts do Playwright para automatizar a configuração 
 Para facilitar o ciclo completo (Clean -> Up -> Setup -> Test), você pode usar os comandos na raiz do projeto:
 ```bash
 # Via script bash
-./run-tests.sh
+./scripts/validate-stack.sh
 
 # Via Makefile
 make test
