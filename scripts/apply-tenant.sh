@@ -36,15 +36,22 @@ redeploy_services() {
   base="${url%/api/v1}"
 
   echo "=== Re-deploying tenant services so containers pick up env vars ==="
-  for svc in shared chatwoot dify nexaduo; do
-    local uuid code
-    uuid="$(cd "${TENANT_DIR}" && terraform state show "coolify_service.${svc}" 2>/dev/null \
-      | awk '/^    uuid /{gsub(/"/,""); print $3; exit}')"
-    [[ -z "${uuid}" ]] && { echo "  ${svc}: not in state, skipping"; continue; }
-    code="$(curl -sS -o /dev/null -w '%{http_code}' \
-      -X POST -H "Authorization: Bearer ${token}" \
-      "${base}/api/v1/deploy?uuid=${uuid}")"
-    echo "  deploy ${svc} (${uuid}): ${code}"
+  # On the first redeploy after a fresh tenant create, Coolify occasionally
+  # leaves the chatwoot/nexaduo containers in "Created" state. A second
+  # deploy reliably starts them, so we always fire two rounds spaced 60s.
+  for round in 1 2; do
+    echo "-- redeploy round ${round}/2 --"
+    for svc in shared chatwoot dify nexaduo; do
+      local uuid code
+      uuid="$(cd "${TENANT_DIR}" && terraform state show "coolify_service.${svc}" 2>/dev/null \
+        | awk '/^    uuid /{gsub(/"/,""); print $3; exit}')"
+      [[ -z "${uuid}" ]] && { echo "  ${svc}: not in state, skipping"; continue; }
+      code="$(curl -sS -o /dev/null -w '%{http_code}' \
+        -X POST -H "Authorization: Bearer ${token}" \
+        "${base}/api/v1/deploy?uuid=${uuid}")"
+      echo "  deploy ${svc} (${uuid}): ${code}"
+    done
+    [[ "${round}" == "1" ]] && sleep 60
   done
 }
 

@@ -23,6 +23,9 @@ if [[ ! -d .terraform ]]; then
     -backend-config="bucket=nexaduo-terraform-state" \
     -backend-config="prefix=terraform/foundation"
 fi
+
+"${PROJECT_ROOT}/scripts/preflight-foundation.sh"
+
 terraform apply -auto-approve -var-file="${TFVARS}"
 
 echo "=== Step 2/3: Bootstrap Coolify ==="
