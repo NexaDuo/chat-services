@@ -102,7 +102,7 @@ resource "google_compute_firewall" "allow_coolify" {
 
   allow {
     protocol = "tcp"
-    ports    = ["8000"]
+    ports    = ["8000", "6001"]
   }
 
   source_ranges = ["0.0.0.0/0"] # Temporary for setup; can be restricted later

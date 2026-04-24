@@ -13,11 +13,17 @@ PROJECT_ID="${GCP_PROJECT_ID:-nexaduo-492818}"
 VM_NAME="${APP_NAME:-nexaduo-chat-services}"
 ZONE="${GCP_ZONE:-us-central1-b}"
 SSH_USER="${SSH_USER:-ubuntu}"
-DEFAULT_EMAIL="${COOLIFY_BOOTSTRAP_EMAIL:-admin@nexaduo.local}"
-DEFAULT_PASSWORD="${COOLIFY_BOOTSTRAP_PASSWORD:-$(openssl rand -hex 16)}"
+DEFAULT_EMAIL="${COOLIFY_BOOTSTRAP_EMAIL:-alexandre@nexaduo.com}"
+DEFAULT_PASSWORD="${COOLIFY_BOOTSTRAP_PASSWORD:-}"
 
-if [ -z "${COOLIFY_BOOTSTRAP_PASSWORD:-}" ]; then
-  echo "INFO: COOLIFY_BOOTSTRAP_PASSWORD not provided; using generated one-time bootstrap password."
+# Fetch admin_password if not provided (Unified Login)
+if [ -z "$DEFAULT_PASSWORD" ]; then
+  echo "Fetching unified admin_password from Secret Manager..."
+  DEFAULT_PASSWORD=$(gcloud secrets versions access latest --secret=admin_password --project="$PROJECT_ID" 2>/dev/null || echo "")
+  if [ -z "$DEFAULT_PASSWORD" ]; then
+    echo "Warning: Unified admin_password secret not found. Generating temporary one."
+    DEFAULT_PASSWORD="$(openssl rand -hex 16)"
+  fi
 fi
 
 # Helper: Ensure secret exists in Secret Manager
@@ -109,6 +115,7 @@ if (!$user->teams()->where("teams.id", $team->id)->exists()) {
 $settings = App\Models\InstanceSettings::first();
 if ($settings) {
     $settings->is_api_enabled = true;
+    $settings->fqdn = "https://coolify.nexaduo.com";
     $settings->save();
 }
 // Ensure localhost server is attached to the same team used by API token

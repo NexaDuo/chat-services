@@ -6,7 +6,9 @@
   "type": "module",
   "scripts": {
     "setup": "node initial-setup.js",
-    "test:all": "npm run verify:dify-install && npm run verify:chatwoot-message && npm run verify:grafana-access",
+    "test:all": "npx playwright test",
+    "generate-env": "npx tsx ../scripts/generate-env.ts",
+    "backup": "npx tsx ../scripts/backup.ts",
     "verify:dify-install": "node verify-dify-install.js",
     "verify:chatwoot-message": "node verify-chatwoot-message.js",
     "verify:grafana-access": "node verify-grafana-access.js"
@@ -14,5 +16,9 @@
   "dependencies": {
     "playwright": "^1.42.1",
     "dotenv": "^16.4.5"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.3",
+    "@playwright/test": "^1.42.1"
   }
 }

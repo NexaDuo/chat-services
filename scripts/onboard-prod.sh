@@ -24,7 +24,7 @@ ONBOARDING_DIR="${PROJECT_ROOT}/onboarding"
 PROJECT_ID="${GCP_PROJECT_ID:-nexaduo-492818}"
 CHATWOOT_URL="${CHATWOOT_URL:-https://chat.nexaduo.com}"
 DIFY_URL="${DIFY_URL:-https://dify.nexaduo.com}"
-DEFAULT_ADMIN_EMAIL="${DEFAULT_ADMIN_EMAIL:-admin@nexaduo.com}"
+DEFAULT_ADMIN_EMAIL="${DEFAULT_ADMIN_EMAIL:-alexandre@nexaduo.com}"
 
 # Ensure admin_email / admin_password secrets exist; create on first run.
 ensure_secret_with_default() {

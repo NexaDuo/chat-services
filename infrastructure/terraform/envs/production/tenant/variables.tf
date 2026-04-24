@@ -54,7 +54,7 @@ variable "dify_app_api_url" {
 
 variable "grafana_admin_user" {
   type    = string
-  default = "admin"
+  default = "alexandre@nexaduo.com"
 }
 
 variable "middleware_image" {

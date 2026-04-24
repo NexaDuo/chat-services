@@ -40,7 +40,7 @@ services:
     user: "0"
     command: -config.file=/etc/loki/loki.yaml
     volumes:
-      - /opt/nexaduo/observability/loki/loki.yaml:/etc/loki/loki.yaml:ro
+      - ${NEXADUO_CONF_PATH:-..}/observability/loki/loki.yaml:/etc/loki/loki.yaml:ro
       - loki-data:/var/loki
     networks:
       - chat-network
@@ -50,7 +50,7 @@ services:
     restart: unless-stopped
     command: -config.file=/etc/promtail/promtail.yaml
     volumes:
-      - /opt/nexaduo/observability/promtail/promtail.yaml:/etc/promtail/promtail.yaml:ro
+      - ${NEXADUO_CONF_PATH:-..}/observability/promtail/promtail.yaml:/etc/promtail/promtail.yaml:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
     networks:
       - chat-network
@@ -62,7 +62,7 @@ services:
       GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD}
     volumes:
-      - /opt/nexaduo/observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ${NEXADUO_CONF_PATH:-..}/observability/grafana/provisioning:/etc/grafana/provisioning:ro
       - grafana-data:/var/lib/grafana
     ports:
       - "3002:3000"
@@ -76,7 +76,7 @@ services:
       - --config.file=/etc/prometheus/prometheus.yml
       - --storage.tsdb.retention.time=30d
     volumes:
-      - /opt/nexaduo/observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ${NEXADUO_CONF_PATH:-..}/observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus-data:/prometheus
     ports:
       - "9090:9090"
