@@ -11,7 +11,7 @@ services:
       TZ: ${TZ:-UTC}
     volumes:
       - postgres-data:/var/lib/postgresql/data
-      - ${NEXADUO_CONF_PATH:-..}/deploy/01-init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+      - /opt/nexaduo/postgres/01-init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d postgres"]
       interval: 10s

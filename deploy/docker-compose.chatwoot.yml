@@ -1,6 +1,6 @@
 services:
   chatwoot-init:
-    image: chatwoot/chatwoot:v4.1.0
+    image: chatwoot/chatwoot:v4.13.0-ce
     container_name: nexaduo-chatwoot-init
     restart: "no"
     environment:
@@ -15,6 +15,9 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DATABASE: chatwoot
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/1
+      GOOGLE_OAUTH_CLIENT_ID: ${GOOGLE_OAUTH_CLIENT_ID}
+      GOOGLE_OAUTH_CLIENT_SECRET: ${GOOGLE_OAUTH_CLIENT_SECRET}
+      GOOGLE_OAUTH_CALLBACK_URL: ${CHATWOOT_FRONTEND_URL}/omniauth/google_oauth2/callback
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
@@ -25,7 +28,7 @@ services:
     networks:
       - chat-network
   chatwoot-rails:
-    image: chatwoot/chatwoot:v4.1.0
+    image: chatwoot/chatwoot:v4.13.0-ce
     container_name: nexaduo-chatwoot-rails
     restart: unless-stopped
     depends_on:
@@ -42,6 +45,9 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DATABASE: chatwoot
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/1
+      GOOGLE_OAUTH_CLIENT_ID: ${GOOGLE_OAUTH_CLIENT_ID}
+      GOOGLE_OAUTH_CLIENT_SECRET: ${GOOGLE_OAUTH_CLIENT_SECRET}
+      GOOGLE_OAUTH_CALLBACK_URL: ${CHATWOOT_FRONTEND_URL}/omniauth/google_oauth2/callback
     ports:
       - "3000:3000"
     volumes:
@@ -58,7 +64,7 @@ services:
     networks:
       - chat-network
   chatwoot-sidekiq:
-    image: chatwoot/chatwoot:v4.1.0
+    image: chatwoot/chatwoot:v4.13.0-ce
     container_name: nexaduo-chatwoot-sidekiq
     restart: unless-stopped
     depends_on:
@@ -73,6 +79,9 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DATABASE: chatwoot
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/1
+      GOOGLE_OAUTH_CLIENT_ID: ${GOOGLE_OAUTH_CLIENT_ID}
+      GOOGLE_OAUTH_CLIENT_SECRET: ${GOOGLE_OAUTH_CLIENT_SECRET}
+      GOOGLE_OAUTH_CALLBACK_URL: ${CHATWOOT_FRONTEND_URL}/omniauth/google_oauth2/callback
     volumes:
       - chatwoot-storage:/app/storage
       - chatwoot-public:/app/public

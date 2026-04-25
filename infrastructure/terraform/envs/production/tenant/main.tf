@@ -146,7 +146,21 @@ resource "coolify_service_envs" "chatwoot" {
   }
   env {
     key   = "CHATWOOT_FORCE_SSL"
-    value = "false"
+    value = "true"
+  }
+  env {
+    key        = "GOOGLE_OAUTH_CLIENT_ID"
+    value      = data.google_secret_manager_secret_version.google_oauth_client_id.secret_data
+    is_literal = true
+  }
+  env {
+    key        = "GOOGLE_OAUTH_CLIENT_SECRET"
+    value      = data.google_secret_manager_secret_version.google_oauth_client_secret.secret_data
+    is_literal = true
+  }
+  env {
+    key   = "GOOGLE_OAUTH_CALLBACK_URL"
+    value = "${var.chatwoot_frontend_url}/omniauth/google_oauth2/callback"
   }
 }
 
@@ -272,6 +286,32 @@ resource "coolify_service_envs" "dify" {
     key   = "INNER_API_METRICS_ENABLED"
     value = "true"
   }
+  env {
+    key   = "ENABLE_SOCIAL_OAUTH_LOGIN"
+    value = "true"
+  }
+  env {
+    key   = "CONSOLE_WEB_URL"
+    value = "https://dify.nexaduo.com"
+  }
+  env {
+    key   = "SERVICE_API_URL"
+    value = "https://dify.nexaduo.com"
+  }
+  env {
+    key   = "APP_WEB_URL"
+    value = "https://dify.nexaduo.com"
+  }
+  env {
+    key        = "GOOGLE_CLIENT_ID"
+    value      = data.google_secret_manager_secret_version.google_oauth_client_id.secret_data
+    is_literal = true
+  }
+  env {
+    key        = "GOOGLE_CLIENT_SECRET"
+    value      = data.google_secret_manager_secret_version.google_oauth_client_secret.secret_data
+    is_literal = true
+  }
 }
 
 # ---------------------------------------------------------------------------
@@ -382,6 +422,40 @@ resource "coolify_service_envs" "nexaduo" {
     key        = "GRAFANA_ADMIN_PASSWORD"
     value      = data.google_secret_manager_secret_version.grafana_admin_password.secret_data
     is_literal = true
+  }
+  env {
+    key   = "GF_AUTH_GOOGLE_ENABLED"
+    value = "true"
+  }
+  env {
+    key        = "GF_AUTH_GOOGLE_CLIENT_ID"
+    value      = data.google_secret_manager_secret_version.google_oauth_client_id.secret_data
+    is_literal = true
+  }
+  env {
+    key        = "GF_AUTH_GOOGLE_CLIENT_SECRET"
+    value      = data.google_secret_manager_secret_version.google_oauth_client_secret.secret_data
+    is_literal = true
+  }
+  env {
+    key   = "GF_AUTH_GOOGLE_SCOPES"
+    value = "openid email profile"
+  }
+  env {
+    key   = "GF_AUTH_GOOGLE_AUTH_URL"
+    value = "https://accounts.google.com/o/oauth2/v2/auth"
+  }
+  env {
+    key   = "GF_AUTH_GOOGLE_TOKEN_URL"
+    value = "https://oauth2.googleapis.com/token"
+  }
+  env {
+    key   = "GF_AUTH_GOOGLE_ALLOWED_DOMAINS"
+    value = "nexaduo.com machado.cc"
+  }
+  env {
+    key   = "GF_SERVER_ROOT_URL"
+    value = "https://grafana.nexaduo.com"
   }
 }
 

@@ -65,3 +65,11 @@ data "google_secret_manager_secret_version" "coolify_url" {
 data "google_secret_manager_secret_version" "tunnel_token" {
   secret = "tunnel_token"
 }
+
+data "google_secret_manager_secret_version" "google_oauth_client_id" {
+  secret = "google_oauth_client_id"
+}
+
+data "google_secret_manager_secret_version" "google_oauth_client_secret" {
+  secret = "google_oauth_client_secret"
+}
