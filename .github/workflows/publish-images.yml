@@ -9,6 +9,12 @@ on:
       tag:
         description: Extra tag to apply (in addition to sha-<short>).
         required: false
+  workflow_call:
+    inputs:
+      tag:
+        description: Extra tag to apply (in addition to sha-<short>).
+        required: false
+        type: string
 
 permissions:
   contents: read
