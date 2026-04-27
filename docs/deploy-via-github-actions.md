@@ -21,8 +21,17 @@ só a camada que mudou:
 | `onboarding` | criar admins Chatwoot+Dify | Uma vez |
 | `all` | pipeline completo na ordem do `deploy-production.sh` | First-time setup ou disaster recovery |
 
-`dry_run=true` é o default — só roda `terraform plan` e gera artifact.
-Para aplicar de fato, marque `dry_run=false`.
+`dry_run=true` é o default. Em modo dry-run:
+- Nenhum `terraform apply` roda — só `plan`.
+- O job `build-images` é **pulado** (push de imagem é efeito colateral, gera tag órfã + custo de Artifact Registry).
+- `routes`, `bootstrap`, `onboarding` ficam em "skip" com nota informativa.
+
+O plano do terraform aparece como texto redacted no log do job, mas **não é uploadado como artifact** — o plano binário (`tfplan.bin`) embute valores de secrets do Secret Manager (Postgres password, OAuth secret, Cloudflare token) e ficaria acessível a qualquer pessoa com Actions read.
+
+### Inputs adicionais
+
+- **`tenant_subset`** (default `all`): para `segment=tenant`, aplica via `-target` só `chatwoot`, `dify`, `nexaduo` ou `shared`. Funciona depois do primeiro tenant apply popular o state.
+- **`skip_grafana`** (default `true`): para `segment=routes`, ignora Grafana ao gerar o fallback Traefik. Útil enquanto `nexaduo-app` está exited (issue #5).
 
 ## Setup (uma vez)
 
@@ -114,8 +123,8 @@ CLI:
 # Dry-run de tenant (mais comum: ver o que mudaria)
 gh workflow run deploy.yml -f segment=tenant -f dry_run=true
 
-# Aplicar só rotas (fix de 502)
-gh workflow run deploy.yml -f segment=routes -f dry_run=false
+# Aplicar só rotas (fix de 502), pulando Grafana (nexaduo-app exited)
+gh workflow run deploy.yml -f segment=routes -f dry_run=false -f skip_grafana=true
 
 # Pipeline completo, dry-run primeiro
 gh workflow run deploy.yml -f segment=all -f dry_run=true
@@ -123,6 +132,9 @@ gh workflow run deploy.yml -f segment=all -f dry_run=false
 
 # Re-aplicar só o Chatwoot (envs OAuth, por exemplo)
 gh workflow run deploy.yml -f segment=tenant -f tenant_subset=chatwoot -f dry_run=false
+
+# Smoke público (HTTPS reachability + OAuth probe)
+gh workflow run deploy.yml -f segment=validate
 ```
 
 ## Limitações conhecidas
@@ -132,17 +144,24 @@ gh workflow run deploy.yml -f segment=tenant -f tenant_subset=chatwoot -f dry_ru
    está populado. Hoje ele está vazio (ver issue #5). Vai funcionar a partir do
    primeiro `tenant` apply bem-sucedido.
 
-2. **`bootstrap` pode quebrar em re-runs**. `bootstrap-coolify.sh` foi escrito
-   para uma instalação inicial — em re-execuções ele tenta criar o coolify_url
+2. **`bootstrap` não é idempotente**. `bootstrap-coolify.sh` foi escrito
+   para uma instalação inicial — em re-execuções ele tenta criar o `coolify_url`
    secret de novo. Refatorar pra ser idempotente é trabalho separado.
 
-3. **`grafana` (nexaduo-app) está exited em produção**. O job `routes` aplica
-   um fallback Traefik pra Chatwoot+Dify+Coolify mas pula Grafana porque o
-   container não sobe. Tracker separado.
+3. **`grafana` (nexaduo-app) está exited em produção**. O job `routes` é
+   resiliente a isso: com `skip_grafana=true` (default), aplica fallback Traefik
+   só pra Chatwoot/Dify/Coolify. Quando o Grafana for reanimado, mude para
+   `skip_grafana=false` e re-rode.
 
 4. **OAuth ainda não funciona** mesmo com tudo o resto verde — ver issue #5.
-   O workflow só *entrega* o estado declarado nos arquivos; corrigir o OAuth é
-   ajustar declaração (envs adicionais, versão de imagem, etc).
+   O job `validate` roda `04-oauth.spec.ts`, que **vai falhar deterministicamente
+   até a issue ser fechada** — esse é o comportamento esperado e serve como
+   regressão guard.
+
+5. **`validate` mede apenas o edge público**. Não roda `health-check-all.sh`
+   nem o login Playwright (`03-smoke.spec.ts`) — esses pressupõem Docker local
+   e credenciais admin, ambos incompatíveis com runner GH Actions. Para checagem
+   container-level, rode esses scripts via SSH na VM ou em CI separado.
 
 ## Troubleshooting
 
@@ -162,11 +181,13 @@ gcloud projects get-iam-policy nexaduo-492818 --format=json \
 gcloud storage ls -r gs://nexaduo-terraform-state/terraform/
 ```
 
-### Job `validate` falha em "Run Playwright smoke"
+### Job `validate` falha em "Run Playwright OAuth checks"
 
-Os specs em `onboarding/tests/03-smoke.spec.ts` foram escritos para CI local
-com docker-compose; em produção podem precisar de adaptação (auth, contexto).
-Por enquanto considerar warning, não bloqueante.
+**Comportamento esperado** enquanto issue #5 não for fechada — o spec
+`04-oauth.spec.ts` valida que `/auth/google_oauth2` (Chatwoot) e
+`/console/api/oauth/login/google` (Dify) redirecionam até `accounts.google.com`.
+Hoje retornam 404 e 400 respectivamente. Quando a issue fechar, esses testes
+têm que passar; mantenha-os como regression guard.
 
 ## Roadmap (próximas iterações)
 

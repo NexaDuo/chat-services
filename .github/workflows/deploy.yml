@@ -1,39 +1,39 @@
 name: Deploy production (segmented)
 
-# Manual deploy do stack em producao, segmentado por camada para reduzir blast radius
-# e permitir re-aplicar so o que mudou. Cada job e independente; rode "all" para o
-# pipeline completo (foundation -> bootstrap -> build-images -> tenant -> routes ->
-# onboarding -> validate).
+# Manual production deploy of the stack, segmented by layer to reduce blast
+# radius and let operators re-apply only what changed. Each job is independent;
+# pick "all" for the full pipeline (foundation -> bootstrap -> build-images ->
+# tenant -> routes -> onboarding -> validate).
 #
-# Setup (uma vez): ver docs/deploy-via-github-actions.md
+# One-time setup: see docs/deploy-via-github-actions.md
 #   - Repo variables: TF_BACKEND_PREFIX_FOUNDATION, TF_BACKEND_PREFIX_TENANT,
 #     GCP_WORKLOAD_IDENTITY_PROVIDER, GCP_DEPLOYER_SERVICE_ACCOUNT
-#   - Repo secrets: CLOUDFLARE_API_TOKEN (consumido pelo provider Cloudflare)
+#   - Repo secrets: CLOUDFLARE_API_TOKEN (consumed by the Cloudflare provider)
 
 on:
   workflow_dispatch:
     inputs:
       segment:
-        description: 'Qual camada aplicar'
+        description: 'Which layer to apply'
         required: true
         type: choice
         default: validate
         options:
-          - validate          # smoke + health, nao escreve nada
-          - routes            # refresh Traefik proxy routes (rapido, nao toca terraform)
+          - validate          # public smoke checks; no writes
+          - routes            # refresh Traefik proxy routes (fast, no terraform)
           - tenant            # terraform apply tenant (Coolify services + envs)
-          - build-images      # build & push middleware/self-healing
-          - bootstrap         # bootstrap-coolify.sh (instala Coolify na VM)
+          - build-images      # build & push middleware/self-healing images
+          - bootstrap         # bootstrap-coolify.sh (installs Coolify on the VM)
           - foundation        # terraform apply foundation (VM, VPC, DNS, Tunnel, AR)
-          - onboarding        # onboard-prod.sh (criar admins Chatwoot+Dify)
-          - all               # pipeline completo, ordem do deploy-production.sh
+          - onboarding        # onboard-prod.sh (create Chatwoot+Dify admins)
+          - all               # full pipeline, in deploy-production.sh order
       dry_run:
-        description: 'Apenas plan (terraform plan, sem apply). Default true por seguranca.'
+        description: 'Plan-only (terraform plan, no apply, no image push). Default true for safety.'
         required: true
         type: boolean
         default: true
       tenant_subset:
-        description: 'Para segment=tenant: qual servico aplicar via -target. "all" = todos.'
+        description: 'For segment=tenant: which service to apply via -target. "all" = everything.'
         required: false
         type: choice
         default: all
@@ -43,6 +43,11 @@ on:
           - dify
           - nexaduo
           - shared
+      skip_grafana:
+        description: 'For segment=routes: skip Grafana when its container is down.'
+        required: false
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -58,14 +63,14 @@ env:
   BASE_DOMAIN: nexaduo.com
   TFVARS_PATH: infrastructure/terraform/envs/production/terraform.tfvars
 
-# Cancela runs duplicados na mesma camada para evitar race em terraform state.
+# Prevent two runs of the same segment racing on terraform state.
 concurrency:
   group: deploy-prod-${{ inputs.segment }}
   cancel-in-progress: false
 
 jobs:
   # -----------------------------------------------------------------------
-  # foundation: terraform apply na camada de infra (VM, VPC, DNS, Tunnel, AR)
+  # foundation: terraform apply for the infra layer (VM, VPC, DNS, Tunnel, AR)
   # -----------------------------------------------------------------------
   foundation:
     if: inputs.segment == 'foundation' || inputs.segment == 'all'
@@ -95,12 +100,8 @@ jobs:
             --secret=terraform_tfvars_production \
             --project="${PROJECT_ID}" > "${TFVARS_PATH}"
 
-      - name: Preflight (undelete + import WIF/tunnel survivors)
-        working-directory: infrastructure/terraform/envs/production/foundation
-        run: |
-          chmod +x ../../../../../scripts/preflight-foundation.sh
-          ../../../../../scripts/preflight-foundation.sh
-
+      # Init MUST run before preflight: preflight uses `terraform state show/import`
+      # which requires an initialized backend.
       - name: Terraform init
         working-directory: infrastructure/terraform/envs/production/foundation
         run: |
@@ -110,18 +111,24 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
 
+      - name: Preflight (undelete + import WIF/tunnel survivors)
+        working-directory: infrastructure/terraform/envs/production/foundation
+        run: |
+          chmod +x ../../../../../scripts/preflight-foundation.sh
+          ../../../../../scripts/preflight-foundation.sh
+
       - name: Terraform plan
         working-directory: infrastructure/terraform/envs/production/foundation
         run: terraform plan -var-file=../terraform.tfvars -out=tfplan.bin
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
 
-      - name: Upload plan as artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: foundation-tfplan-${{ github.run_id }}
-          path: infrastructure/terraform/envs/production/foundation/tfplan.bin
-          retention-days: 14
+      # Plan is shown as redacted text in the job log only. We deliberately do NOT
+      # upload tfplan.bin: the foundation plan includes Cloudflare API tokens and
+      # a binary plan artifact would expose them to anyone with Actions read access.
+      - name: Show plan (redacted)
+        working-directory: infrastructure/terraform/envs/production/foundation
+        run: terraform show -no-color tfplan.bin | head -c 100000
 
       - name: Terraform apply (skipped if dry_run)
         if: inputs.dry_run == false
@@ -131,12 +138,12 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
 
   # -----------------------------------------------------------------------
-  # bootstrap: instala Coolify na VM (uma vez por VM)
+  # bootstrap: install Coolify on the VM (one-time per VM)
   # -----------------------------------------------------------------------
   bootstrap:
     needs: [foundation]
-    # foundation pode ter sido pulado quando segment=bootstrap; always() + check em
-    # result trata o "skip cascade" do GH Actions.
+    # foundation may have been skipped when segment=bootstrap; always() + result
+    # check handles the GH Actions skip-cascade.
     if: |
       always() &&
       (inputs.segment == 'bootstrap' ||
@@ -153,6 +160,22 @@ jobs:
 
       - uses: google-github-actions/setup-gcloud@v2
 
+      # bootstrap-coolify.sh runs `terraform output -raw tunnel_token` from the
+      # foundation layer. GH Actions jobs are isolated, so we must install
+      # Terraform here and re-init the foundation backend.
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Terraform init (foundation, for `terraform output`)
+        working-directory: infrastructure/terraform/envs/production/foundation
+        run: |
+          terraform init -reconfigure \
+            -backend-config="bucket=nexaduo-terraform-state" \
+            -backend-config="prefix=${{ vars.TF_BACKEND_PREFIX_FOUNDATION }}"
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+
       - name: Bootstrap Coolify
         if: inputs.dry_run == false
         run: |
@@ -161,13 +184,16 @@ jobs:
 
       - name: Dry-run note
         if: inputs.dry_run == true
-        run: echo "::notice::dry_run=true; pulando bootstrap-coolify.sh."
+        run: echo "::notice::dry_run=true; skipping bootstrap-coolify.sh."
 
   # -----------------------------------------------------------------------
-  # build-images: chama o workflow ja existente publish-images.yml
+  # build-images: invokes the existing publish-images.yml as a reusable workflow.
+  # Skipped on dry_run (image push has side effects: AR storage + tag pollution).
   # -----------------------------------------------------------------------
   build-images:
-    if: inputs.segment == 'build-images' || inputs.segment == 'all'
+    if: |
+      (inputs.segment == 'build-images' || inputs.segment == 'all') &&
+      inputs.dry_run == false
     uses: ./.github/workflows/publish-images.yml
     secrets: inherit
     with:
@@ -226,34 +252,44 @@ jobs:
         working-directory: infrastructure/terraform/envs/production/tenant
         run: terraform plan -var-file=../terraform.tfvars ${{ steps.targets.outputs.args }} -out=tfplan.bin
 
-      - uses: actions/upload-artifact@v4
-        with:
-          name: tenant-tfplan-${{ github.run_id }}
-          path: infrastructure/terraform/envs/production/tenant/tfplan.bin
-          retention-days: 14
+      # Show plan as redacted text in the job log; do NOT upload tfplan.bin as
+      # an artifact. The tenant plan embeds secret values pulled from Secret
+      # Manager (Postgres password, OAuth secret, etc.), and any user with
+      # Actions read access could download the binary plan and extract them.
+      - name: Show plan (redacted)
+        working-directory: infrastructure/terraform/envs/production/tenant
+        run: terraform show -no-color tfplan.bin | head -c 100000
 
-      - name: Terraform apply (skipped if dry_run)
+      - name: Terraform apply with 409-aware retry (skipped if dry_run)
         if: inputs.dry_run == false
         working-directory: infrastructure/terraform/envs/production/tenant
+        # Mirror apply-tenant.sh logic: only retry the known Coolify race
+        # ("409 Conflict creating service envs"), and run clean-service-envs.sh
+        # between attempts. Any other error fails fast so we do not mask real
+        # bugs (credentials, schema drift, etc.).
         run: |
-          # Retry para 409 (provisioning_in_progress no Coolify, igual apply-tenant.sh).
-          # TODO: tenant_subset funciona aqui; refatorar apply-tenant.sh para passar
-          # -target via env e centralizar retry+redeploy num lugar so.
+          set +e
           for attempt in 1 2 3; do
             echo "::group::Apply attempt $attempt"
-            if terraform apply -auto-approve tfplan.bin; then
-              echo "::endgroup::"
-              break
-            fi
+            terraform apply -auto-approve tfplan.bin 2>&1 | tee /tmp/tf-apply.log
+            rc=${PIPESTATUS[0]}
             echo "::endgroup::"
-            [[ $attempt -eq 3 ]] && exit 1
-            echo "Retrying in 30s..."
-            sleep 30
-            terraform plan -var-file=../terraform.tfvars ${{ steps.targets.outputs.args }} -out=tfplan.bin
+            [[ $rc -eq 0 ]] && exit 0
+            if grep -q "409 Conflict creating service envs" /tmp/tf-apply.log; then
+              echo "::warning::Detected Coolify 409 on service envs; cleaning auto-populated envs."
+              chmod +x ../../../../../scripts/clean-service-envs.sh
+              ../../../../../scripts/clean-service-envs.sh
+              # Re-plan after the clean to refresh state.
+              terraform plan -var-file=../terraform.tfvars ${{ steps.targets.outputs.args }} -out=tfplan.bin
+              continue
+            fi
+            echo "::error::Apply failed with a non-409 error; not retrying." >&2
+            exit "$rc"
           done
+          exit 1
 
   # -----------------------------------------------------------------------
-  # routes: refresh do Coolify proxy (Traefik) - rapido, sem terraform
+  # routes: refresh the Coolify proxy (Traefik) - fast, no terraform
   # -----------------------------------------------------------------------
   routes:
     needs: [tenant]
@@ -275,18 +311,25 @@ jobs:
 
       - name: Refresh Coolify routes
         if: inputs.dry_run == false
+        env:
+          BASE_DOMAIN: ${{ env.BASE_DOMAIN }}
+          PROJECT_ID: ${{ env.PROJECT_ID }}
+          ZONE: ${{ env.ZONE }}
+          VM_NAME: ${{ env.VM_NAME }}
+          # SKIP_GRAFANA=true tells refresh-coolify-routes.sh to omit the Grafana
+          # route from the Traefik fallback so this segment can recover Chatwoot/
+          # Dify even when nexaduo-app (Grafana) is down.
+          SKIP_GRAFANA: ${{ inputs.skip_grafana && 'true' || 'false' }}
         run: |
           chmod +x scripts/refresh-coolify-routes.sh
-          BASE_DOMAIN="${BASE_DOMAIN}" PROJECT_ID="${PROJECT_ID}" \
-            ZONE="${ZONE}" VM_NAME="${VM_NAME}" \
-            ./scripts/refresh-coolify-routes.sh
+          ./scripts/refresh-coolify-routes.sh
 
       - name: Dry-run note
         if: inputs.dry_run == true
-        run: echo "::notice::dry_run=true; pulando refresh-coolify-routes.sh."
+        run: echo "::notice::dry_run=true; skipping refresh-coolify-routes.sh."
 
   # -----------------------------------------------------------------------
-  # onboarding: criar admins iniciais (idempotente; safe em re-runs)
+  # onboarding: create initial admins (idempotent; safe on re-runs)
   # -----------------------------------------------------------------------
   onboarding:
     needs: [routes]
@@ -314,10 +357,11 @@ jobs:
 
       - name: Dry-run note
         if: inputs.dry_run == true
-        run: echo "::notice::dry_run=true; pulando onboard-prod.sh."
+        run: echo "::notice::dry_run=true; skipping onboard-prod.sh."
 
   # -----------------------------------------------------------------------
-  # validate: smoke checks + Playwright (sempre seguro de rodar)
+  # validate: public smoke probes against production. Must NOT depend on
+  # local Docker, localhost ports, or admin credentials.
   # -----------------------------------------------------------------------
   validate:
     needs: [onboarding]
@@ -326,22 +370,31 @@ jobs:
       (inputs.segment == 'validate' ||
        (inputs.segment == 'all' && (needs.onboarding.result == 'success' || needs.onboarding.result == 'skipped')))
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
-      - uses: google-github-actions/auth@v2
-        with:
-          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: ${{ vars.GCP_DEPLOYER_SERVICE_ACCOUNT }}
-
-      - uses: google-github-actions/setup-gcloud@v2
-
-      - name: Health checks
+      # Public probes against the edge: every domain must respond and not 502.
+      # We DO NOT call health-check-all.sh here: that script targets local Docker
+      # and is meant to run on the VM. Run it remotely from a separate task if
+      # you need container-level health.
+      - name: Public smoke (HTTPS reachability)
         run: |
-          chmod +x scripts/health-check-all.sh
-          BASE_DOMAIN="${BASE_DOMAIN}" PROJECT_ID="${PROJECT_ID}" \
-            ./scripts/health-check-all.sh
+          set -u
+          fail=0
+          for host in chat.${BASE_DOMAIN} dify.${BASE_DOMAIN} coolify.${BASE_DOMAIN}; do
+            code=$(curl -sS -o /dev/null -w "%{http_code}" --max-time 15 -L "https://${host}/" || echo "ERR")
+            echo "  https://${host}/ -> ${code}"
+            case "${code}" in
+              2*|3*) ;;          # OK / redirect to login is expected
+              *)     fail=1 ;;
+            esac
+          done
+          # Dify console API setup must respond 200 (auth-free).
+          code=$(curl -sS -o /dev/null -w "%{http_code}" --max-time 15 "https://dify.${BASE_DOMAIN}/console/api/setup" || echo "ERR")
+          echo "  https://dify.${BASE_DOMAIN}/console/api/setup -> ${code}"
+          [[ "${code}" == "200" ]] || fail=1
+          [[ $fail -eq 0 ]] || { echo "::error::Public smoke failed."; exit 1; }
 
       - uses: actions/setup-node@v4
         with:
@@ -355,12 +408,14 @@ jobs:
           npm ci
           npx playwright install --with-deps chromium
 
-      - name: Run Playwright smoke
+      # OAuth spec uses production URLs and unauthenticated endpoints; no
+      # ADMIN_PASSWORD required. Tracks issue #5.
+      - name: Run Playwright OAuth checks
         working-directory: onboarding
-        run: npx playwright test 03-smoke.spec.ts
         env:
           BASE_URL_CHATWOOT: https://chat.${{ env.BASE_DOMAIN }}
           BASE_URL_DIFY: https://dify.${{ env.BASE_DOMAIN }}
+        run: npx playwright test 04-oauth.spec.ts
 
       - uses: actions/upload-artifact@v4
         if: always()
