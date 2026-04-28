@@ -10,6 +10,11 @@ jobs:
   validate-stack:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    # Compose v2.30+ on ubuntu-latest forbids redefining services imported via
+    # `include:`. The root docker-compose.yml carries cross-stack `depends_on`
+    # overrides, so we chain compose files via -f / COMPOSE_FILE instead.
+    env:
+      COMPOSE_FILE: deploy/docker-compose.shared.yml:deploy/docker-compose.chatwoot.yml:deploy/docker-compose.dify.yml:deploy/docker-compose.nexaduo.yml:docker-compose.yml
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -53,6 +58,9 @@ jobs:
           docker build -t ghcr.io/nexaduo/self-healing-agent:latest ./agents/self-healing
 
       - name: Start Stack
+        # cloudflared is in deploy/docker-compose.shared.yml; we scale it to 0
+        # because CI doesn't have a tunnel token to register. COMPOSE_FILE is
+        # set at job level so logs/down steps see the same chain.
         run: |
           docker network create nexaduo-network || true
           docker compose up -d --remove-orphans --scale cloudflared=0

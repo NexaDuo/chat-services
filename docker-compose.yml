@@ -1,9 +1,25 @@
-# docker-compose.yml (Local Unified Setup)
-include:
-  - deploy/docker-compose.shared.yml
-  - deploy/docker-compose.chatwoot.yml
-  - deploy/docker-compose.dify.yml
-  - deploy/docker-compose.nexaduo.yml
+# docker-compose.yml (Local Unified Setup — overrides only)
+#
+# This file is INCOMPLETE on its own: it only carries cross-stack `depends_on`
+# overrides for local/CI dev. The actual service definitions live in
+# deploy/docker-compose.{shared,chatwoot,dify,nexaduo}.yml.
+#
+# Compose v2.30+ rejects redefining services that came from an `include:`
+# directive ("conflicts with imported resource"). To keep the permissive merge
+# behavior we used before, we now chain files via `-f` (or via the COMPOSE_FILE
+# env in `.env`) instead of `include:`.
+#
+# How to run locally:
+#   1) Copy `.env.example` to `.env` (it sets COMPOSE_FILE for you), then
+#      simply run `docker compose up -d`.
+#   2) Or pass the chain explicitly:
+#      docker compose \
+#        -f deploy/docker-compose.shared.yml \
+#        -f deploy/docker-compose.chatwoot.yml \
+#        -f deploy/docker-compose.dify.yml \
+#        -f deploy/docker-compose.nexaduo.yml \
+#        -f docker-compose.yml \
+#        up -d
 
 services:
   # Local overrides to enforce cross-stack dependencies which Coolify ignores
