@@ -50,6 +50,7 @@ jobs:
           DIFY_PLUGIN_DIFY_INNER_API_KEY=dummy-key
           MIDDLEWARE_IMAGE=ghcr.io/nexaduo/middleware:latest
           SELF_HEALING_IMAGE=ghcr.io/nexaduo/self-healing-agent:latest
+          HANDOFF_SHARED_SECRET=ci-dummy-handoff-secret-32
           EOF
 
       - name: Build local images
@@ -76,6 +77,30 @@ jobs:
         run: |
           docker network create nexaduo-network || true
           docker compose up -d --remove-orphans --scale cloudflared=0
+
+      - name: Wait for services to be ready
+        # chatwoot-rails starts only after chatwoot-init exits (~80s). The
+        # container starts immediately but Rails needs ~30s more to boot.
+        # Poll until localhost:3000 returns a non-empty HTTP response, and
+        # localhost:4000/health for the middleware. Timeout: 3 min.
+        run: |
+          echo "Waiting for Chatwoot Rails (localhost:3000)..."
+          for i in $(seq 1 36); do
+            code=$(curl -sS -o /dev/null -w "%{http_code}" --max-time 5 http://localhost:3000/ 2>/dev/null || echo "000")
+            echo "  attempt ${i}/36: localhost:3000 -> ${code}"
+            case "${code}" in 2*|3*|4*) echo "Chatwoot ready."; break ;; esac
+            sleep 5
+          done
+          [[ "${code}" =~ ^[234] ]] || { echo "::error::Chatwoot did not become ready in time."; exit 1; }
+
+          echo "Waiting for Middleware (/health at localhost:4000)..."
+          for i in $(seq 1 12); do
+            code=$(curl -sS -o /dev/null -w "%{http_code}" --max-time 5 http://localhost:4000/health 2>/dev/null || echo "000")
+            echo "  attempt ${i}/12: localhost:4000/health -> ${code}"
+            [[ "${code}" == "200" ]] && { echo "Middleware ready."; break; }
+            sleep 5
+          done
+          [[ "${code}" == "200" ]] || { echo "::error::Middleware did not become ready in time."; exit 1; }
 
       - name: Stage 1 - Infrastructure Health
         working-directory: onboarding
