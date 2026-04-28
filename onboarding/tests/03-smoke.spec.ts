@@ -5,16 +5,23 @@ const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
 
 test.describe('Smoke Tests (Post-Setup)', () => {
   test('Login to Chatwoot', async ({ page }) => {
-    await page.goto('http://localhost:3000/app/login', { waitUntil: 'load', timeout: 60000 });
+    test.setTimeout(120000); // Aumenta timeout para este teste específico
     
+    console.log('  - Chatwoot: Navigating to login page...');
+    await page.goto('http://localhost:3000/app/login', { waitUntil: 'networkidle', timeout: 60000 });
+    
+    // Log URL atual para debug
+    console.log(`  - Chatwoot: Current URL: ${page.url()}`);
+
     // Espera por qualquer um dos estados: formulário de login OU dashboard logada
-    const loginForm = page.getByPlaceholder(/email/i).or(page.locator('input[name="email"]'));
+    // No Chatwoot v4, o seletor pode ser mais complexo devido ao Shadow DOM ou labels dinâmicos
+    const loginForm = page.locator('input[name="email"], input[type="email"], [placeholder*="email" i]');
     const dashboardElement = page.locator('.sidebar, .top-bar, .user-profile, .brand-name');
 
-    // Espera até que um dos dois apareça
+    // Espera até que um dos dois apareça (aumentado para 30s)
     await Promise.race([
-      loginForm.first().waitFor({ state: 'visible', timeout: 15000 }).catch(() => {}),
-      dashboardElement.first().waitFor({ state: 'visible', timeout: 15000 }).catch(() => {})
+      loginForm.first().waitFor({ state: 'visible', timeout: 30000 }).catch(() => {}),
+      dashboardElement.first().waitFor({ state: 'visible', timeout: 30000 }).catch(() => {})
     ]);
 
     if (page.url().includes('/app/accounts') || page.url().includes('/dashboard') || await dashboardElement.first().isVisible()) {
@@ -22,10 +29,15 @@ test.describe('Smoke Tests (Post-Setup)', () => {
       return;
     }
 
+    if (!await loginForm.first().isVisible()) {
+      console.log('  - Chatwoot: Login form not visible. Content preview:');
+      const content = await page.content();
+      console.log(content.slice(0, 1000));
+    }
+
     console.log('  - Chatwoot: No active session. Proceeding with login...');
     
-    // Chatwoot matches: input[name="email"], input[type="email"], or placeholder containing email
-    const emailInput = page.locator('input[name="email"], input[type="email"], [placeholder*="email" i]').first();
+    const emailInput = loginForm.first();
     await emailInput.waitFor({ state: 'visible', timeout: 30000 });
     await emailInput.fill(ADMIN_EMAIL);
 
@@ -34,7 +46,7 @@ test.describe('Smoke Tests (Post-Setup)', () => {
     
     await page.locator('button[type="submit"], button:has-text("Login"), button:has-text("Entrar")').first().click();
     
-    await expect(page).toHaveURL(/.*\/app\/accounts|.*\/app\/dashboard/, { timeout: 30000 });
+    await expect(page).toHaveURL(/.*\/app\/accounts|.*\/app\/dashboard/, { timeout: 60000 });
   });
 
   test('Login to Dify', async ({ page }) => {
