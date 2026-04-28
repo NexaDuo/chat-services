@@ -57,6 +57,18 @@ jobs:
           docker build -t ghcr.io/nexaduo/middleware:latest ./middleware
           docker build -t ghcr.io/nexaduo/self-healing-agent:latest ./agents/self-healing
 
+      - name: Stage host-side bind mounts
+        # deploy/docker-compose.shared.yml bind-mounts /opt/nexaduo/postgres/
+        # 01-init.sql into the postgres container. In production this file is
+        # uploaded by scripts/bootstrap-coolify.sh; in CI we replicate it on
+        # the runner so the bind mount resolves to the real SQL file (not an
+        # empty directory created by Docker when the source doesn't exist,
+        # which would break the postgres entrypoint).
+        run: |
+          sudo mkdir -p /opt/nexaduo/postgres
+          sudo cp deploy/01-init.sql /opt/nexaduo/postgres/01-init.sql
+          sudo chmod 0644 /opt/nexaduo/postgres/01-init.sql
+
       - name: Start Stack
         # cloudflared is in deploy/docker-compose.shared.yml; we scale it to 0
         # because CI doesn't have a tunnel token to register. COMPOSE_FILE is
