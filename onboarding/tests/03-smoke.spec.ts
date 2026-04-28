@@ -23,8 +23,15 @@ test.describe('Smoke Tests (Post-Setup)', () => {
     }
 
     console.log('  - Chatwoot: No active session. Proceeding with login...');
-    await loginForm.first().fill(ADMIN_EMAIL);
-    await page.getByPlaceholder(/password/i).or(page.locator('input[type="password"]')).first().fill(ADMIN_PASSWORD!);
+    
+    // Chatwoot matches: input[name="email"], input[type="email"], or placeholder containing email
+    const emailInput = page.locator('input[name="email"], input[type="email"], [placeholder*="email" i]').first();
+    await emailInput.waitFor({ state: 'visible', timeout: 30000 });
+    await emailInput.fill(ADMIN_EMAIL);
+
+    const passwordInput = page.locator('input[name="password"], input[type="password"], [placeholder*="password" i]').first();
+    await passwordInput.fill(ADMIN_PASSWORD!);
+    
     await page.locator('button[type="submit"], button:has-text("Login"), button:has-text("Entrar")').first().click();
     
     await expect(page).toHaveURL(/.*\/app\/accounts|.*\/app\/dashboard/, { timeout: 30000 });
@@ -47,8 +54,14 @@ test.describe('Smoke Tests (Post-Setup)', () => {
     }
 
     console.log('  - Dify: No active session. Proceeding with login...');
-    await loginForm.first().fill(ADMIN_EMAIL);
-    await page.getByPlaceholder(/password/i).or(page.locator('input[type="password"]')).first().fill(ADMIN_PASSWORD!);
+    
+    const emailInput = page.locator('input[name="email"], input[type="email"], [placeholder*="email" i]').first();
+    await emailInput.waitFor({ state: 'visible', timeout: 30000 });
+    await emailInput.fill(ADMIN_EMAIL);
+
+    const passwordInput = page.locator('input[name="password"], input[type="password"], [placeholder*="password" i]').first();
+    await passwordInput.fill(ADMIN_PASSWORD!);
+
     await page.locator('button[type="submit"], button:has-text("Sign in"), button:has-text("Entrar")').first().click();
     
     await expect(page).toHaveURL(/.*\/apps/, { timeout: 30000 });

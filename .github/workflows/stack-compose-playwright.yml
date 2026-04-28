@@ -44,13 +44,20 @@ jobs:
           POSTGRES_PASSWORD=postgres
           REDIS_PASSWORD=redis
           CHATWOOT_SECRET_KEY_BASE=$(openssl rand -hex 32)
+          CHATWOOT_FRONTEND_URL=http://localhost:3000
           DIFY_SECRET_KEY=$(openssl rand -hex 32)
           DIFY_SANDBOX_API_KEY=dummy-key
           DIFY_PLUGIN_DAEMON_KEY=dummy-key
           DIFY_PLUGIN_DIFY_INNER_API_KEY=dummy-key
+          DIFY_CONSOLE_API_URL=http://localhost:5001
+          DIFY_CONSOLE_WEB_URL=http://localhost:3001
+          DIFY_APP_API_URL=http://localhost:5001
           MIDDLEWARE_IMAGE=ghcr.io/nexaduo/middleware:latest
           SELF_HEALING_IMAGE=ghcr.io/nexaduo/self-healing-agent:latest
           HANDOFF_SHARED_SECRET=ci-dummy-handoff-secret-32
+          GRAFANA_ADMIN_PASSWORD=AdminPass123!
+          GOOGLE_OAUTH_CLIENT_ID=dummy-id
+          GOOGLE_OAUTH_CLIENT_SECRET=dummy-secret
           EOF
 
       - name: Build local images
@@ -81,22 +88,31 @@ jobs:
       - name: Wait for services to be ready
         # chatwoot-rails starts only after chatwoot-init exits (~80s). The
         # container starts immediately but Rails needs ~30s more to boot.
-        # Poll until localhost:3000 returns a non-empty HTTP response, and
-        # localhost:4000/health for the middleware. Timeout: 3 min.
+        # Poll until localhost:3000 returns a non-empty HTTP response.
+        # Dify and Middleware also need time for migrations and boot.
         run: |
           echo "Waiting for Chatwoot Rails (localhost:3000)..."
-          for i in $(seq 1 36); do
+          for i in $(seq 1 60); do
             code=$(curl -sS -o /dev/null -w "%{http_code}" --max-time 5 http://localhost:3000/ 2>/dev/null || echo "000")
-            echo "  attempt ${i}/36: localhost:3000 -> ${code}"
+            echo "  attempt ${i}/60: localhost:3000 -> ${code}"
             case "${code}" in 2*|3*|4*) echo "Chatwoot ready."; break ;; esac
             sleep 5
           done
           [[ "${code}" =~ ^[234] ]] || { echo "::error::Chatwoot did not become ready in time."; exit 1; }
 
+          echo "Waiting for Dify API (localhost:5001)..."
+          for i in $(seq 1 36); do
+            code=$(curl -sS -o /dev/null -w "%{http_code}" --max-time 5 http://localhost:5001/console/api/setup 2>/dev/null || echo "000")
+            echo "  attempt ${i}/36: localhost:5001 -> ${code}"
+            case "${code}" in 2*|3*|4*) echo "Dify API ready."; break ;; esac
+            sleep 5
+          done
+          [[ "${code}" =~ ^[234] ]] || { echo "::error::Dify API did not become ready in time."; exit 1; }
+
           echo "Waiting for Middleware (/health at localhost:4000)..."
-          for i in $(seq 1 12); do
+          for i in $(seq 1 24); do
             code=$(curl -sS -o /dev/null -w "%{http_code}" --max-time 5 http://localhost:4000/health 2>/dev/null || echo "000")
-            echo "  attempt ${i}/12: localhost:4000/health -> ${code}"
+            echo "  attempt ${i}/24: localhost:4000/health -> ${code}"
             [[ "${code}" == "200" ]] && { echo "Middleware ready."; break; }
             sleep 5
           done
