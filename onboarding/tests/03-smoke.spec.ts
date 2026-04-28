@@ -30,18 +30,28 @@ test.describe('Smoke Tests (Post-Setup)', () => {
     }
 
     if (!await loginForm.first().isVisible()) {
-      console.log('  - Chatwoot: Login form not visible. Content preview:');
-      const content = await page.content();
-      console.log(content.slice(0, 1000));
+      console.log('  - Chatwoot: Login form not visible. Diagnostic info:');
+      console.log(`  - URL: ${page.url()}`);
+      const inputs = await page.locator('input').all();
+      console.log(`  - Found ${inputs.length} input fields:`);
+      for (const input of inputs) {
+        const name = await input.getAttribute('name');
+        const type = await input.getAttribute('type');
+        const placeholder = await input.getAttribute('placeholder');
+        console.log(`    * input[name="${name}"][type="${type}"][placeholder="${placeholder}"]`);
+      }
+      const bodyVisible = await page.locator('body').isVisible();
+      console.log(`  - Body visible: ${bodyVisible}`);
     }
 
     console.log('  - Chatwoot: No active session. Proceeding with login...');
     
-    const emailInput = loginForm.first();
-    await emailInput.waitFor({ state: 'visible', timeout: 30000 });
+    // Tenta encontrar o campo de email de várias formas
+    const emailInput = page.locator('input[name="email"], input[type="email"], [placeholder*="email" i], input[id*="email" i]').first();
+    await emailInput.waitFor({ state: 'visible', timeout: 45000 });
     await emailInput.fill(ADMIN_EMAIL);
 
-    const passwordInput = page.locator('input[name="password"], input[type="password"], [placeholder*="password" i]').first();
+    const passwordInput = page.locator('input[name="password"], input[type="password"], [placeholder*="password" i], input[id*="password" i]').first();
     await passwordInput.fill(ADMIN_PASSWORD!);
     
     await page.locator('button[type="submit"], button:has-text("Login"), button:has-text("Entrar")').first().click();
