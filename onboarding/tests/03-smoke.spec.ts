@@ -5,16 +5,19 @@ const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
 
 test.describe('Smoke Tests (Post-Setup)', () => {
   test('Login to Chatwoot', async ({ page }) => {
-    await page.goto('http://localhost:3000/app/login', { waitUntil: 'load', timeout: 60000 });
+    test.setTimeout(120000); 
+    
+    console.log('  - Chatwoot: Navigating to login page...');
+    await page.goto('http://localhost:3000/app/login', { waitUntil: 'networkidle', timeout: 60000 });
     
     // Espera por qualquer um dos estados: formulário de login OU dashboard logada
-    const loginForm = page.getByPlaceholder(/email/i).or(page.locator('input[name="email"]'));
+    const loginForm = page.locator('input[name="email"], input[name="email_address"], input[type="email"]');
     const dashboardElement = page.locator('.sidebar, .top-bar, .user-profile, .brand-name');
 
     // Espera até que um dos dois apareça
     await Promise.race([
-      loginForm.first().waitFor({ state: 'visible', timeout: 15000 }).catch(() => {}),
-      dashboardElement.first().waitFor({ state: 'visible', timeout: 15000 }).catch(() => {})
+      loginForm.first().waitFor({ state: 'visible', timeout: 30000 }).catch(() => {}),
+      dashboardElement.first().waitFor({ state: 'visible', timeout: 30000 }).catch(() => {})
     ]);
 
     if (page.url().includes('/app/accounts') || page.url().includes('/dashboard') || await dashboardElement.first().isVisible()) {
@@ -23,11 +26,18 @@ test.describe('Smoke Tests (Post-Setup)', () => {
     }
 
     console.log('  - Chatwoot: No active session. Proceeding with login...');
-    await loginForm.first().fill(ADMIN_EMAIL);
-    await page.getByPlaceholder(/password/i).or(page.locator('input[type="password"]')).first().fill(ADMIN_PASSWORD!);
+    
+    // Chatwoot v4 uses email_address for login
+    const emailInput = page.locator('input[name="email_address"], input[name="email"], input[type="email"]').first();
+    await emailInput.waitFor({ state: 'visible', timeout: 30000 });
+    await emailInput.fill(ADMIN_EMAIL);
+
+    const passwordInput = page.locator('input[name="password"], input[type="password"]').first();
+    await passwordInput.fill(ADMIN_PASSWORD!);
+    
     await page.locator('button[type="submit"], button:has-text("Login"), button:has-text("Entrar")').first().click();
     
-    await expect(page).toHaveURL(/.*\/app\/accounts|.*\/app\/dashboard/, { timeout: 30000 });
+    await expect(page).toHaveURL(/.*\/app\/accounts|.*\/app\/dashboard/, { timeout: 60000 });
   });
 
   test('Login to Dify', async ({ page }) => {
@@ -47,8 +57,14 @@ test.describe('Smoke Tests (Post-Setup)', () => {
     }
 
     console.log('  - Dify: No active session. Proceeding with login...');
-    await loginForm.first().fill(ADMIN_EMAIL);
-    await page.getByPlaceholder(/password/i).or(page.locator('input[type="password"]')).first().fill(ADMIN_PASSWORD!);
+    
+    const emailInput = page.locator('input[name="email"], input[type="email"], [placeholder*="email" i]').first();
+    await emailInput.waitFor({ state: 'visible', timeout: 30000 });
+    await emailInput.fill(ADMIN_EMAIL);
+
+    const passwordInput = page.locator('input[name="password"], input[type="password"], [placeholder*="password" i]').first();
+    await passwordInput.fill(ADMIN_PASSWORD!);
+
     await page.locator('button[type="submit"], button:has-text("Sign in"), button:has-text("Entrar")').first().click();
     
     await expect(page).toHaveURL(/.*\/apps/, { timeout: 30000 });

@@ -7,6 +7,10 @@ ZONE="${ZONE:-us-central1-b}"
 VM_NAME="${VM_NAME:-nexaduo-chat-services}"
 SSH_USER="${SSH_USER:-ubuntu}"
 BASE_DOMAIN="${BASE_DOMAIN:-nexaduo.com}"
+# Set SKIP_GRAFANA=true to omit Grafana from route checks and from the Traefik
+# fallback yaml. Useful when nexaduo-app (Grafana) is down/exited and you still
+# need to recover routing for chat/dify/coolify.
+SKIP_GRAFANA="${SKIP_GRAFANA:-false}"
 
 check_public_not_404() {
   local host="$1"
@@ -25,7 +29,7 @@ gcloud compute ssh "${SSH_USER}@${VM_NAME}" \
   --project "${PROJECT_ID}" \
   --zone "${ZONE}" \
   --tunnel-through-iap \
-  --command "BASE_DOMAIN='${BASE_DOMAIN}' bash -s" <<'REMOTE'
+  --command "BASE_DOMAIN='${BASE_DOMAIN}' SKIP_GRAFANA='${SKIP_GRAFANA}' bash -s" <<'REMOTE'
 set -euo pipefail
 
 local_code_for_host() {
@@ -82,21 +86,53 @@ echo "Restarting coolify-proxy to reload generated routes..."
 sudo docker restart coolify-proxy >/dev/null
 sleep 5
 
-if ! check_local_not_404 "chat.${BASE_DOMAIN}" \
-  || ! check_local_not_404 "dify.${BASE_DOMAIN}" \
-  || ! check_local_not_404 "grafana.${BASE_DOMAIN}" \
-  || ! check_local_not_404 "coolify.${BASE_DOMAIN}" \
-  || ! check_local_dify_setup; then
+need_fallback=0
+check_local_not_404 "chat.${BASE_DOMAIN}"   || need_fallback=1
+check_local_not_404 "dify.${BASE_DOMAIN}"   || need_fallback=1
+check_local_not_404 "coolify.${BASE_DOMAIN}" || need_fallback=1
+check_local_dify_setup                       || need_fallback=1
+if [[ "${SKIP_GRAFANA}" != "true" ]]; then
+  check_local_not_404 "grafana.${BASE_DOMAIN}" || need_fallback=1
+fi
+
+if [[ "${need_fallback}" == "1" ]]; then
   echo "Dynamic rebuild still incomplete; applying deterministic fallback routes..."
 
   chat_container="$(container_by_subname chatwoot-rails)"
   dify_container="$(container_by_subname dify-web)"
   dify_api_container="$(container_by_subname dify-api)"
-  grafana_container="$(container_by_subname grafana)"
   [[ -n "${chat_container}" ]] || { echo "chatwoot-rails container not found" >&2; exit 1; }
   [[ -n "${dify_container}" ]] || { echo "dify-web container not found" >&2; exit 1; }
   [[ -n "${dify_api_container}" ]] || { echo "dify-api container not found" >&2; exit 1; }
-  [[ -n "${grafana_container}" ]] || { echo "grafana container not found" >&2; exit 1; }
+
+  # Grafana is opt-in: skip when SKIP_GRAFANA=true or its container is missing.
+  grafana_container=""
+  if [[ "${SKIP_GRAFANA}" != "true" ]]; then
+    grafana_container="$(container_by_subname grafana)"
+    [[ -n "${grafana_container}" ]] || { echo "grafana container not found (set SKIP_GRAFANA=true to skip)" >&2; exit 1; }
+  fi
+
+  # Build the YAML in two sections (routers, services) so Grafana entries can
+  # be inlined inside each section instead of producing two top-level `http:`
+  # blocks (Traefik rejects that).
+  grafana_router=""
+  grafana_service=""
+  if [[ -n "${grafana_container}" ]]; then
+    grafana_router=$(cat <<EOF
+    nexaduo-grafana:
+      rule: "Host(\`grafana.${BASE_DOMAIN}\`)"
+      entryPoints: [http, https]
+      service: nexaduo-grafana-svc
+EOF
+    )
+    grafana_service=$(cat <<EOF
+    nexaduo-grafana-svc:
+      loadBalancer:
+        servers:
+          - url: "http://${grafana_container}:3000"
+EOF
+    )
+  fi
 
   tmp_file="$(mktemp)"
   cat > "${tmp_file}" <<EOF
@@ -119,10 +155,7 @@ http:
       rule: "Host(\`coolify.${BASE_DOMAIN}\`)"
       entryPoints: [http, https]
       service: nexaduo-coolify-svc
-    nexaduo-grafana:
-      rule: "Host(\`grafana.${BASE_DOMAIN}\`)"
-      entryPoints: [http, https]
-      service: nexaduo-grafana-svc
+${grafana_router}
   services:
     nexaduo-chat-svc:
       loadBalancer:
@@ -140,10 +173,7 @@ http:
       loadBalancer:
         servers:
           - url: "http://coolify:8080"
-    nexaduo-grafana-svc:
-      loadBalancer:
-        servers:
-          - url: "http://${grafana_container}:3000"
+${grafana_service}
 EOF
   sudo install -o root -g root -m 0644 "${tmp_file}" /data/coolify/proxy/dynamic/nexaduo-routes.yaml
   rm -f "${tmp_file}"
@@ -151,19 +181,23 @@ EOF
   sudo docker restart coolify-proxy >/dev/null
   sleep 5
 
-  check_local_not_404 "chat.${BASE_DOMAIN}" || { echo "chat route still 404 after fallback." >&2; exit 1; }
-  check_local_not_404 "dify.${BASE_DOMAIN}" || { echo "dify route still 404 after fallback." >&2; exit 1; }
-  check_local_not_404 "grafana.${BASE_DOMAIN}" || { echo "grafana route still 404 after fallback." >&2; exit 1; }
+  check_local_not_404 "chat.${BASE_DOMAIN}"    || { echo "chat route still 404 after fallback." >&2; exit 1; }
+  check_local_not_404 "dify.${BASE_DOMAIN}"    || { echo "dify route still 404 after fallback." >&2; exit 1; }
   check_local_not_404 "coolify.${BASE_DOMAIN}" || { echo "coolify route still 404 after fallback." >&2; exit 1; }
-  check_local_dify_setup || { echo "dify setup API still failing after fallback." >&2; exit 1; }
+  check_local_dify_setup                        || { echo "dify setup API still failing after fallback." >&2; exit 1; }
+  if [[ "${SKIP_GRAFANA}" != "true" ]]; then
+    check_local_not_404 "grafana.${BASE_DOMAIN}" || { echo "grafana route still 404 after fallback." >&2; exit 1; }
+  fi
 fi
 REMOTE
 
 echo "Checking public domains..."
 check_public_not_404 "chat.${BASE_DOMAIN}"
 check_public_not_404 "dify.${BASE_DOMAIN}"
-check_public_not_404 "grafana.${BASE_DOMAIN}"
 check_public_not_404 "coolify.${BASE_DOMAIN}"
+if [[ "${SKIP_GRAFANA}" != "true" ]]; then
+  check_public_not_404 "grafana.${BASE_DOMAIN}"
+fi
 echo "Checking Dify setup API..."
 setup_code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 "https://dify.${BASE_DOMAIN}/console/api/setup")"
 echo "Public dify.${BASE_DOMAIN}/console/api/setup -> HTTP ${setup_code}"

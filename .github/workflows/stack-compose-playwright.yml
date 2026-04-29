@@ -10,6 +10,11 @@ jobs:
   validate-stack:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    # Compose v2.30+ on ubuntu-latest forbids redefining services imported via
+    # `include:`. The root docker-compose.yml carries cross-stack `depends_on`
+    # overrides, so we chain compose files via -f / COMPOSE_FILE instead.
+    env:
+      COMPOSE_FILE: deploy/docker-compose.shared.yml:deploy/docker-compose.chatwoot.yml:deploy/docker-compose.dify.yml:deploy/docker-compose.nexaduo.yml:docker-compose.yml
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -39,12 +44,20 @@ jobs:
           POSTGRES_PASSWORD=postgres
           REDIS_PASSWORD=redis
           CHATWOOT_SECRET_KEY_BASE=$(openssl rand -hex 32)
+          CHATWOOT_FRONTEND_URL=http://localhost:3000
           DIFY_SECRET_KEY=$(openssl rand -hex 32)
           DIFY_SANDBOX_API_KEY=dummy-key
           DIFY_PLUGIN_DAEMON_KEY=dummy-key
           DIFY_PLUGIN_DIFY_INNER_API_KEY=dummy-key
+          DIFY_CONSOLE_API_URL=http://localhost:5001
+          DIFY_CONSOLE_WEB_URL=http://localhost:3001
+          DIFY_APP_API_URL=http://localhost:5001
           MIDDLEWARE_IMAGE=ghcr.io/nexaduo/middleware:latest
           SELF_HEALING_IMAGE=ghcr.io/nexaduo/self-healing-agent:latest
+          HANDOFF_SHARED_SECRET=ci-dummy-handoff-secret-32
+          GRAFANA_ADMIN_PASSWORD=AdminPass123!
+          GOOGLE_OAUTH_CLIENT_ID=dummy-id
+          GOOGLE_OAUTH_CLIENT_SECRET=dummy-secret
           EOF
 
       - name: Build local images
@@ -52,10 +65,58 @@ jobs:
           docker build -t ghcr.io/nexaduo/middleware:latest ./middleware
           docker build -t ghcr.io/nexaduo/self-healing-agent:latest ./agents/self-healing
 
+      - name: Stage host-side bind mounts
+        # deploy/docker-compose.shared.yml bind-mounts /opt/nexaduo/postgres/
+        # 01-init.sql into the postgres container. In production this file is
+        # uploaded by scripts/bootstrap-coolify.sh; in CI we replicate it on
+        # the runner so the bind mount resolves to the real SQL file (not an
+        # empty directory created by Docker when the source doesn't exist,
+        # which would break the postgres entrypoint).
+        run: |
+          sudo mkdir -p /opt/nexaduo/postgres
+          sudo cp deploy/01-init.sql /opt/nexaduo/postgres/01-init.sql
+          sudo chmod 0644 /opt/nexaduo/postgres/01-init.sql
+
       - name: Start Stack
+        # cloudflared is in deploy/docker-compose.shared.yml; we scale it to 0
+        # because CI doesn't have a tunnel token to register. COMPOSE_FILE is
+        # set at job level so logs/down steps see the same chain.
         run: |
           docker network create nexaduo-network || true
           docker compose up -d --remove-orphans --scale cloudflared=0
+
+      - name: Wait for services to be ready
+        # chatwoot-rails starts only after chatwoot-init exits (~80s). The
+        # container starts immediately but Rails needs ~30s more to boot.
+        # Poll until localhost:3000 returns a non-empty HTTP response.
+        # Dify and Middleware also need time for migrations and boot.
+        run: |
+          echo "Waiting for Chatwoot Rails (localhost:3000)..."
+          for i in $(seq 1 60); do
+            code=$(curl -sS -o /dev/null -w "%{http_code}" --max-time 5 http://localhost:3000/ 2>/dev/null || echo "000")
+            echo "  attempt ${i}/60: localhost:3000 -> ${code}"
+            case "${code}" in 2*|3*|4*) echo "Chatwoot ready."; break ;; esac
+            sleep 5
+          done
+          [[ "${code}" =~ ^[234] ]] || { echo "::error::Chatwoot did not become ready in time."; exit 1; }
+
+          echo "Waiting for Dify API (localhost:5001)..."
+          for i in $(seq 1 36); do
+            code=$(curl -sS -o /dev/null -w "%{http_code}" --max-time 5 http://localhost:5001/console/api/setup 2>/dev/null || echo "000")
+            echo "  attempt ${i}/36: localhost:5001 -> ${code}"
+            case "${code}" in 2*|3*|4*) echo "Dify API ready."; break ;; esac
+            sleep 5
+          done
+          [[ "${code}" =~ ^[234] ]] || { echo "::error::Dify API did not become ready in time."; exit 1; }
+
+          echo "Waiting for Middleware (/health at localhost:4000)..."
+          for i in $(seq 1 24); do
+            code=$(curl -sS -o /dev/null -w "%{http_code}" --max-time 5 http://localhost:4000/health 2>/dev/null || echo "000")
+            echo "  attempt ${i}/24: localhost:4000/health -> ${code}"
+            [[ "${code}" == "200" ]] && { echo "Middleware ready."; break; }
+            sleep 5
+          done
+          [[ "${code}" == "200" ]] || { echo "::error::Middleware did not become ready in time."; exit 1; }
 
       - name: Stage 1 - Infrastructure Health
         working-directory: onboarding
