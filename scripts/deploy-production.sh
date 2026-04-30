@@ -24,7 +24,7 @@ if [[ ! -d .terraform ]]; then
     -backend-config="prefix=terraform/foundation"
 fi
 
-"${PROJECT_ROOT}/scripts/preflight-foundation.sh"
+"${PROJECT_ROOT}/scripts/preflight-foundation.sh" -var-file="${TFVARS}"
 
 terraform apply -auto-approve -var-file="${TFVARS}"
 

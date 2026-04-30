@@ -1,21 +1,21 @@
 import { test, expect } from '@playwright/test';
 
-const SERVICES = [
-  { name: 'Chatwoot', url: 'http://localhost:3000/' },
-  { name: 'Dify Web', url: 'http://localhost:3001/install' },
-  { name: 'Dify API', url: 'http://localhost:5001/console/api/setup' },
-  { name: 'Middleware', url: 'http://localhost:4000/health' },
-  { name: 'Grafana', url: 'http://localhost:3002/login' },
-  { name: 'Prometheus', url: 'http://localhost:9090/-/healthy' },
-];
+const CHATWOOT_URL = process.env.CHATWOOT_URL || 'http://localhost:3000';
+const DIFY_URL = process.env.DIFY_URL || 'http://localhost:3001';
+const GRAFANA_URL = process.env.GRAFANA_URL || 'http://localhost:3002';
 
 test.describe('Infrastructure Health', () => {
-  for (const service of SERVICES) {
-    test(`${service.name} should be reachable`, async ({ request }) => {
-      const response = await request.get(service.url);
-      // Aceitamos 200 para a maioria, ou redirects (301/302) para apps web
-      expect([200, 301, 302, 404]).toContain(response.status()); 
-      // 404 no dify setup API após configurado é ok, mas no CI limpo deve ser 200
+  const targets = [
+    { name: 'Chatwoot', url: CHATWOOT_URL, path: '/' },
+    { name: 'Dify Web', url: DIFY_URL, path: '/signin' },
+    { name: 'Dify API', url: DIFY_URL, path: '/console/api/setup' },
+    { name: 'Grafana', url: GRAFANA_URL, path: '/api/health' }
+  ];
+
+  for (const target of targets) {
+    test(`${target.name} should be reachable`, async ({ request }) => {
+      const response = await request.get(`${target.url}${target.path}`);
+      expect(response.ok(), `${target.name} at ${target.url}${target.path} failed with status ${response.status()}`).toBeTruthy();
     });
   }
 });

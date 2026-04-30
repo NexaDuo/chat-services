@@ -34,12 +34,14 @@ provider_state() {
 }
 
 ensure_in_state() {
-  local addr=$1 id=$2
+  local addr=$1
+  local id=$2
+  shift 2
   if terraform state show "${addr}" >/dev/null 2>&1; then
     return 0
   fi
   echo "  importing ${addr}"
-  terraform import "${addr}" "${id}"
+  terraform import "$@" "${addr}" "${id}"
 }
 
 POOL_STATE="$(pool_state)"
@@ -53,7 +55,8 @@ fi
 if [[ "${POOL_STATE}" == "ACTIVE" ]]; then
   ensure_in_state \
     "module.gh_publisher.google_iam_workload_identity_pool.github" \
-    "projects/${PROJECT_ID}/locations/global/workloadIdentityPools/${POOL_ID}"
+    "projects/${PROJECT_ID}/locations/global/workloadIdentityPools/${POOL_ID}" \
+    "$@"
 
   PROVIDER_STATE="$(provider_state)"
   if [[ "${PROVIDER_STATE}" == "DELETED" ]]; then
@@ -67,6 +70,7 @@ if [[ "${POOL_STATE}" == "ACTIVE" ]]; then
   if [[ "${PROVIDER_STATE}" == "ACTIVE" ]]; then
     ensure_in_state \
       "module.gh_publisher.google_iam_workload_identity_pool_provider.github" \
-      "projects/${PROJECT_ID}/locations/global/workloadIdentityPools/${POOL_ID}/providers/${PROVIDER_ID}"
+      "projects/${PROJECT_ID}/locations/global/workloadIdentityPools/${POOL_ID}/providers/${PROVIDER_ID}" \
+      "$@"
   fi
 fi

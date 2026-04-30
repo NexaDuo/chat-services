@@ -2,13 +2,16 @@ import { test, expect } from '@playwright/test';
 
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'alexandre@nexaduo.com';
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
+const CHATWOOT_URL = process.env.CHATWOOT_URL || 'http://localhost:3000';
+const DIFY_URL = process.env.DIFY_URL || 'http://localhost:3001';
+const GRAFANA_URL = process.env.GRAFANA_URL || 'http://localhost:3002';
 
 test.describe('Smoke Tests (Post-Setup)', () => {
   test('Login to Chatwoot', async ({ page }) => {
     test.setTimeout(120000); 
     
-    console.log('  - Chatwoot: Navigating to login page...');
-    await page.goto('http://localhost:3000/app/login', { waitUntil: 'networkidle', timeout: 60000 });
+    console.log(`  - Chatwoot: Navigating to ${CHATWOOT_URL}/app/login...`);
+    await page.goto(`${CHATWOOT_URL}/app/login`, { waitUntil: 'networkidle', timeout: 60000 });
     
     // Espera por qualquer um dos estados: formulário de login OU dashboard logada
     const loginForm = page.locator('input[name="email"], input[name="email_address"], input[type="email"]');
@@ -41,7 +44,8 @@ test.describe('Smoke Tests (Post-Setup)', () => {
   });
 
   test('Login to Dify', async ({ page }) => {
-    await page.goto('http://localhost:3001/signin', { waitUntil: 'load', timeout: 60000 });
+    console.log(`  - Dify: Navigating to ${DIFY_URL}/signin...`);
+    await page.goto(`${DIFY_URL}/signin`, { waitUntil: 'load', timeout: 60000 });
     
     const loginForm = page.getByPlaceholder(/email/i).or(page.locator('input[name="email"]'));
     const dashboardElement = page.locator('nav, .apps-grid, .avatar, button:has-text("Create App")');
@@ -71,7 +75,8 @@ test.describe('Smoke Tests (Post-Setup)', () => {
   });
 
   test('Access Grafana Login Page', async ({ page }) => {
-    await page.goto('http://localhost:3002/login');
+    console.log(`  - Grafana: Navigating to ${GRAFANA_URL}/login...`);
+    await page.goto(`${GRAFANA_URL}/login`);
     await expect(page.locator('input[name="user"]')).toBeVisible();
   });
 });
