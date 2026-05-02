@@ -1,130 +1,107 @@
-<!-- generated-by: gsd-doc-writer -->
-# Plano de Hospedagem — NexaDuo Chat Services
+# Hosting Plan — NexaDuo Chat Services
 
-## Objetivo
-Definir uma estratégia de hospedagem **mais barata possível** (região US), com **infra 100% via código** (Terraform), atualização simples via Docker Compose e suporte a multi-tenant com **Cloudflare** roteando URLs do tipo `https://chat.nexaduo.com/{tenant}/` para o Chatwoot.
+## Objective
+Define the **cheapest possible** hosting strategy (US region), with **100% infrastructure-as-code** (Terraform), simple updates via Docker Compose, and multi-tenant support with **Cloudflare** routing URLs like `https://chat.nexaduo.com/{tenant}/` to Chatwoot.
 
-## Estado atual (repo)
-- Stack pronta via **docker-compose** com Chatwoot, Evolution API, Dify, Middleware, Postgres+pgvector e Redis.
-- Observabilidade (Prometheus/Grafana) já provisionada.
+## Current Repository State
+- Stack ready via **docker-compose** with Chatwoot, Evolution API, Dify, Middleware, Postgres+pgvector, and Redis.
+- Observability (Prometheus/Grafana) already provisioned.
 - Backup via `scripts/backup.sh`.
-- Proxy externo esperado (Coolify/Traefik) — sem nginx interno.
+- External proxy expected (Coolify/Traefik) — no internal nginx.
 
-## URLs de Produção
+## Production URLs
 - **Coolify:** `coolify.nexaduo.com`
 - **Dify:** `dify.nexaduo.com`
 - **Chatwoot:** `chat.nexaduo.com`
 
-## Premissas
-- Região de referência: **US** (comparativo de menor custo).
-- **Janela de manutenção curta** aceita para atualizações (sem zero-downtime).
-- Infra declarada em **Terraform**.
-- Cloudflare é usado para **roteamento por tenant baseado em paths**.
-- Provedor principal recomendado: **GCP** (menor custo estimado no comparativo).
+## Assumptions
+- Reference region: **US** (lowest cost comparison).
+- **Short maintenance window** accepted for updates (no zero-downtime required).
+- Infrastructure declared in **Terraform**.
+- Cloudflare used for **path-based tenant routing**.
+- Primary recommended provider: **GCP** (lowest estimated cost).
 
-## Comparativo de custo (VM 4 vCPU / 16 GB RAM, on-demand, Linux, US)
-> Fonte: dataset público do ec2instances.info (Vantage) e equivalentes para GCP/Azure. Valores aproximados, sem disco e egress.
+## Cost Comparison (4 vCPU / 16 GB RAM VM, on-demand, Linux, US)
+> Source: public dataset from ec2instances.info (Vantage) and equivalents for GCP/Azure. Approx values, excluding disk and egress.
 
-| Provedor | Tipo de VM (equivalente) | Região | $/hora | $/mês (730h) | Observações |
+| Provider | VM Type (equivalent) | Region | $/hour | $/month (730h) | Notes |
 |---|---|---|---:|---:|---|
-| **GCP** | e2-standard-4 | us-central1 | **0.1340** | **97.84** | Mais barato para 4vCPU/16GB |
-| **Azure** | D4as v5 (linux-d4asv5-standard) | us-east | **0.1720** | **125.56** | Próximo do AWS, mais caro que GCP |
-| **AWS** | m6i.xlarge | us-east-1 | **0.1920** | **140.16** | Custo maior |
+| **GCP** | e2-standard-4 | us-central1 | **0.1340** | **97.84** | Cheapest for 4vCPU/16GB |
+| **Azure** | D4as v5 (linux-d4asv5-standard) | us-east | **0.1720** | **125.56** | Close to AWS, more expensive than GCP |
+| **AWS** | m6i.xlarge | us-east-1 | **0.1920** | **140.16** | Highest cost |
 
-> **Conclusão:** GCP é a escolha de menor custo para o perfil mínimo recomendado (4 vCPU / 16 GB). Azure é alternativa viável; AWS é o mais caro no mesmo perfil.
+> **Conclusion:** GCP is the lowest-cost choice for the minimum recommended profile (4 vCPU / 16 GB). Azure is a viable alternative; AWS is the most expensive in the same profile.
 
-## Arquitetura de hospedagem (baseline barato)
-**Estratégia:** 1 VM única (single-node) com Docker Compose.
+## Hosting Architecture (Cheap Baseline)
+**Strategy:** Single-node VM with Docker Compose.
 
-- **VM**: 4 vCPU / 16 GB RAM / SSD 50–100 GB
-- **SO**: Ubuntu 24.04 LTS
-- **Rede**: 1 IP público + firewall básico (SSH restrito)
-- **Proxy**: Traefik/Coolify no host (ou Cloudflare Tunnel)
-- **Backup**: cron diário rodando `scripts/backup.sh` + upload para storage barato (GCS/Backblaze/S3)
+- **VM**: 4 vCPU / 16 GB RAM / 50–100 GB SSD
+- **OS**: Ubuntu 24.04 LTS
+- **Network**: 1 Public IP + basic firewall (restricted SSH)
+- **Proxy**: Traefik/Coolify on host (or Cloudflare Tunnel)
+- **Backup**: Daily cron running `scripts/backup.sh` + upload to cheap storage (GCS/Backblaze/S3)
 
-## Racional de Decisão: Coolify
-A escolha do Coolify como orquestrador baseia-se nos seguintes pontos:
-- **Experiência PaaS (Heroku/Vercel) "Self-Hosted":** Oferece interface visual para gestão de containers, variáveis de ambiente e SSL (Let's Encrypt) sem o custo de serviços gerenciados. URL: `coolify.nexaduo.com`.
-- **Paridade Local/Cloud:** O Coolify é open-source e idêntico em qualquer ambiente. É possível rodar a mesma versão localmente (via Docker) para testes idênticos ao ambiente de produção.
-- **Eficiência de Recursos (Docker vs Kubernetes):** O Coolify opera sobre **Docker Engine/Swarm**. Ao contrário do Kubernetes, que possui um "control plane" pesado, o Docker permite que quase 100% dos 16GB de RAM da VM sejam dedicados às aplicações (Dify, Chatwoot, etc.).
-- **Escalabilidade Manual vs Automática:** Para manter o custo baixo, aceita-se a limitação de **não possuir auto-scaling nativo** (infra elástica). O escalonamento é feito via verticalização da VM ou aumento manual de réplicas no painel, o que atende ao perfil de custo do projeto.
+## Decision Rationale: Coolify
+The choice of Coolify as an orchestrator is based on:
+- **"Self-Hosted" PaaS Experience (Heroku/Vercel):** Provides a visual interface for container management, environment variables, and SSL (Let's Encrypt) without managed service costs. URL: `coolify.nexaduo.com`.
+- **Local/Cloud Parity:** Coolify is open-source and identical in any environment. The same version can run locally (via Docker) for tests identical to production.
+- **Resource Efficiency (Docker vs Kubernetes):** Coolify operates on **Docker Engine/Swarm**. Unlike Kubernetes, which has a heavy control plane, Docker allows nearly 100% of the 16GB RAM to be dedicated to applications (Dify, Chatwoot, etc.).
+- **Manual vs Automatic Scalability:** To keep costs low, the limitation of **no native auto-scaling** is accepted. Scaling is done vertically (resizing VM) or manually increasing replicas in the panel.
 
-## Atualizações das aplicações
-**Fluxo simples (manutenção curta):**
-1. `git pull` no host
-2. `docker compose pull` (imagens oficiais)
+## Application Updates
+**Simple Flow (Short Maintenance):**
+1. `git pull` on host
+2. `docker compose pull` (official images)
 3. `docker compose up -d`
-4. Verificação rápida (`docker compose ps`, healthchecks)
+4. Quick verification (`docker compose ps`, health checks)
 
-**Política de update:**
-- Atualizar **mensalmente** (ou em releases críticos)
-- Versionamento fixo em `docker-compose.yml`
-- Validar tags antes do deploy
+**Update Policy:**
+- Update **monthly** (or for critical releases)
+- Fixed versioning in `docker-compose.yml`
+- Validate tags before deployment
 
 ## Multitenancy via Cloudflare
-**Objetivo:** Roteamento baseado em paths para múltiplos tenants.
+**Objective:** Path-based routing for multiple tenants.
 
-- **Chatwoot:** `https://chat.nexaduo.com/{tenant}/` → Roteado para o hub central com identificador de tenant.
-- **Dify:** `https://dify.nexaduo.com/{tenant}/` → Acesso isolado logicamente por tenant.
+- **Chatwoot:** `https://chat.nexaduo.com/{tenant}/` → Routed to central hub with tenant identifier.
+- **Dify:** `https://dify.nexaduo.com/{tenant}/` → Logically isolated access per tenant.
 
-**Estratégia:**
-- **Cloudflare Workers**: reescrever a URL para remover o prefixo do tenant antes de enviar ao backend e injetar o header `X-Tenant-Id` para o middleware (ou para o Chatwoot/Dify via proxy).
-- O backend (Middleware) utiliza o `X-Tenant-Id` ou mapeia o `account_id` vindo do payload para garantir o isolamento lógico.
+**Strategy:**
+- **Cloudflare Workers**: Rewrite the URL to remove the tenant prefix before sending to backend and inject `X-Tenant-Id` header for the middleware.
+- The backend (Middleware) uses `X-Tenant-Id` or maps `account_id` from the payload to ensure logical isolation.
 
-## Infra via código (Terraform)
-**MVP GCP:**
+## Infrastructure as Code (Terraform)
+**GCP MVP:**
 - `google_compute_instance` (VM)
-- `google_compute_firewall` (SSH + portas 80/443)
-- `google_compute_address` (IP estático)
+- `google_compute_firewall` (SSH + ports 80/443)
+- `google_compute_address` (Static IP)
 - `google_compute_disk` (SSD)
-- `cloudflare_record` (DNS para `coolify`, `chat`, `dify`)
+- `cloudflare_record` (DNS for `coolify`, `chat`, `dify`)
 
-**Estrutura sugerida:**
+**Suggested Structure:**
 ```
 /infrastructure/terraform
   /modules
     /gcp-vm
     /cloudflare-dns
   /envs
-    /prod
+    /production
 ```
 
-## Plano de implementação (GCP)
-- [ ] Criar módulo Terraform GCP (VM + rede + disco + firewall)
-- [ ] Criar módulo Cloudflare DNS (A/AAAA + proxied)
-- [ ] Definir variáveis: domínio, zona, tamanho de VM, região, SSH key
-- [ ] Provisionar VM e validar SSH
-- [ ] Instalar Docker + Docker Compose no host
-- [ ] Deploy inicial: `docker compose up -d`
-- [ ] Configurar backups (cron + upload)
-- [ ] Configurar Cloudflare Worker (roteamento por tenant)
-- [ ] Documentar rotina de update
+## Implementation Plan (GCP)
+- [x] Create GCP Terraform module (VM + network + disk + firewall)
+- [x] Create Cloudflare DNS module (A/AAAA + proxied)
+- [x] Define variables: domain, zone, VM size, region, SSH key
+- [x] Provision VM and validate SSH
+- [x] Install Docker + Docker Compose on host
+- [x] Initial deploy: `docker compose up -d`
+- [x] Configure backups (cron + upload)
+- [x] Configure Cloudflare Worker (tenant routing)
+- [x] Document update routine
 
-### Plano de implementação no repo (Coolify local)
-**Problema:** Implementar no repo o plano de hospedagem (GCP + Cloudflare + Coolify) com infra via Terraform, Worker para multi-tenant e orientações de uso com Coolify local.
-
-**Abordagem:**
-- Criar estrutura Terraform em `/infrastructure/terraform` com módulos reutilizáveis (gcp-vm, cloudflare-dns, cloudflare-worker) e ambiente `/envs/prod`.
-- Incluir script do Worker (rewrite + header `x-tenant-id`).
-- Atualizar este documento com instruções objetivas de uso com Coolify local e referência aos caminhos Terraform.
-- Validar se há testes/linters existentes nos pacotes JS e rodar quando aplicável.
-
-**Workplan (execução no repo):**
-- [ ] Levantar scripts/testes existentes nos pacotes
-- [ ] Criar estrutura Terraform (providers, módulos, envs/prod)
-- [ ] Implementar Cloudflare Worker (script + recurso terraform)
-- [ ] Atualizar docs/plans/hosting.plan.md (Coolify local + como aplicar Terraform)
-- [ ] Rodar verificações disponíveis
-- [ ] Resumir mudanças
-
-**Notas/assunções:**
-- GCP como provedor padrão, VM única 4 vCPU/16GB.
-- Cloudflare Worker faz rewrite e injeta header `x-tenant-id`.
-- Coolify local usado apenas para paridade de deploy (sem executar aqui).
-
-## Notas
-- Se for necessário **zero-downtime**, migrar para 2 VMs + proxy L7 (custo maior).
-- Para crescimento: separar banco (Postgres) em VM dedicada ou gerenciado.
+## Notes
+- If **zero-downtime** is required, migrate to 2 VMs + L7 proxy (higher cost).
+- For growth: separate database (Postgres) to a dedicated VM or managed service.
 
 ---
-**Arquivo criado em:** `docs/plans/hosting.plan.md`
+**File created on:** `docs/plans/hosting.plan.md`

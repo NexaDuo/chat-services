@@ -1,63 +1,63 @@
-# Infraestrutura NexaDuo Chat Services (Terraform)
+# NexaDuo Chat Services Infrastructure (Terraform)
 
-Este diretório contém a definição da infraestrutura como código para o NexaDuo Chat Services, utilizando GCP (Google Cloud Platform) e Cloudflare.
+This directory contains the infrastructure-as-code definition for NexaDuo Chat Services, utilizing GCP (Google Cloud Platform) and Cloudflare.
 
-## Estrutura
-- `/modules`: Módulos reutilizáveis (VM, DNS, Cloudflare tunnel, GCS, Artifact Registry, WIF publisher).
-- `/envs/production/foundation`: Camada base (VPC, VM, Firewall, DNS, Tunnel, Artifact Registry, WIF).
-- `/envs/production/tenant`: Camada de aplicação (Stacks do Coolify, Envs).
+## Structure
+- `/modules`: Reusable modules (VM, DNS, Cloudflare tunnel, GCS, Artifact Registry, WIF publisher).
+- `/envs/production/foundation`: Base layer (VPC, VM, Firewall, DNS, Tunnel, Artifact Registry, WIF).
+- `/envs/production/tenant`: Application layer (Coolify Stacks, Envs - maintained for reference).
 
-## Pré-requisitos
-1. **Google Cloud SDK**: Autenticado (`gcloud auth application-default login`).
+## Prerequisites
+1. **Google Cloud SDK**: Authenticated (`gcloud auth application-default login`).
 2. **Terraform**: v1.0+.
-3. **Token da Cloudflare**: Com permissões de edição de DNS.
+3. **Cloudflare Token**: With DNS edit permissions.
 
-## Como Executar (Provisionamento em 3 Passos)
+## How to Execute (3-Step Provisioning)
 
-### 1. Configurar Variáveis
-Navegue até o diretório de produção e configure o arquivo global de variáveis:
+### 1. Configure Variables
+Navigate to the production directory and configure the global variables file:
 
 ```bash
 cd infrastructure/terraform/envs/production
 cp terraform.tfvars.example terraform.tfvars
-# Edite o arquivo terraform.tfvars com seus dados reais
+# Edit terraform.tfvars with your real data
 nano terraform.tfvars
 ```
 
-### 2. Deploy completo (recomendado)
+### 2. Full Deploy (Recommended)
 
-A forma mais simples de subir o ambiente inteiro é rodar o orquestrador, que gerencia a fundação via Terraform e a aplicação via scripts diretos:
+The simplest way to bring up the entire environment is to run the orchestrator, which manages the foundation via Terraform and the application via direct scripts:
 
 ```bash
 ./scripts/deploy-production.sh
 ```
 
-O script executa:
-1. `terraform apply` em `envs/production/foundation` (VM, VPC, Tunnel, DNS, bucket de backup, Artifact Registry, SA do GitHub publisher + Workload Identity).
-2. `scripts/bootstrap-coolify.sh` (instala Coolify, gera token de API, sincroniza secrets no GCP Secret Manager).
-3. `scripts/build-push-images.sh` (build local + push para o Artifact Registry).
-4. `scripts/deploy-tenant-direct.sh` (deploy da aplicação via SCP/SSH ignorando o provider instável do Coolify).
-5. `scripts/refresh-coolify-routes.sh` (opcional — desative com `REFRESH_ROUTES_AFTER_DEPLOY=false`).
+The script executes:
+1. `terraform apply` in `envs/production/foundation` (VM, VPC, Tunnel, DNS, backup bucket, Artifact Registry, GitHub publisher SA + Workload Identity).
+2. `scripts/bootstrap-coolify.sh` (installs Coolify, generates initial API tokens, and syncs required secrets to GCP Secret Manager).
+3. `scripts/build-push-images.sh` (local build + push to Artifact Registry).
+4. `scripts/deploy-tenant-direct.sh` (application deploy via SCP/SSH bypassing the unstable Coolify provider).
+5. `scripts/refresh-coolify-routes.sh` (optional — disable with `REFRESH_ROUTES_AFTER_DEPLOY=false`).
 
-## Como Destruir
+## How to Destroy
 
-Para remover completamente o ambiente:
+To completely remove the environment:
 
-1. **Remover Aplicações (Manual/SSH)**: Opcional, já que a destruição da VM limpa tudo.
-2. **Remover Infraestrutura (Foundation)**:
+1. **Remove Applications (Manual/SSH)**: Optional, as destroying the VM clears everything.
+2. **Remove Infrastructure (Foundation)**:
    ```bash
    cd infrastructure/terraform/envs/production/foundation
    terraform destroy -var-file=../terraform.tfvars
    ```
 
-> Nota: A camada `envs/production/tenant` foi mantida apenas para referência histórica de IDs, mas o gerenciamento ativo foi movido para o script `deploy-tenant-direct.sh` devido a limitações do provider Terraform.
+> Note: The `envs/production/tenant` layer was kept for ID reference only; active management was moved to the `deploy-tenant-direct.sh` script due to Terraform provider limitations.
 
-## Acesso e Verificação
-- **Acesso SSH (via IAP)**:
+## Access and Verification
+- **SSH Access (via IAP)**:
   ```bash
   gcloud compute ssh nexaduo-chat-services --tunnel-through-iap
   ```
-- **Verificação E2E**:
+- **E2E Verification**:
   ```bash
   ./scripts/verify-v1-e2e.sh
   ```

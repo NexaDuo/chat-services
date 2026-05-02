@@ -1,84 +1,83 @@
-<!-- generated-by: gsd-doc-writer -->
 # Middleware — Chatwoot ⇄ Dify Adapter
 
-Serviço Node.js/TypeScript (Fastify 5) que fecha o loop de mensagens entre o Chatwoot (hub) e o Dify (cérebro agêntico). É o único lugar onde a lógica de multitenancy por `account_id` é resolvida.
+Node.js/TypeScript service (Fastify 5) that closes the messaging loop between Chatwoot (hub) and Dify (agentic brain). This is the single source of truth where multi-tenancy logic by `account_id` is resolved.
 
-## URLs de Produção
+## Production URLs
 
-- **Endpoint Webhook:** `https://api.nexaduo.com/webhooks/chatwoot` <!-- VERIFY: check if middleware is exposed at api.nexaduo.com -->
-- **Endpoint Handoff:** `https://api.nexaduo.com/tools/handoff`
+- **Webhook Endpoint:** `https://api.nexaduo.com/webhooks/chatwoot`
+- **Handoff Endpoint:** `https://api.nexaduo.com/tools/handoff`
 
-## Responsabilidades
+## Responsibilities
 
-1. **Webhook do Chatwoot** (`POST /webhooks/chatwoot`)
-   - Filtra eventos: apenas `message_created` + `message_type: incoming` + sender `contact` + não-privado + conteúdo não-vazio.
-   - Resolve tenant via `TENANT_MAP[account_id] → { dify_api_key, dify_base_url? }`.
-   - Recupera `dify_conversation_id` salvo em `conversation.custom_attributes` para continuidade de memória.
-   - Chama `POST {dify_base_url}/chat-messages` (modo `blocking`) com `user = "{account_id}:{contact_id}"` e `inputs` contendo os IDs do Chatwoot.
-   - Posta a resposta do Dify de volta via `POST /api/v1/accounts/{id}/conversations/{id}/messages`.
-   - Em caso de erro/timeout, posta uma **private note** no Chatwoot com contexto para o humano.
+1. **Chatwoot Webhook** (`POST /webhooks/chatwoot`)
+   - Filters events: only `message_created` + `message_type: incoming` + sender `contact` + non-private + non-empty content.
+   - Resolves tenant via `TENANT_MAP[account_id] → { dify_api_key, dify_base_url? }`.
+   - Retrieves `dify_conversation_id` saved in `conversation.custom_attributes` for memory continuity.
+   - Calls `POST {dify_base_url}/chat-messages` (blocking mode) with `user = "{account_id}:{contact_id}"` and inputs containing Chatwoot IDs.
+   - Posts Dify's response back via `POST /api/v1/accounts/{id}/conversations/{id}/messages`.
+   - In case of error/timeout, posts a **private note** in Chatwoot with context for human operators.
 
 2. **Handoff HTTP Tool** (`POST /tools/handoff`)
-   - Exposto para o Dify como uma HTTP Tool (header `x-handoff-secret: $HANDOFF_SHARED_SECRET`).
-   - Abre a conversa (`toggle_status → open`), adiciona o label `atendimento-humano` e posta uma private note com o sumário do agente.
+   - Exposed to Dify as an HTTP Tool (requires `x-handoff-secret: $HANDOFF_SHARED_SECRET` header).
+   - Reopens the conversation (`toggle_status → open`), adds the `atendimento-humano` label, and posts a private note with the agent's summary.
 
-3. **Observabilidade** (`GET /metrics`)
-   - Expõe métricas Prometheus: `middleware_dify_tokens_total{account_id,kind}`, `middleware_dify_requests_total{account_id,status}`, `middleware_dify_request_duration_seconds`, `middleware_errors_total`, `middleware_handoffs_total`, além das métricas padrão de Node.
+3. **Observability** (`GET /metrics`)
+   - Exposes Prometheus metrics: `middleware_dify_tokens_total{account_id,kind}`, `middleware_dify_requests_total{account_id,status}`, `middleware_dify_request_duration_seconds`, `middleware_errors_total`, `middleware_handoffs_total`, plus standard Node metrics.
 
-## Variáveis de ambiente (ver `.env.example` na raiz)
+## Environment Variables (see `.env.example` at root)
 
-| Var | Obrigatório | Descrição |
+| Var | Required | Description |
 | :-- | :--: | :-- |
-| `PORT` | não | Default `4000` |
-| `LOG_LEVEL` | não | `trace\|debug\|info\|warn\|error\|fatal` — default `info` |
-| `CHATWOOT_BASE_URL` | ✅ | URL interna do Chatwoot (ex: `http://chatwoot-rails:3000`) |
-| `CHATWOOT_API_TOKEN` | ✅ | `api_access_token` de um usuário admin do Chatwoot |
-| `DIFY_BASE_URL` | ✅ | URL interna do Dify (ex: `http://dify-api:5001/v1`) |
-| `DIFY_REQUEST_TIMEOUT_MS` | não | Default `30000` |
+| `PORT` | No | Default `4000` |
+| `LOG_LEVEL` | No | `trace\|debug\|info\|warn\|error\|fatal` — default `info` |
+| `CHATWOOT_BASE_URL` | ✅ | Internal Chatwoot URL (e.g., `http://chatwoot-rails:3000`) |
+| `CHATWOOT_API_TOKEN` | ✅ | `api_access_token` of a Chatwoot admin user |
+| `DIFY_BASE_URL` | ✅ | Internal Dify URL (e.g., `http://dify-api:5001/v1`) |
+| `DIFY_REQUEST_TIMEOUT_MS` | No | Default `30000` |
 | `TENANT_MAP` | ✅ | JSON: `{"<account_id>":{"dify_api_key":"app-..."}}` |
-| `HANDOFF_SHARED_SECRET` | ✅ | Segredo ≥16 chars para o header `x-handoff-secret` |
-| `HANDOFF_LABEL` | não | Default `atendimento-humano` |
+| `HANDOFF_SHARED_SECRET` | ✅ | Secret ≥16 chars for `x-handoff-secret` header |
+| `HANDOFF_LABEL` | No | Default `atendimento-humano` |
 
-> O `CHATWOOT_API_TOKEN` **só existe depois do primeiro setup** do Chatwoot. Crie o super-admin na UI (`chat.nexaduo.com`), copie o token em *Profile Settings → Access Token*, coloque no `.env` e rode `docker compose restart middleware`.
+> The `CHATWOOT_API_TOKEN` **only exists after the first Chatwoot setup**. Create the super-admin in the UI (`chat.nexaduo.com`), copy the token from *Profile Settings → Access Token*, add it to `.env`, and run `docker compose restart middleware`.
 
-## Executar local (sem Docker)
+## Run Locally (without Docker)
 
 ```bash
 cd middleware
 npm install
-npm run typecheck         # confirma que o TS compila
-cp ../.env.example .env   # e preencha CHATWOOT_BASE_URL/TOKEN, DIFY_BASE_URL, etc.
+npm run typecheck         # confirm TS compiles
+cp ../.env.example .env   # fill in CHATWOOT_BASE_URL/TOKEN, DIFY_BASE_URL, etc.
 npm run dev               # tsx watch — auto-reload
 ```
 
-## Build + prod
+## Build + Prod
 
 ```bash
-npm run build    # dist/
+npm run build    # output to dist/
 npm run start    # node dist/index.js
 ```
 
-Em produção o container roda via `docker compose up -d middleware` — ver `docker-compose.yml` na raiz.
+In production, the container runs via `docker compose up -d middleware` — see `docker-compose.yml` at the root.
 
-## Rotas
+## Routes
 
-- `POST /webhooks/chatwoot` — handler do webhook do Chatwoot
-- `POST /tools/handoff` — HTTP Tool chamada pelo Dify (requer `x-handoff-secret`)
+- `POST /webhooks/chatwoot` — Chatwoot webhook handler
+- `POST /tools/handoff` — HTTP Tool called by Dify (requires `x-handoff-secret`)
 - `GET /health` — JSON `{ status: "ok", uptimeSeconds }`
-- `GET /metrics` — exposição Prometheus (text/plain; version=0.0.4)
+- `GET /metrics` — Prometheus metrics (text/plain; version=0.0.4)
 
-## Estrutura
+## Structure
 
 ```
 src/
 ├── index.ts                       # Fastify bootstrap + graceful shutdown
 ├── config.ts                      # env validation (zod) + TENANT_MAP parser
-├── logger.ts                      # pino (pretty em dev, JSON em prod)
+├── logger.ts                      # pino (pretty in dev, JSON in prod)
 ├── metrics.ts                     # prom-client (registry + counters/histograms)
-├── chatwoot.ts                    # client REST Chatwoot (axios)
-├── dify.ts                        # client REST Dify Chat API (axios)
+├── chatwoot.ts                    # Chatwoot REST client (axios)
+├── dify.ts                        # Dify Chat API REST client (axios)
 └── handlers/
     ├── health.ts                  # /health + /metrics
-    ├── chatwoot-webhook.ts        # loop principal de mensagens
-    └── handoff.ts                 # handoff humano (Dify tool)
+    ├── chatwoot-webhook.ts        # main messaging loop
+    └── handoff.ts                 # human handoff (Dify tool)
 ```

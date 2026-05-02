@@ -1,115 +1,114 @@
-<!-- generated-by: gsd-doc-writer -->
 # Blueprint: Omnichannel AI Stack (Dify + Evolution + Chatwoot)
 
-Aqui está o **Blueprint Técnico** atualizado. A grande mudança é a substituição do n8n pelo **Dify**, que assume o papel de "LLMOps" e motor agêntico.
+This is the updated **Technical Blueprint**. The major change is the replacement of n8n with **Dify**, which takes over the role of "LLMOps" and agentic engine.
 
-O Dify é tecnicamente superior para RAG e Orquestração de Agentes, e a **Evolution API v2** possui integração nativa com ele, o que reduz a necessidade de "plumbing" manual de webhooks.
+Dify is technically superior for RAG and Agent Orchestration, and **Evolution API v2** has native integration with it, reducing the need for manual webhook plumbing.
 
 ---
 
-## 1. Stack Tecnológica (Referência 2026)
+## 1. Technology Stack (2026 Reference)
 
-| Componente | Tecnologia | Papel na Arquitetura |
+| Component | Technology | Architectural Role |
 | :--- | :--- | :--- |
-| **Hub de Atendimento** | Chatwoot (Official Latest) | Inbox único, CRM, gestão de tickets e transbordo humano |
-| **Conectividade Meta** | Evolution API v2 (v2.1.0+) | Ponte WhatsApp/Instagram — entrega mensagens ao Chatwoot |
-| **Cérebro Agêntico / RAG** | **Dify.ai (Self-hosted, v1.2.0+)** | Gestão de bases de conhecimento (RAG), prompts e agentes |
-| **Banco de Dados (app)** | PostgreSQL 16+ | Persistência do Chatwoot e do Dify (databases separados) |
-| **Banco Vetorial** | **pgvector (extensão Postgres)** | **Decisão:** pgvector para Tier Shared (eficiência de recursos); Weaviate opcional para Tier Dedicated |
-| **Cache & Queue** | Redis 7+ | Sessões, filas (Sidekiq do Chatwoot, Celery do Dify) |
-| **Modelos de Linguagem** | Azure OpenAI | **Padrão:** `gpt-4o` (agente) e `gpt-4o-mini` (RAG/embeddings) |
+| **Service Hub** | Chatwoot (Official Latest) | Unified inbox, CRM, ticket management, and human handoff |
+| **Meta Connectivity** | Evolution API v2 (v2.1.0+) | WhatsApp/Instagram bridge — delivers messages to Chatwoot |
+| **Agentic Brain / RAG** | **Dify.ai (Self-hosted, v1.2.0+)** | Knowledge base management (RAG), prompts, and agents |
+| **App Database** | PostgreSQL 16+ | Persistence for Chatwoot and Dify (separate databases) |
+| **Vector Database** | **pgvector (Postgres extension)** | **Decision:** pgvector for Tier Shared (resource efficiency); optional Weaviate for Tier Dedicated |
+| **Cache & Queue** | Redis 7+ | Sessions, queues (Chatwoot Sidekiq, Dify Celery) |
+| **Language Models** | Azure OpenAI | **Default:** `gpt-4o` (agent) and `gpt-4o-mini` (RAG/embeddings) |
 
-> ⚠️ **Versões:** As versões acima são alvos para validação em 2026-04-08. O suporte a MCP (Model Context Protocol) no Dify v1.2+ é o pilar para integrações dinâmicas.
+> ⚠️ **Versions:** The versions above are targets for validation as of 2026-04-08. MCP (Model Context Protocol) support in Dify v1.2+ is the cornerstone for dynamic integrations.
 
-## 2. Estratégia de Multitenancy (Isolamento de Dados)
+## 2. Multitenancy Strategy (Data Isolation)
 
-### 2.1. Restrição fundamental do Dify CE
-O Dify Community Edition suporta **apenas um workspace por instalação**. Nossa arquitetura contorna isso via:
+### 2.1. Fundamental Restriction of Dify CE
+Dify Community Edition supports **only one workspace per installation**. Our architecture bypasses this via:
 
-- **Tier Shared (Lógico):** Um Dify, múltiplos Apps. Cada cliente = um App Dify com sua própria API Key. Isolamento de RAG garantido por App.
-- **Tier Dedicated (Físico):** Stack Dify completa isolada via Docker Compose.
-- **Identificação:** O `account_id` do Chatwoot mapeia para o `DIFY_API_KEY` correspondente no middleware de integração.
+- **Tier Shared (Logical):** One Dify instance, multiple Apps. Each client = one Dify App with its own API Key. RAG isolation guaranteed per App.
+- **Tier Dedicated (Physical):** Complete isolated Dify stack via Docker Compose.
+- **Identification:** Chatwoot `account_id` maps to the corresponding `DIFY_API_KEY` in the integration middleware.
 
-### 2.2. Modelo Híbrido por Tiers
+### 2.2. Hybrid Tier Model
 
-| Critério | Tier Shared | Tier Dedicated |
+| Criterion | Tier Shared | Tier Dedicated |
 | :--- | :---: | :---: |
-| **Isolamento** | Lógico (App ID) | Físico (Container/DB) |
-| **Performance** | Recursos compartilhados | CPU/RAM garantidos |
-| **Acesso ao Dify** | Apenas via API (gerenciado) | Acesso total ao Studio pelo cliente |
-| **Uso Recomendado** | PMEs e Startups | Enterprise / Compliance (LGPD) |
+| **Isolation** | Logical (App ID) | Physical (Container/DB) |
+| **Performance** | Shared resources | Guaranteed CPU/RAM |
+| **Dify Access** | API only (managed) | Full Studio access for the client |
+| **Recommended Use** | SMBs and Startups | Enterprise / Compliance (GDPR/LGPD) |
 
-### 2.3. Roteamento de Produção e Multi-tenancy
-A stack utiliza os seguintes domínios base em produção:
+### 2.3. Production Routing and Multi-tenancy
+The stack uses the following base domains in production:
 - **Chatwoot:** `chat.nexaduo.com`
 - **Dify:** `dify.nexaduo.com`
 
-Para suporte a múltiplos tenants na **Shared Stack**, o roteamento futuro será baseado em caminhos (paths):
+For multiple tenant support in the **Shared Stack**, future routing will be path-based:
 - **Chatwoot:** `chat.nexaduo.com/{tenant}/`
 - **Dify:** `dify.nexaduo.com/{tenant}/`
 
-Um Cloudflare Worker ou Ingress Controller será responsável por injetar os headers de tenant correspondentes.
+A Cloudflare Worker or Ingress Controller will be responsible for injecting the corresponding tenant headers.
 
-## 3. Fluxo Agêntico e MCP (Model Context Protocol)
+## 3. Agentic Flow and MCP (Model Context Protocol)
 
-O Dify v1.2+ atua como um orquestrador MCP robusto:
+Dify v1.2+ acts as a robust MCP orchestrator:
 
-*   **Dify como MCP Client:** O agente consulta ferramentas externas em tempo real.
-    *   *Exemplo:* `mcp-server-postgres` para consultar o banco de pedidos do cliente.
-    *   *Exemplo:* `mcp-server-google-calendar` para agendamentos automáticos.
-*   **Dify como MCP Server:** Workflows complexos do Dify expostos como ferramentas para o Claude Code ou outros agentes internos.
-*   **Workflow-as-a-Tool:** Uso de Dify Workflows para garantir respostas determinísticas em fluxos críticos (ex: cancelamento de assinatura) antes de devolver para o Chat de IA livre.
+*   **Dify as MCP Client:** The agent consults external tools in real-time.
+    *   *Example:* `mcp-server-postgres` to query the client's order database.
+    *   *Example:* `mcp-server-google-calendar` for automated scheduling.
+*   **Dify as MCP Server:** Complex Dify workflows exposed as tools for Claude Code or other internal agents.
+*   **Workflow-as-a-Tool:** Use Dify Workflows to ensure deterministic responses in critical flows (e.g., subscription cancellation) before returning to the free AI Chat.
 
-## 4. Funcionamento da Integração (O Loop de Mensagens)
+## 4. Integration Mechanics (The Message Loop)
 
-O Chatwoot é o **Hub**, mas o Dify precisa de um "Adapter" para fechar o loop de resposta, já que o Agent Bot do Chatwoot espera uma resposta via API.
+Chatwoot is the **Hub**, but Dify needs an "Adapter" to close the response loop, as Chatwoot's Agent Bot expects an API-based response.
 
-**Fluxo Detalhado:**
-1.  **Entrada:** WhatsApp → Evolution → Chatwoot (Webhook `message_created`).
-2.  **Trigger:** Chatwoot chama o **Dify Adapter** (um pequeno serviço Node.js ou um Dify Workflow via HTTP).
-3.  **Processamento:**
-    *   O Adapter identifica o `account_id` e seleciona a `DIFY_API_KEY`.
-    *   Chama o Dify Chat API enviando o `conversation_id` (Chatwoot ID) e o `user` (`{account_id}:{contact_id}`).
-4.  **Saída:** O Dify responde → O Adapter chama a API do Chatwoot (`/messages`) para postar a resposta na conversa.
+**Detailed Flow:**
+1.  **Input:** WhatsApp → Evolution → Chatwoot (Webhook `message_created`).
+2.  **Trigger:** Chatwoot calls the **Dify Adapter** (a small Node.js service or a Dify Workflow via HTTP).
+3.  **Processing:**
+    *   The Adapter identifies the `account_id` and selects the `DIFY_API_KEY`.
+    *   Calls the Dify Chat API sending the `conversation_id` (Chatwoot ID) and `user` (`{account_id}:{contact_id}`).
+4.  **Output:** Dify responds → Adapter calls Chatwoot API (`/messages`) to post the response in the conversation.
 
-**Handoff Humano:**
-- Implementado como uma **Tool (HTTP Request)** no Dify.
-- Quando o Dify decide pelo handoff:
-    1. Chama `PUT /conversations/{id}` no Chatwoot para mudar status para `open`.
-    2. Adiciona label `atendimento-humano`.
-    3. Envia mensagem interna (private note) com o resumo do contexto da IA para o atendente.
+**Human Handoff:**
+- Implemented as a **Tool (HTTP Request)** in Dify.
+- When Dify decides on a handoff:
+    1. Calls `PUT /conversations/{id}` in Chatwoot to change status to `open`.
+    2. Adds the `atendimento-humano` label.
+    3. Sends an internal message (private note) with a summary of the AI context for the agent.
 
-## 5. Estrutura do Repositório
+## 5. Repository Structure
 
 ```
 /chat-services
-├── docker-compose.yml           # Stack Base: Chatwoot, Evolution, Redis, Postgres
-├── .env.example                 # Configurações globais
+├── docker-compose.yml           # Base Stack: Chatwoot, Evolution, Redis, Postgres
+├── .env.example                 # Global configurations
 ├── /infrastructure
 │   └── /postgres                # Init scripts (db_create, pgvector extension)
 ├── /middleware                  # Dify-Chatwoot Adapter (Node.js/TypeScript)
-├── /dify                        # Dify Stack (API, Worker, Sandbox)
-├── /dify-apps                   # Exports YAML dos agentes (Versionamento de Prompts)
-└── /provisioning                # Scripts de automação de novos tenants
+├── /deploy                      # Deployment configurations
+├── /dify-apps                   # Agent YAML exports (Prompt Versioning)
+└── /provisioning                # New tenant automation scripts
 ```
 
-## 6. Requisitos de Infraestrutura (Shared Stack)
+## 6. Infrastructure Requirements (Shared Stack)
 
-*   **CPU:** 4 vCPUs (mínimo), 8 vCPUs (ideal para 10+ tenants).
-*   **RAM:** 16 GB (recomendado para acomodar Redis, Postgres e Dify Workers).
-*   **Disco:** 50 GB NVMe (Performance de busca vetorial).
+*   **CPU:** 4 vCPUs (minimum), 8 vCPUs (ideal for 10+ tenants).
+*   **RAM:** 16 GB (recommended to accommodate Redis, Postgres, and Dify Workers).
+*   **Disk:** 50 GB NVMe (Vector search performance).
 *   **OS:** Ubuntu 24.04 LTS (Coolify-ready).
 
-## 7. Observabilidade e Custos
+## 7. Observability and Costs
 
-- **Monitoring:** Grafana + Prometheus monitorando o tamanho das filas do Sidekiq (Chatwoot) e Celery (Dify).
-- **FinOps:** O Dify registra o uso de tokens por App. O Adapter deve logar o `account_id` + `token_usage` para faturamento/rate-limit por cliente.
-- **Safety:** Implementação de `moderation` nodes no Dify para filtrar conteúdo sensível antes de chegar ao LLM.
+- **Monitoring:** Grafana + Prometheus monitoring Sidekiq (Chatwoot) and Celery (Dify) queue sizes.
+- **FinOps:** Dify tracks token usage per App. The Adapter should log `account_id` + `token_usage` for client billing/rate-limiting.
+- **Safety:** Implementation of `moderation` nodes in Dify to filter sensitive content before reaching the LLM.
 
-## 8. Portabilidade e Nuvem
+## 8. Portability and Cloud
 
-*   **Coolify:** O repositório é desenhado para ser importado no **Coolify** (`coolify.nexaduo.com`), que gerencia subdomínios (ex: `chat.nexaduo.com`, `dify.nexaduo.com`) e SSL automático via Let's Encrypt.
-*   **Azure/AWS:** Deploy via `docker-compose` em uma VM Linux (Ubuntu 24.04 LTS), mantendo custo fixo entre **$20 e $40/mês** para a Shared Stack.
+*   **Coolify:** The repository is designed to be imported into **Coolify** (`coolify.nexaduo.com`), which manages subdomains (e.g., `chat.nexaduo.com`, `dify.nexaduo.com`) and automatic SSL via Let's Encrypt.
+*   **Azure/AWS:** Deploy via `docker-compose` on a Linux VM (Ubuntu 24.04 LTS), maintaining a fixed cost between **$20 and $40/month** for the Shared Stack.
 
 ---
-*Este blueprint está pronto para ser entregue ao Claude Code. Ele foca na robustez do Dify para IA, na versatilidade da Evolution para canais e no poder de CRM do Chatwoot, com Chatwoot como hub único e operação production-ready desde o dia zero.*
+*This blueprint is ready for delivery to Claude Code. It focuses on Dify's robustness for AI, Evolution's versatility for channels, and Chatwoot's CRM power, with Chatwoot as the single hub and production-ready operations from day zero.*
