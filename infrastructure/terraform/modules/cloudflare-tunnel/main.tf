@@ -45,8 +45,7 @@ resource "cloudflare_zero_trust_tunnel_cloudflared_config" "config" {
   config {
     # Ingress rules
     ingress_rule {
-      hostname = "coolify.${var.base_domain}"
-      path     = "/app/*"
+      hostname = "realtime.${var.base_domain}"
       service  = "http://coolify-realtime:6001"
     }
     ingress_rule {

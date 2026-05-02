@@ -38,8 +38,8 @@ else
   echo "=== Step 2b/3: Skipping image build (SKIP_IMAGE_BUILD=true) ==="
 fi
 
-echo "=== Step 3/3: Tenant (Coolify services + envs) ==="
-"${PROJECT_ROOT}/scripts/apply-tenant.sh"
+echo "=== Step 3/3: Tenant (Direct scripted deployment) ==="
+"${PROJECT_ROOT}/scripts/deploy-tenant-direct.sh"
 
 if [[ "${REFRESH_ROUTES_AFTER_DEPLOY:-true}" == "true" ]]; then
   echo "=== Post-deploy: Refresh Coolify routes ==="

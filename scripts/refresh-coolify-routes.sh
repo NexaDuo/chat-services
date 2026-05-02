@@ -54,9 +54,16 @@ check_local_dify_setup() {
 
 container_by_subname() {
   local subname="$1"
+  # Try Coolify label first, then standard Docker Compose service label
   sudo docker ps -a \
     --filter "label=coolify.service.subName=${subname}" \
     --format '{{.Names}}' | head -n 1
+  
+  if [[ -z "$(sudo docker ps -a --filter "label=coolify.service.subName=${subname}" --format '{{.Names}}')" ]]; then
+     sudo docker ps -a \
+       --filter "label=com.docker.compose.service=${subname}" \
+       --format '{{.Names}}' | head -n 1
+  fi
 }
 
 sudo docker inspect coolify >/dev/null 2>&1 || { echo "coolify container not found" >&2; exit 1; }
