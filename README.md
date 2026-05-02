@@ -46,7 +46,7 @@ npm run generate-env    # Generates .env with robust secrets and alexandre@nexad
 ### 2. Full Cycle Validation (The "One Command" Test)
 This command destroys any existing local stack, brings it up, waits for health, runs onboarding, and executes smoke tests:
 ```bash
-npx tsx ../scripts/validate-stack.ts
+./scripts/validate-stack.sh
 ```
 
 ### 3. Unified Access
@@ -65,7 +65,7 @@ Access all services with the same credentials:
 
 *   **Runtime:** Node.js 22 (Fastify), Ruby on Rails (Chatwoot), Python (Dify).
 *   **Persistence:** Postgres 16 (pgvector), Redis 7 (Alpine).
-*   **Infrastructure:** GCP (GCE), Cloudflare Tunnel, Terraform, Coolify.
+*   **Infrastructure:** GCP (GCE), Cloudflare Tunnel, Terraform, Bash/Docker.
 *   **Testing:** Playwright (TypeScript) for E2E and Onboarding.
 
 ## 📈 Roadmap & Portfolio Notes

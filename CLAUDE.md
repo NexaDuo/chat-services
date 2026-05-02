@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Repository status
 
-This repo is currently **blueprint-only**. The only substantive file is `plan.md` (in Portuguese) — the technical blueprint for an Omnichannel AI Stack. Treat `plan.md` as the authoritative source of architectural intent.
+This repo is a **fully implemented** production-grade stack. Authority on implementation details lies within the existing source code and the `AGENTS.md` file (which documents lessons learned).
 
 ## Architecture (target state)
 
@@ -17,7 +17,7 @@ WhatsApp ──▶ Evolution API ──▶ Chatwoot (Webhook) ──▶ Middlewa
                                       └─────── response ─────┘
 ```
 
-- **Coolify** — [coolify.nexaduo.com](https://coolify.nexaduo.com) (Orquestração e Deploy).
+- **Coolify** — [coolify.nexaduo.com](https://coolify.nexaduo.com) (Orquestração e Deploy via Bash/Docker).
 - **Chatwoot** — [chat.nexaduo.com](https://chat.nexaduo.com). Inbox, CRM, ticketing, human handoff. Single source of truth.
 - **Dify** — [dify.nexaduo.com](https://dify.nexaduo.com). Agentic engine + RAG. Supports MCP bidirectionally.
 - **Evolution API v2.1+** — WhatsApp/Instagram bridge.
@@ -31,6 +31,12 @@ WhatsApp ──▶ Evolution API ──▶ Chatwoot (Webhook) ──▶ Middlewa
 
 **Human handoff** is a Dify **tool** (HTTP request) that updates the Chatwoot conversation status to `open` and adds the `atendimento-humano` label.
 
+## Deployment Strategy
+
+The stack uses a **Hybrid Deployment Model**:
+1. **Foundation (Terraform):** Mature infrastructure components (GCP VM, VPC, Cloudflare Tunnel/DNS, Secrets) are managed via Terraform in `infrastructure/terraform/envs/production/foundation`.
+2. **App Layer (Bash/Docker):** Services are deployed directly via `scripts/deploy-tenant-direct.sh`, which uses SCP/SSH to transfer configurations and start Docker Compose on the VM. This bypasses instabilities in the Coolify Terraform provider.
+
 ## Configuration & Dynamics
 
 The stack uses a **hybrid configuration model**:
@@ -42,28 +48,19 @@ The stack uses a **hybrid configuration model**:
 - Authentication for internal config fetching is done via `Bearer token` using the `HANDOFF_SHARED_SECRET`.
 - New configuration keys should be added to the `middleware.configs` table in Postgres for runtime updates.
 
-## Multitenancy model
-
-1. **Tier Shared (default)** — one Dify CE, one app per client. Chatwoot `account_id` maps to a `DIFY_API_KEY` in the middleware.
-2. **Tier Dedicated** — full Dify stack per tenant.
-
-**Routing Strategy (Future):**
-- **Chatwoot:** `chat.nexaduo.com/{tenant}/`
-- **Dify:** `dify.nexaduo.com/{tenant}/`
-
-**Conversational memory key:** Dify is called with `user = {account_id}:{contact_id}` from Chatwoot.
-
 ## Target repo layout
 
 ```
 docker-compose.yml           # Base stack
 .env.example                 # Secrets template
+/deploy                      # Multi-stack docker-compose configurations
 /middleware                  # Dify-Chatwoot Adapter (Node.js/TS)
 /infrastructure/postgres     # Init: DB creation + pgvector extension
-/dify                        # Dify-specific docker configs
+/infrastructure/terraform    # Foundation and Tenant IaC
 /dify-apps                   # DSL (YAML) exports of agents - MUST be versioned
 /provisioning                # Automation scripts
-/scripts                     # Deploy utilities (Coolify-ready)
+/scripts                     # Deploy utilities
+/onboarding                  # Playwright automation and smoke tests
 ```
 
 ## Operational non-negotiables

@@ -38,12 +38,12 @@ The system acts as a multi-tenant adapter between customer service (Chatwoot) an
 **Infrastructure Layer:**
 - Purpose: Underlying hosting and network security.
 - Location: GCP (Compute Engine) + Cloudflare (Tunnels/DNS).
-- Managed by: Terraform (`infrastructure/terraform/`).
+- Managed by: Hybrid approach (Terraform + Bash).
 - **Deployment Process:** 3-step isolated flow:
     1. **Foundation Layer (Terraform):** Provisions VM, VPC, and Cloudflare Tunnel.
     2. **Bootstrap Step (Script):** Installs Coolify, generates API tokens, and populates GCP Secret Manager.
-    3. **Tenant Layer (Terraform):** Orchestrates services (Chatwoot, Dify, NexaDuo) via Coolify API using tokens from Secret Manager.
-- **Rationale:** Separation prevents Terraform provider initialization timeouts by decoupling the VM provisioning from the application API availability.
+    3. **Application Stack (Bash/Docker):** Deploys services directly via SCP/SSH using `scripts/deploy-tenant-direct.sh`.
+- **Rationale:** Separation prevents Terraform provider initialization timeouts and avoids the brittle Coolify Terraform provider for complex multi-container stacks.
 
 ## Data Flow
 

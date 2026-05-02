@@ -1,6 +1,6 @@
 # Technology Stack
 
-**Analysis Date:** 2026-04-14
+**Analysis Date:** 2026-05-02
 
 ## Languages
 
@@ -10,15 +10,16 @@
 
 **Secondary:**
 - SQL - PostgreSQL migrations and queries.
-- Bash - Provisioning and backup scripts.
+- Bash - Provisioning, deployment, and backup scripts.
 
 ## Runtime
 
 **Environment:**
-- Node.js 20+ (Dockerized)
-- Docker Engine / Docker Compose (via Coolify)
+- Node.js 22+ (Dockerized)
+- Docker Engine / Docker Compose (managed via Hybrid Scripted Deployment)
 
 **Package Manager:**
+- npm (Onboarding)
 - pnpm (Middleware, Agents)
 - Lockfile: `pnpm-lock.yaml` (present)
 
@@ -26,7 +27,7 @@
 
 **Core:**
 - Fastify (Middleware API)
-- Terraform (IaC)
+- Terraform (IaC - Foundation Layer)
 
 **Infrastructure:**
 - GCP (Google Cloud Platform)
@@ -45,14 +46,14 @@
 - `axios` (HTTP client for Chatwoot/Dify integration)
 
 **Infrastructure:**
-- `SierraJC/coolify` (Terraform provider)
 - `cloudflare/cloudflare` (Terraform provider)
 - `hashicorp/google` (Terraform provider)
+- `docker compose` (Application orchestration)
 
 ## Configuration
 
 **Environment:**
-- Managed via `.env` (secrets) and `terraform.tfvars` (infrastructure settings).
+- Managed via `.env` (secrets), `terraform.tfvars` (infrastructure), and GCP Secret Manager (Source of Truth for production).
 - Middleware uses Zod to validate and parse environment variables.
 
 **Build:**
@@ -65,8 +66,8 @@
 - Docker, Node.js, pnpm, Terraform CLI, gcloud CLI.
 
 **Production:**
-- GCP Compute Engine (e2-standard-4) with Ubuntu 22.04.
+- GCP Compute Engine (e2-standard-4) with Ubuntu 24.04.
 
 ---
 
-*Stack analysis: 2026-04-14*
+*Stack analysis: 2026-05-02*

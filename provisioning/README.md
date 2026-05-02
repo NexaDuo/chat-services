@@ -62,8 +62,16 @@ O `TENANT_MAP` é um JSON de uma linha no `.env`:
 TENANT_MAP={"1":{"dify_api_key":"app-xxxxxx"},"2":{"dify_api_key":"app-yyyyyy","dify_base_url":"http://dify-api:5001/v1"}}
 ```
 
-Após alterar:
+### Em Produção:
+O arquivo `.env` da aplicação em produção é gerado dinamicamente pelo script `deploy-tenant-direct.sh`. Para adicionar um novo tenant:
+1. Atualize o mapeamento no GCP Secret Manager ou ajuste o template no script `deploy-tenant-direct.sh`.
+2. Re-execute o deploy da camada de aplicação:
+   ```bash
+   ./scripts/deploy-tenant-direct.sh
+   ```
 
+### Local:
+Basta editar o arquivo `.env` na raiz e reiniciar o container:
 ```bash
 docker compose restart middleware
 docker compose logs -f middleware   # conferir "middleware: listening" + tenants=N

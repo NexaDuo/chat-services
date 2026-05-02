@@ -11,7 +11,7 @@ Este diretório contém scripts do Playwright para automatizar a configuração 
 1.  **Pré-requisitos:** Certifique-se de que a stack está rodando (`docker compose up -d`).
 2.  **Instalar dependências:**
     ```bash
-    cd automation
+    cd onboarding
     npm install
     npx playwright install chromium
     ```
