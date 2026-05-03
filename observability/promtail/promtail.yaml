@@ -23,16 +23,20 @@ scrape_configs:
         target_label: 'service'
       - source_labels: ['__meta_docker_container_label_com_docker_compose_project']
         target_label: 'project'
+      - source_labels: ['__meta_docker_container_label_coolify_resourceName']
+        target_label: 'resource'
 
     pipeline_stages:
+      - docker: {} # Automatically handles docker log format (json-file or journald)
+      
+      # Try to parse JSON if it is JSON
       - json:
           expressions:
-            log: log
-            stream: stream
-            time: time
             level: level
+            msg: msg
+            message: message
       
-      # Masking sensitive data (CPFs, Emails, Bearer Tokens)
+      # Masking sensitive data
       - replace:
           expression: '([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})'
           replace: '***@***.***'
@@ -43,9 +47,6 @@ scrape_configs:
           expression: '(\d{3}\.\d{3}\.\d{3}-\d{2})'
           replace: '***.***.***-**'
 
-      # Extract labels for structured logs (where level exists)
+      # Map parsed fields to labels
       - labels:
           level:
-      
-      - output:
-          source: log
