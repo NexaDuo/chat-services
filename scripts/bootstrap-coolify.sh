@@ -206,9 +206,14 @@ echo "Secret Manager updated with new token, destination UUID, URL, and Tunnel T
 
 # 6. Upload 01-init.sql
 echo "Uploading 01-init.sql to VM..."
-INIT_SQL_PATH="${PROJECT_ROOT}/deploy/01-init.sql"
+INIT_SQL_PATH="${PROJECT_ROOT}/infrastructure/postgres/01-init.sql"
 if [ ! -f "${INIT_SQL_PATH}" ]; then
-  echo "Warning: file not found: ${INIT_SQL_PATH}. Skipping upload."
+  # Fallback to deploy/01-init.sql if infrastructure/ is missing
+  INIT_SQL_PATH="${PROJECT_ROOT}/deploy/01-init.sql"
+fi
+
+if [ ! -f "${INIT_SQL_PATH}" ]; then
+  echo "Warning: 01-init.sql not found in infrastructure/ or deploy/. Skipping upload."
 else
   # Wait for IAP to be ready
   sleep 5
@@ -224,8 +229,8 @@ else
     --project "$PROJECT_ID" \
     --zone "$ZONE" \
     "$SSH_USER@$VM_NAME" \
-    --command "sudo mkdir -p /opt/nexaduo/postgres && sudo mv /tmp/01-init.sql /opt/nexaduo/postgres/01-init.sql && sudo chown -R $SSH_USER:$SSH_USER /opt/nexaduo" >/dev/null 2>&1
-  echo "01-init.sql uploaded to /opt/nexaduo/postgres/01-init.sql"
+    --command "sudo mkdir -p /opt/nexaduo/infrastructure/postgres && sudo mv /tmp/01-init.sql /opt/nexaduo/infrastructure/postgres/01-init.sql && sudo chown -R $SSH_USER:$SSH_USER /opt/nexaduo" >/dev/null 2>&1
+  echo "01-init.sql uploaded to /opt/nexaduo/infrastructure/postgres/01-init.sql"
 fi
 
 # 6b. Upload observability configs (loki, promtail, prometheus, grafana
