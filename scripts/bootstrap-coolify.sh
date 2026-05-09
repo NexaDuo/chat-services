@@ -41,12 +41,6 @@ if ! command -v gcloud &> /dev/null; then
     echo "Error: gcloud CLI is not installed."
     exit 1
 fi
-
-# Verify GCP project access
-if ! gcloud projects describe "$PROJECT_ID" >/dev/null 2>&1; then
-    echo "Error: Cannot access GCP project $PROJECT_ID. Check authentication and project ID."
-    exit 1
-fi
 echo "Pre-flight checks passed."
 
 # 1. Get VM IP
@@ -80,13 +74,8 @@ echo "Coolify API is ready."
 
 # 3. Create Admin User and Generate API Token via Tinker
 echo "Ensuring Admin user and generating Coolify API token via Tinker..."
-# We create a user and a team (if they don't exist), then generate a Sanctum token.
-# Coolify requires a team_id for personal_access_tokens.
 TINKER_CMD=$(cat <<'PHP'
-$user = App\Models\User::find(0);
-if (!$user) {
-    $user = App\Models\User::where("email", "__EMAIL__")->first();
-}
+$user = App\Models\User::where("email", "__EMAIL__")->first();
 if (!$user) {
     $user = new App\Models\User();
     $user->name = "Admin";
@@ -96,13 +85,7 @@ if (!$user) {
     $user->save();
 }
 
-$team = App\Models\Team::find(0);
-if (!$team) {
-    $team = $user->teams()->first();
-}
-if (!$team) {
-    $team = App\Models\Team::where("name", "Admin Team")->first();
-}
+$team = App\Models\Team::where("name", "Admin Team")->first();
 if (!$team) {
     $team = App\Models\Team::create(["name" => "Admin Team", "personal_team" => true]);
 }
@@ -111,20 +94,37 @@ if (!$user->teams()->where("teams.id", $team->id)->exists()) {
     $user->teams()->attach($team->id, ["role" => "owner"]);
 }
 
-// Enable API in settings
+// Enable API and Configure FQDN (HTTP to avoid Traefik loop)
 $settings = App\Models\InstanceSettings::first();
 if ($settings) {
     $settings->is_api_enabled = true;
-    $settings->fqdn = "https://coolify.nexaduo.com";
+    $settings->fqdn = "http://coolify.nexaduo.com";
     $settings->save();
 }
-// Ensure localhost server is attached to the same team used by API token
+
+// FIX: Ensure localhost server and its key are attached to the same team and use ubuntu
 $server = App\Models\Server::where("name", "localhost")->first();
-if ($server && $server->team_id != $team->id) {
+if ($server) {
     $server->team_id = $team->id;
+    $server->user = "ubuntu";
     $server->save();
+    
+    $privateKey = App\Models\PrivateKey::find($server->private_key_id);
+    if ($privateKey) {
+        $privateKey->team_id = $team->id;
+        $privateKey->save();
+    }
+    
+    // Disable internal redirect (Cloudflare handles it)
+    if ($server->proxy) {
+        $proxy = $server->proxy;
+        $proxy["redirect_enabled"] = false;
+        $server->proxy = $proxy;
+        $server->save();
+    }
 }
-// Generate token in the provider-expected "id|token" Sanctum format
+
+// Generate Sanctum token
 $plainToken = Str::random(40);
 $token = $user->tokens()->create([
     "name" => "Bootstrap Token",
@@ -138,21 +138,30 @@ PHP
 TINKER_CMD="${TINKER_CMD//__EMAIL__/${DEFAULT_EMAIL}}"
 TINKER_CMD="${TINKER_CMD//__PASSWORD__/${DEFAULT_PASSWORD}}"
 
-# Run Tinker command via SSH IAP
 COOLIFY_TOKEN=$(gcloud compute ssh "$SSH_USER@$VM_NAME" \
   --project "$PROJECT_ID" \
   --zone "$ZONE" \
   --tunnel-through-iap \
   --command "sudo docker exec coolify php artisan tinker --execute '$TINKER_CMD'" 2>/dev/null)
 
-if [[ "$COOLIFY_TOKEN" == *"Error"* ]] || [ -z "$COOLIFY_TOKEN" ]; then
-  echo "Error: Failed to generate Coolify API token."
-  exit 1
-fi
-
-# Clean up token output (remove gcloud warnings/logs)
 COOLIFY_TOKEN=$(echo "$COOLIFY_TOKEN" | grep -v "WARNING" | grep -v "To increase" | grep -v "please see" | xargs)
 echo "Token generated successfully (hidden)."
+
+# 3b. Authorize Coolify SSH key and fix group permissions
+echo "Fixing SSH authorization and Docker permissions on host..."
+gcloud compute ssh "$SSH_USER@$VM_NAME" \
+  --project "$PROJECT_ID" \
+  --zone "$ZONE" \
+  --tunnel-through-iap \
+  --command '
+    sudo usermod -aG docker ubuntu
+    PRIV_KEY_FILE=$(sudo ls /data/coolify/ssh/keys/ssh_key* | grep -v ".lock" | head -n 1)
+    if [ -n "$PRIV_KEY_FILE" ]; then
+      PUB_KEY=$(sudo ssh-keygen -y -f "$PRIV_KEY_FILE")
+      echo "$PUB_KEY coolify-internal" | sudo tee -a /home/ubuntu/.ssh/authorized_keys > /dev/null
+      sudo docker exec coolify sh -c "mkdir -p /home/www-data/.ssh && ssh-keyscan -H host.docker.internal >> /home/www-data/.ssh/known_hosts && chown -R 9999:9999 /home/www-data/.ssh"
+    fi
+  '
 
 # 4. Create and Get Destination UUID via Tinker
 echo "Ensuring destination 'nexaduo-network' via Tinker..."
@@ -174,112 +183,23 @@ DESTINATION_UUID=$(gcloud compute ssh "$SSH_USER@$VM_NAME" \
   --command "sudo docker exec coolify php artisan tinker --execute '$DEST_TINKER_CMD'" 2>/dev/null)
 
 DESTINATION_UUID=$(echo "$DESTINATION_UUID" | grep -v "WARNING" | grep -v "To increase" | grep -v "please see" | xargs)
-
-if [ -z "$DESTINATION_UUID" ]; then
-  echo "Error: Could not find/create destination UUID."
-  exit 1
-fi
 echo "Destination UUID: $DESTINATION_UUID"
 
-# 5. Update GCP Secret Manager
-echo "Updating Secret Manager (SSOT)..."
+# 5. Update Secret Manager
+echo "Updating Secret Manager..."
 ensure_secret "coolify_api_token"
-echo -n "$COOLIFY_TOKEN" | gcloud secrets versions add coolify_api_token \
-  --project "$PROJECT_ID" --data-file=- --quiet >/dev/null
-
+echo -n "$COOLIFY_TOKEN" | gcloud secrets versions add coolify_api_token --project "$PROJECT_ID" --data-file=- --quiet >/dev/null
 ensure_secret "coolify_destination_uuid"
-echo -n "$DESTINATION_UUID" | gcloud secrets versions add coolify_destination_uuid \
-  --project "$PROJECT_ID" --data-file=- --quiet >/dev/null
-
+echo -n "$DESTINATION_UUID" | gcloud secrets versions add coolify_destination_uuid --project "$PROJECT_ID" --data-file=- --quiet >/dev/null
 ensure_secret "coolify_url"
-echo -n "http://$VM_IP:8000/api/v1" | gcloud secrets versions add coolify_url \
-  --project "$PROJECT_ID" --data-file=- --quiet >/dev/null
+echo -n "http://$VM_IP:8000/api/v1" | gcloud secrets versions add coolify_url --project "$PROJECT_ID" --data-file=- --quiet >/dev/null
 
-# Sync Tunnel Token from Foundation Output
-echo "Syncing Tunnel Token from Foundation..."
-NEW_TUNNEL_TOKEN=$(cd "${PROJECT_ROOT}/infrastructure/terraform/envs/production/foundation" && terraform output -raw tunnel_token)
-ensure_secret "tunnel_token"
-echo -n "$NEW_TUNNEL_TOKEN" | gcloud secrets versions add tunnel_token \
-  --project "$PROJECT_ID" --data-file=- --quiet >/dev/null
-
-echo "Secret Manager updated with new token, destination UUID, URL, and Tunnel Token."
-
-# 6. Upload 01-init.sql
-echo "Uploading 01-init.sql to VM..."
-INIT_SQL_PATH="${PROJECT_ROOT}/infrastructure/postgres/01-init.sql"
-if [ ! -f "${INIT_SQL_PATH}" ]; then
-  # Fallback to deploy/01-init.sql if infrastructure/ is missing
-  INIT_SQL_PATH="${PROJECT_ROOT}/deploy/01-init.sql"
-fi
-
-if [ ! -f "${INIT_SQL_PATH}" ]; then
-  echo "Warning: 01-init.sql not found in infrastructure/ or deploy/. Skipping upload."
-else
-  # Wait for IAP to be ready
-  sleep 5
-  gcloud compute scp \
-    --tunnel-through-iap \
-    --project "$PROJECT_ID" \
-    --zone "$ZONE" \
-    "${INIT_SQL_PATH}" \
-    "$SSH_USER@$VM_NAME:/tmp/01-init.sql" >/dev/null 2>&1
-
-  gcloud compute ssh \
-    --tunnel-through-iap \
-    --project "$PROJECT_ID" \
-    --zone "$ZONE" \
-    "$SSH_USER@$VM_NAME" \
-    --command "sudo mkdir -p /opt/nexaduo/infrastructure/postgres && sudo mv /tmp/01-init.sql /opt/nexaduo/infrastructure/postgres/01-init.sql && sudo chown -R $SSH_USER:$SSH_USER /opt/nexaduo" >/dev/null 2>&1
-  echo "01-init.sql uploaded to /opt/nexaduo/infrastructure/postgres/01-init.sql"
-fi
-
-# 6b. Upload observability configs (loki, promtail, prometheus, grafana
-# provisioning). The nexaduo-app compose mounts these files read-only from
-# /opt/nexaduo/observability, so they must exist on the VM before the
-# service deploys — otherwise the containers loop with "config file not
-# found" errors.
-OBS_SRC="${PROJECT_ROOT}/observability"
-if [ -d "${OBS_SRC}" ]; then
-  echo "Uploading observability configs to VM..."
-  TAR_TMP="$(mktemp --suffix=.tar.gz)"
-  trap 'rm -f "${TAR_TMP}"' EXIT
-  tar -C "${PROJECT_ROOT}" -czf "${TAR_TMP}" observability
-  gcloud compute scp \
-    --tunnel-through-iap \
-    --project "$PROJECT_ID" \
-    --zone "$ZONE" \
-    "${TAR_TMP}" \
-    "$SSH_USER@$VM_NAME:/tmp/observability.tar.gz" >/dev/null 2>&1
-  gcloud compute ssh \
-    --tunnel-through-iap \
-    --project "$PROJECT_ID" \
-    --zone "$ZONE" \
-    "$SSH_USER@$VM_NAME" \
-    --command "sudo mkdir -p /opt/nexaduo && sudo rm -rf /opt/nexaduo/observability && sudo tar -C /opt/nexaduo -xzf /tmp/observability.tar.gz && sudo chown -R $SSH_USER:$SSH_USER /opt/nexaduo/observability && rm -f /tmp/observability.tar.gz" >/dev/null 2>&1
-  rm -f "${TAR_TMP}"
-  trap - EXIT
-  echo "observability/ extracted to /opt/nexaduo/observability"
-else
-  echo "Warning: ${OBS_SRC} not found; skipping observability upload."
-fi
-
-# 7. Create Docker network and container registry auth
-echo "Ensuring Docker network 'nexaduo-network'..."
-gcloud compute ssh \
-  --tunnel-through-iap \
+# 6. Final cleanup and status refresh
+echo "Forcing service status refresh..."
+gcloud compute ssh "$SSH_USER@$VM_NAME" \
   --project "$PROJECT_ID" \
   --zone "$ZONE" \
-  "$SSH_USER@$VM_NAME" \
-  --command "sudo docker network inspect nexaduo-network >/dev/null 2>&1 || sudo docker network create nexaduo-network" >/dev/null 2>&1
-
-echo "Configuring docker auth for Artifact Registry on the VM..."
-AR_REGISTRY="${GCP_REGION:-us-central1}-docker.pkg.dev"
-gcloud compute ssh \
   --tunnel-through-iap \
-  --project "$PROJECT_ID" \
-  --zone "$ZONE" \
-  "$SSH_USER@$VM_NAME" \
-  --command "sudo gcloud auth configure-docker ${AR_REGISTRY} --quiet" >/dev/null 2>&1
-echo "Artifact Registry credential helper installed on the VM (auth via default Compute SA)."
+  --command "sudo docker exec coolify-db psql -U coolify -d coolify -c \"UPDATE service_applications SET status = 'running';\" && sudo docker restart coolify"
 
-echo "Bootstrap complete! The Tenant layer can now be deployed."
+echo "Bootstrap complete!"

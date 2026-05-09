@@ -21,32 +21,35 @@ scrape_configs:
         target_label: 'stream'
       - source_labels: ['__meta_docker_container_label_com_docker_compose_service']
         target_label: 'service'
+      - source_labels: ['__meta_docker_container_label_coolify_service_subName']
+        target_label: 'service'
       - source_labels: ['__meta_docker_container_label_com_docker_compose_project']
         target_label: 'project'
       - source_labels: ['__meta_docker_container_label_coolify_resourceName']
         target_label: 'resource'
 
     pipeline_stages:
-      - docker: {} # Automatically handles docker log format (json-file or journald)
-      
-      # Try to parse JSON if it is JSON
+      - docker: {}
       - json:
           expressions:
             level: level
             msg: msg
             message: message
-      
-      # Masking sensitive data
+            method: method
+            path: path
+            status: status
+      - regex:
+          # Match Rails format: I, [2026-05-09T...]  INFO -- : ...
+          expression: '^(?P<rails_letter>[IWEFDC]),\s*\[[^\]]+\]\s+(?P<rails_level>[A-Z]+)\s+--\s+:'
+      - template:
+          # Prefer JSON level, then Rails level, then default to INFO
+          source: level
+          template: '{{ if .level }}{{ .level }}{{ else if .rails_level }}{{ .rails_level }}{{ else }}INFO{{ end }}'
       - replace:
-          expression: '([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})'
-          replace: '***@***.***'
-      - replace:
-          expression: '(Bearer\s+)[a-zA-Z0-9\._\-]+'
-          replace: '${1}***'
-      - replace:
-          expression: '(\d{3}\.\d{3}\.\d{3}-\d{2})'
-          replace: '***.***.***-**'
-
-      # Map parsed fields to labels
+          # Mask PII
+          expression: '([a-zA-Z0-9]{1,3})[a-zA-Z0-9._%+-]*@([a-zA-Z0-9.-]+\.[a-zA-Z]{2,})'
+          replace: '${1}***@${2}'
       - labels:
           level:
+          method:
+          status:

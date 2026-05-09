@@ -1,6 +1,14 @@
 import axios, { type AxiosInstance } from "axios";
 import type { Logger } from "./logger.js";
 
+export type ChatwootMessageResponse = {
+  id: number;
+  content: string;
+  private: boolean;
+  message_type: string;
+  created_at: string;
+};
+
 /**
  * Minimal Chatwoot REST client — user API (api_access_token).
  * Scope limited to what the middleware needs:
@@ -32,9 +40,9 @@ export class ChatwootClient {
     content: string;
     private?: boolean;
     messageType?: "outgoing" | "incoming" | "template";
-  }): Promise<void> {
+  }): Promise<ChatwootMessageResponse> {
     const url = `/api/v1/accounts/${params.accountId}/conversations/${params.conversationId}/messages`;
-    await this.http.post(url, {
+    const response = await this.http.post<ChatwootMessageResponse>(url, {
       content: params.content,
       message_type: params.messageType ?? "outgoing",
       private: params.private ?? false,
@@ -47,34 +55,42 @@ export class ChatwootClient {
       },
       "chatwoot: message posted",
     );
+    return response.data;
   }
 
   async setConversationCustomAttributes(params: {
     accountId: number | string;
     conversationId: number | string;
     attributes: Record<string, unknown>;
-  }): Promise<void> {
+  }): Promise<Record<string, unknown>> {
     const url = `/api/v1/accounts/${params.accountId}/conversations/${params.conversationId}/custom_attributes`;
-    await this.http.post(url, {
+    const response = await this.http.post<Record<string, unknown>>(url, {
       custom_attributes: params.attributes,
     });
+    return response.data;
   }
 
   async toggleConversationStatus(params: {
     accountId: number | string;
     conversationId: number | string;
     status: "open" | "resolved" | "pending" | "snoozed";
-  }): Promise<void> {
+  }): Promise<{ status: string }> {
     const url = `/api/v1/accounts/${params.accountId}/conversations/${params.conversationId}/toggle_status`;
-    await this.http.post(url, { status: params.status });
+    const response = await this.http.post<{ status: string }>(url, { 
+      status: params.status 
+    });
+    return response.data;
   }
 
   async addLabels(params: {
     accountId: number | string;
     conversationId: number | string;
     labels: string[];
-  }): Promise<void> {
+  }): Promise<{ labels: string[] }> {
     const url = `/api/v1/accounts/${params.accountId}/conversations/${params.conversationId}/labels`;
-    await this.http.post(url, { labels: params.labels });
+    const response = await this.http.post<{ labels: string[] }>(url, { 
+      labels: params.labels 
+    });
+    return response.data;
   }
 }

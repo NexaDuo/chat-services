@@ -1,8 +1,6 @@
-
 services:
   postgres:
     image: pgvector/pgvector:pg16
-    container_name: nexaduo-postgres
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
@@ -11,7 +9,7 @@ services:
       TZ: ${TZ:-UTC}
     volumes:
       - postgres-data:/var/lib/postgresql/data
-      - ${NEXADUO_CONF_PATH:-/opt/nexaduo}/infrastructure/postgres/01-init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+      - /opt/nexaduo/postgres/01-init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d postgres"]
       interval: 10s
@@ -23,7 +21,6 @@ services:
 
   redis:
     image: redis:7.2.4-alpine
-    container_name: nexaduo-redis
     restart: unless-stopped
     command:
       - redis-server
@@ -48,7 +45,6 @@ services:
 
   cloudflared:
     image: cloudflare/cloudflared:latest
-    container_name: nexaduo-tunnel
     restart: unless-stopped
     command: tunnel run
     environment:

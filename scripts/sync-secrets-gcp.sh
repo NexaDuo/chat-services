@@ -18,6 +18,7 @@ MAPPINGS=(
     "handoff_shared_secret:HANDOFF_SHARED_SECRET"
     "grafana_admin_password:GRAFANA_ADMIN_PASSWORD"
     "cloudflare_api_token:CLOUDFLARE_API_TOKEN"
+    "resend_api_key:RESEND_API_KEY"
 )
 
 echo "Fetching secrets from GCP Secret Manager..."

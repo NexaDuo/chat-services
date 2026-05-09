@@ -28,7 +28,6 @@ resource "coolify_service" "shared" {
       project_uuid,
       destination_uuid,
       environment_name,
-      compose,
     ]
   }
 }
@@ -85,7 +84,6 @@ resource "coolify_service" "chatwoot" {
       project_uuid,
       destination_uuid,
       environment_name,
-      compose,
     ]
   }
 }
@@ -188,7 +186,6 @@ resource "coolify_service" "dify" {
       project_uuid,
       destination_uuid,
       environment_name,
-      compose,
     ]
   }
 }
@@ -341,7 +338,6 @@ resource "coolify_service" "nexaduo" {
       project_uuid,
       destination_uuid,
       environment_name,
-      compose,
     ]
   }
 }
@@ -388,7 +384,7 @@ resource "coolify_service_envs" "nexaduo" {
     value = var.tz
   }
   env {
-    key        = "EVOLUTION_AUTHENTICATION_API_KEY"
+    key        = "EVOLUTION_API_KEY"
     value      = data.google_secret_manager_secret_version.evolution_authentication_api_key.secret_data
     is_literal = true
   }
@@ -406,7 +402,7 @@ resource "coolify_service_envs" "nexaduo" {
     value = "http://dify-api:5001/v1"
   }
   env {
-    key        = "HANDOFF_SHARED_SECRET"
+    key        = "HANDOFF_SECRET"
     value      = data.google_secret_manager_secret_version.handoff_shared_secret.secret_data
     is_literal = true
   }
@@ -419,7 +415,7 @@ resource "coolify_service_envs" "nexaduo" {
     value = var.grafana_admin_user
   }
   env {
-    key        = "GRAFANA_ADMIN_PASSWORD"
+    key        = "GRAFANA_PASSWORD"
     value      = data.google_secret_manager_secret_version.grafana_admin_password.secret_data
     is_literal = true
   }
@@ -428,12 +424,12 @@ resource "coolify_service_envs" "nexaduo" {
     value = "true"
   }
   env {
-    key        = "GF_AUTH_GOOGLE_CLIENT_ID"
+    key        = "GOOGLE_ID"
     value      = data.google_secret_manager_secret_version.google_oauth_client_id.secret_data
     is_literal = true
   }
   env {
-    key        = "GF_AUTH_GOOGLE_CLIENT_SECRET"
+    key        = "GOOGLE_SECRET"
     value      = data.google_secret_manager_secret_version.google_oauth_client_secret.secret_data
     is_literal = true
   }

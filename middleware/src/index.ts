@@ -1,5 +1,6 @@
 import Fastify from "fastify";
 import sensible from "@fastify/sensible";
+import pg from "pg";
 import { loadConfig } from "./config.js";
 import { buildFastifyLoggerConfig } from "./logger.js";
 import { createMetrics } from "./metrics.js";
@@ -28,6 +29,7 @@ async function main(): Promise<void> {
     trustProxy: true,
   });
 
+  const pool = new pg.Pool({ connectionString: config.databaseUrl });
   const metrics = createMetrics();
   const chatwoot = new ChatwootClient(
     config.chatwoot.baseUrl,
@@ -38,15 +40,16 @@ async function main(): Promise<void> {
   await app.register(sensible);
 
   await registerHealthRoutes(app, metrics);
-  await registerChatwootWebhookRoute(app, config, metrics, chatwoot);
+  await registerChatwootWebhookRoute(app, config, metrics, chatwoot, pool);
   await registerHandoffRoute(app, config, metrics, chatwoot);
   await registerConfigRoute(app, config);
-  await registerTenantRoute(app, config);
+  await registerTenantRoute(app, config, pool);
 
   const shutdown = async (signal: string): Promise<void> => {
     app.log.info({ signal }, "middleware: shutting down");
     try {
       await app.close();
+      await pool.end();
       process.exit(0);
     } catch (err) {
       app.log.error({ err }, "middleware: error during shutdown");

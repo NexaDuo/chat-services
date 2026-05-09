@@ -33,13 +33,25 @@ schema_config:
         prefix: index_
         period: 24h
 
-# Retenção de logs (30 dias)
 limits_config:
   retention_period: 720h
   reject_old_samples: true
-  reject_old_samples_max_age: 168h
+  reject_old_samples_max_age: 336h
   max_cache_freshness_per_query: 10m
   split_queries_by_interval: 15m
+  allow_structured_metadata: true
+
+ingester:
+  lifecycler:
+    join_after: 0s
+    min_ready_duration: 0s
+    final_sleep: 0s
+    ring:
+      kvstore:
+        store: inmemory
+      replication_factor: 1
+  chunk_idle_period: 1m
+  chunk_retain_period: 30s
 
 table_manager:
   retention_deletes_enabled: true

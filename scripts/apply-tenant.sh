@@ -4,13 +4,6 @@
 # Runs `terraform apply` in the tenant layer with a retry loop that works
 # around the Coolify `coolify_service_envs` 409-on-create issue.
 #
-# Flow:
-#   1. terraform apply
-#   2. If apply fails with a 409 on `coolify_service_envs.*`, run
-#      `clean-service-envs.sh` to wipe auto-populated envs on every service
-#      currently in state, then apply again.
-#   3. Repeat until apply succeeds or MAX_ATTEMPTS is reached.
-#
 # Usage:
 #   ./scripts/apply-tenant.sh
 
@@ -57,6 +50,19 @@ redeploy_services() {
   done
 }
 
+# Pre-deploy: Ensure permissions are correct on the VM
+fix_permissions() {
+  # Get VM info from tfvars
+  local VM_NAME ZONE SSH_USER
+  VM_NAME=$(grep "app_name" "${TFVARS}" | cut -d'"' -f2)
+  ZONE=$(grep "gcp_region" "${TFVARS}" | cut -d'"' -f2)-b
+  SSH_USER=$(grep "ssh_user" "${TFVARS}" | cut -d'"' -f2)
+
+  echo "=== Fixing directory permissions on VM ($VM_NAME) ==="
+  gcloud compute ssh "${SSH_USER}@${VM_NAME}" --project="${PROJECT_ID}" --zone="${ZONE}" --tunnel-through-iap \
+    --command "sudo chown -R 9999:9999 /data/coolify && sudo chmod -R 775 /data/coolify"
+}
+
 cd "${TENANT_DIR}"
 
 if [[ ! -d .terraform ]]; then
@@ -70,6 +76,7 @@ trap 'rm -f "${LOG}"' EXIT
 
 for attempt in $(seq 1 "${MAX_ATTEMPTS}"); do
   echo "=== terraform apply (attempt ${attempt}/${MAX_ATTEMPTS}) ==="
+  fix_permissions
   if terraform apply -auto-approve -var-file="${TFVARS}" 2>&1 | tee "${LOG}"; then
     echo "Tenant apply complete."
     redeploy_services

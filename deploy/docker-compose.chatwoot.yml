@@ -1,35 +1,26 @@
 services:
   chatwoot-init:
     image: chatwoot/chatwoot:v4.13.0-ce
-    container_name: nexaduo-chatwoot-init
     restart: "no"
     environment:
-      NODE_ENV: production
       RAILS_ENV: production
-      INSTALLATION_ENV: docker
-      SECRET_KEY_BASE: ${CHATWOOT_SECRET_KEY_BASE}
-      FRONTEND_URL: ${CHATWOOT_FRONTEND_URL}
-      POSTGRES_HOST: ${POSTGRES_HOST:-postgres}
-      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
-      POSTGRES_USERNAME: ${POSTGRES_USER}
+      POSTGRES_HOST: postgres
+      POSTGRES_USERNAME: postgres
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DATABASE: chatwoot
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/1
-      GOOGLE_OAUTH_CLIENT_ID: ${GOOGLE_OAUTH_CLIENT_ID}
-      GOOGLE_OAUTH_CLIENT_SECRET: ${GOOGLE_OAUTH_CLIENT_SECRET}
-      GOOGLE_OAUTH_CALLBACK_URL: ${CHATWOOT_FRONTEND_URL}/omniauth/google_oauth2/callback
+      SECRET_KEY_BASE: ${CHATWOOT_SECRET_KEY_BASE}
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
         set -e
-        echo "==> Running db:chatwoot_prepare (idempotent)";
-        bundle exec rails db:chatwoot_prepare;
+        echo "==> Running db:prepare (idempotent)";
+        bundle exec rails db:prepare;
         echo "==> Chatwoot DB ready.";
     networks:
       - chat-network
   chatwoot-rails:
     image: chatwoot/chatwoot:v4.13.0-ce
-    container_name: nexaduo-chatwoot-rails
     restart: unless-stopped
     depends_on:
       chatwoot-init:
@@ -39,17 +30,22 @@ services:
       RAILS_ENV: production
       INSTALLATION_ENV: docker
       SECRET_KEY_BASE: ${CHATWOOT_SECRET_KEY_BASE}
-      FRONTEND_URL: ${CHATWOOT_FRONTEND_URL}
-      POSTGRES_HOST: ${POSTGRES_HOST:-postgres}
-      POSTGRES_USERNAME: ${POSTGRES_USER}
+      FRONTEND_URL: https://chat.nexaduo.com
+      POSTGRES_HOST: postgres
+      POSTGRES_USERNAME: postgres
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DATABASE: chatwoot
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/1
+      CHATWOOT_FORCE_SSL: "false"
+      FORCE_SSL: "false"
       GOOGLE_OAUTH_CLIENT_ID: ${GOOGLE_OAUTH_CLIENT_ID}
       GOOGLE_OAUTH_CLIENT_SECRET: ${GOOGLE_OAUTH_CLIENT_SECRET}
-      GOOGLE_OAUTH_CALLBACK_URL: ${CHATWOOT_FRONTEND_URL}/omniauth/google_oauth2/callback
-    ports:
-      - "3000:3000"
+      GOOGLE_OAUTH_CALLBACK_URL: https://chat.nexaduo.com/omniauth/google_oauth2/callback
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.chatwoot.rule=Host(`chat.nexaduo.com`)"
+      - "traefik.http.routers.chatwoot.entrypoints=http"
+      - "traefik.http.services.chatwoot.loadbalancer.server.port=3000"
     volumes:
       - chatwoot-storage:/app/storage
       - chatwoot-public:/app/public
@@ -65,23 +61,16 @@ services:
       - chat-network
   chatwoot-sidekiq:
     image: chatwoot/chatwoot:v4.13.0-ce
-    container_name: nexaduo-chatwoot-sidekiq
     restart: unless-stopped
-    depends_on:
-      - chatwoot-rails
     environment:
-      NODE_ENV: production
       RAILS_ENV: production
       INSTALLATION_ENV: docker
       SECRET_KEY_BASE: ${CHATWOOT_SECRET_KEY_BASE}
-      POSTGRES_HOST: ${POSTGRES_HOST:-postgres}
-      POSTGRES_USERNAME: ${POSTGRES_USER}
+      POSTGRES_HOST: postgres
+      POSTGRES_USERNAME: postgres
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DATABASE: chatwoot
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/1
-      GOOGLE_OAUTH_CLIENT_ID: ${GOOGLE_OAUTH_CLIENT_ID}
-      GOOGLE_OAUTH_CLIENT_SECRET: ${GOOGLE_OAUTH_CLIENT_SECRET}
-      GOOGLE_OAUTH_CALLBACK_URL: ${CHATWOOT_FRONTEND_URL}/omniauth/google_oauth2/callback
     volumes:
       - chatwoot-storage:/app/storage
       - chatwoot-public:/app/public

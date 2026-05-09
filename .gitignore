@@ -26,6 +26,8 @@ backups/
 # Local volumes / runtime data
 volumes/
 data/
+onboarding/*.png
+onboarding/test-results/
 
 # Logs
 *.log

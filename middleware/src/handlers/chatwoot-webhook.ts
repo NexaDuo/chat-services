@@ -54,9 +54,8 @@ export async function registerChatwootWebhookRoute(
   config: AppConfig,
   metrics: Metrics,
   chatwoot: ChatwootClient,
+  pool: pg.Pool,
 ): Promise<void> {
-  const pool = new pg.Pool({ connectionString: config.databaseUrl });
-
   app.post("/webhooks/chatwoot", async (req, reply) => {
     // 1. Authenticate webhook if token is configured
     if (config.chatwoot.webhookToken) {

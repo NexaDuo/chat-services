@@ -1,0 +1,39 @@
+http:
+  middlewares:
+    force-https-header:
+      headers:
+        customRequestHeaders:
+          X-Forwarded-Proto: "https"
+          X-Forwarded-Port: "443"
+  routers:
+    coolify-http-fix:
+      entryPoints: [http, https]
+      service: coolify
+      rule: Host(`coolify.nexaduo.com`)
+      priority: 30
+      middlewares:
+        - force-https-header
+    # Explicitly handle realtime and terminal with high priority and BOTH entrypoints
+    coolify-realtime-fix:
+      entryPoints: [http, https]
+      service: coolify-realtime
+      rule: Host(`coolify.nexaduo.com`) && PathPrefix(`/app`)
+      priority: 2100
+    coolify-terminal-fix:
+      entryPoints: [http, https]
+      service: coolify-terminal
+      rule: Host(`coolify.nexaduo.com`) && PathPrefix(`/terminal/ws`)
+      priority: 2100
+  services:
+    coolify:
+      loadBalancer:
+        servers:
+          - url: "http://coolify:8080"
+    coolify-realtime:
+      loadBalancer:
+        servers:
+          - url: "http://coolify-realtime:6001"
+    coolify-terminal:
+      loadBalancer:
+        servers:
+          - url: "http://coolify-realtime:6002"

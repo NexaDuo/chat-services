@@ -138,4 +138,23 @@ The `SierraJC/coolify v0.10.2` provider returns 422 when attempting to update an
 
 ---
 
-*Last updated: 2026-04-19*
+## Recurring Issue: Traefik Redirect Loop & SSL Errors
+
+### Problem
+Accessing `coolify.nexaduo.com` (or other services) results in an infinite redirect loop (HTTP 302) or SSL certificate errors, even when containers are healthy.
+
+### Root Cause
+Coolify occasionally regenerates its internal Traefik configuration (`/data/coolify/proxy/dynamic/coolify.yaml`), re-enabling two problematic settings:
+1. **`redirect-to-https` middleware:** Conflicts with Cloudflare Tunnel (which terminates SSL and talks HTTP to the VM).
+2. **`certresolver: letsencrypt`:** Attempts to use a non-existent SSL resolver, flooding logs with errors.
+
+### Immediate Fix
+Run the following surgical command on the VM (via SSH/IAP) to strip out the problematic lines:
+
+```bash
+sudo sed -i '/- redirect-to-https/d' /data/coolify/proxy/dynamic/coolify.yaml && \
+sudo sed -i '/certresolver: letsencrypt/d' /data/coolify/proxy/dynamic/coolify.yaml
+```
+
+*Last updated: 2026-05-07*
+
