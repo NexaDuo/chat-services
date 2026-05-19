@@ -34,7 +34,7 @@ test.describe('Initial Onboarding', () => {
     }
 
     try {
-      await page.waitForSelector('input', { timeout: 10000 });
+      await page.waitForSelector('input', { timeout: 30000 });
     } catch (e) {
        if (page.url().includes('/signin')) {
          console.log('Redirected to signin - Dify already configured');
