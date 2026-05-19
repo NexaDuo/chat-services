@@ -2,15 +2,19 @@
   "name": "chat-services-root",
   "version": "1.0.0",
   "private": true,
+  "type": "module",
   "scripts": {
-    "tenants:sync": "tsx scripts/sync-tenants.ts"
+    "tenants:sync": "tsx scripts/sync-tenants.ts",
+    "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
-    "tsx": "^4.19.3",
-    "yaml": "^2.7.0",
-    "pg": "^8.13.3",
+    "@types/node": "^22.13.5",
+    "@types/pg": "^8.20.0",
+    "axios": "^1.7.9",
     "dotenv": "^16.4.7",
-    "@types/pg": "^8.11.11",
-    "@types/node": "^22.13.5"
+    "pg": "^8.13.3",
+    "tsx": "^4.19.3",
+    "typescript": "^5.7.3",
+    "yaml": "^2.7.0"
   }
 }
