@@ -36,7 +36,7 @@ export async function registerTenantRoute(
 
     try {
       const result = await pool.query(
-        "SELECT chatwoot_account_id FROM tenants WHERE subdomain = $1",
+        "SELECT chatwoot_account_id, infra_type, chatwoot_url, dify_url FROM tenants WHERE subdomain = $1",
         [subdomain]
       );
       
@@ -44,9 +44,15 @@ export async function registerTenantRoute(
         return reply.code(404).send({ error: "tenant_not_found" });
       }
 
+      const row = result.rows[0];
       return reply.code(200).send({
         subdomain,
-        accountId: result.rows[0].chatwoot_account_id,
+        accountId: row.chatwoot_account_id,
+        infraType: row.infra_type,
+        overrides: {
+          chatwootUrl: row.chatwoot_url,
+          difyUrl: row.dify_url
+        }
       });
     } catch (err) {
       app.log.error({ err, subdomain }, "Failed to fetch tenant from database");
