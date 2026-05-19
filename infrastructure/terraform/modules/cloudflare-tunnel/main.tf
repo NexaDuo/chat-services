@@ -65,6 +65,14 @@ resource "cloudflare_zero_trust_tunnel_cloudflared_config" "config" {
       service  = "http://coolify-proxy:80"
     }
     ingress_rule {
+      hostname = "evolution.${var.base_domain}"
+      service  = "http://coolify-proxy:80"
+    }
+    ingress_rule {
+      hostname = "middleware.${var.base_domain}"
+      service  = "http://coolify-proxy:80"
+    }
+    ingress_rule {
       service = "http_status:404"
     }
   }
