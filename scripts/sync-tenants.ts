@@ -7,6 +7,44 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
+/**
+ * Redacts sensitive information from strings before logging.
+ */
+function maskSensitiveData(text: string): string {
+  if (!text) return text;
+  let masked = text;
+  const dbUrl = process.env.DATABASE_URL;
+  if (dbUrl && dbUrl.length > 5) {
+    masked = masked.split(dbUrl).join('[DATABASE_URL_REDACTED]');
+    try {
+      const url = new URL(dbUrl);
+      if (url.password) {
+        masked = masked.split(url.password).join('[PASSWORD_REDACTED]');
+      }
+    } catch {
+      // Not a valid URL, ignore password masking
+    }
+  }
+  return masked;
+}
+
+/**
+ * Safe logging wrapper.
+ */
+const logger = {
+  log: (message: string) => {
+    console.log(maskSensitiveData(message));
+  },
+  error: (message: string, error?: any) => {
+    let output = maskSensitiveData(message);
+    if (error) {
+      const errorMsg = error.stack || error.message || String(error);
+      output += `\n${maskSensitiveData(errorMsg)}`;
+    }
+    console.error(output);
+  }
+};
+
 interface TenantConfig {
   slug: string;
   name: string;
@@ -29,7 +67,7 @@ interface TenantsYaml {
 }
 
 async function syncDatabase(pool: Pool, tenants: TenantConfig[]) {
-  console.log('Syncing database...');
+  logger.log('Syncing database...');
   for (const tenant of tenants) {
     // Note: 'subdomain' is required in the schema (middleware database)
     // We use 'slug' as the 'subdomain' as it is the primary identifier.
@@ -57,26 +95,29 @@ async function syncDatabase(pool: Pool, tenants: TenantConfig[]) {
       tenant.infra?.dify_url || null
     ];
     await pool.query(query, values);
-    console.log(`✅ Synced DB: ${tenant.slug}`);
+    logger.log(`✅ Synced DB: ${tenant.slug}`);
   }
 }
 
 function syncSecrets(projectId: string, tenants: TenantConfig[]) {
-  console.log(`Syncing GCP Secrets for project: ${projectId}...`);
+  logger.log(`Syncing GCP Secrets for project: ${projectId}...`);
   for (const tenant of tenants) {
     const secretName = `TENANT_${tenant.slug.toUpperCase().replace(/-/g, '_')}_API_KEY`;
     try {
       execSync(`gcloud secrets describe ${secretName} --project=${projectId}`, { stdio: 'ignore' });
-      console.log(`✅ Secret exists: ${secretName}`);
+      logger.log(`✅ Secret exists: ${secretName}`);
     } catch {
-      console.log(`Creating secret: ${secretName}...`);
+      logger.log(`Creating secret: ${secretName}...`);
       try {
-        execSync(`gcloud secrets create ${secretName} --replication-policy="automatic" --project=${projectId}`);
-        // Add a placeholder version
-        execSync(`echo -n "placeholder-key" | gcloud secrets versions add ${secretName} --data-file=- --project=${projectId}`);
-        console.log(`✅ Created secret: ${secretName}`);
+        execSync(`gcloud secrets create ${secretName} --replication-policy="automatic" --project=${projectId}`, { stdio: 'ignore' });
+        // Add a placeholder version using input to avoid echoing secrets in logs
+        execSync(`gcloud secrets versions add ${secretName} --data-file=- --project=${projectId}`, {
+          input: "placeholder-key",
+          stdio: ['pipe', 'ignore', 'ignore']
+        });
+        logger.log(`✅ Created secret: ${secretName}`);
       } catch (err: any) {
-        console.error(`❌ Failed to create secret ${secretName}: ${err.message}`);
+        logger.error(`❌ Failed to create secret ${secretName}`, err);
       }
     }
   }
@@ -85,7 +126,7 @@ function syncSecrets(projectId: string, tenants: TenantConfig[]) {
 async function main() {
   const yamlPath = path.resolve(process.cwd(), 'tenants.yaml');
   if (!fs.existsSync(yamlPath)) {
-    console.error(`Error: tenants.yaml not found at ${yamlPath}`);
+    logger.error(`Error: tenants.yaml not found at ${yamlPath}`);
     process.exit(1);
   }
   
@@ -94,7 +135,7 @@ async function main() {
   
   const connectionString = process.env.DATABASE_URL;
   if (!connectionString) {
-    console.error('Error: DATABASE_URL environment variable is not set');
+    logger.error('Error: DATABASE_URL environment variable is not set');
     process.exit(1);
   }
 
@@ -103,9 +144,9 @@ async function main() {
   try {
     await syncDatabase(pool, config.tenants);
     syncSecrets(config.global.gcp_project_id, config.tenants);
-    console.log('Tenant sync completed successfully.');
+    logger.log('Tenant sync completed successfully.');
   } catch (error) {
-    console.error('Error during sync process:', error);
+    logger.error('Error during sync process:', error);
     process.exit(1);
   } finally {
     await pool.end();
@@ -113,6 +154,6 @@ async function main() {
 }
 
 main().catch(err => {
-  console.error('Unhandled error:', err);
+  logger.error('Unhandled error:', err);
   process.exit(1);
 });
