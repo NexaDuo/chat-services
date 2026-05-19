@@ -132,19 +132,26 @@ $token = $user->tokens()->create([
     "abilities" => ["*"],
     "team_id" => $team->id,
 ]);
-print($token->id . "|" . $plainToken);
+print("BOOTSTRAP_RESULT:" . $token->id . "|" . $plainToken);
 PHP
 )
 TINKER_CMD="${TINKER_CMD//__EMAIL__/${DEFAULT_EMAIL}}"
 TINKER_CMD="${TINKER_CMD//__PASSWORD__/${DEFAULT_PASSWORD}}"
 
-COOLIFY_TOKEN=$(gcloud compute ssh "$SSH_USER@$VM_NAME" \
+COOLIFY_RAW_OUTPUT=$(gcloud compute ssh "$SSH_USER@$VM_NAME" \
   --project "$PROJECT_ID" \
   --zone "$ZONE" \
   --tunnel-through-iap \
-  --command "sudo docker exec coolify php artisan tinker --execute '$TINKER_CMD'" 2>/dev/null)
+  --quiet \
+  --command "sudo docker exec coolify php artisan tinker --execute '$TINKER_CMD'")
 
-COOLIFY_TOKEN=$(echo "$COOLIFY_TOKEN" | grep -v "WARNING" | grep -v "To increase" | grep -v "please see" | xargs)
+COOLIFY_TOKEN=$(echo "$COOLIFY_RAW_OUTPUT" | grep "BOOTSTRAP_RESULT:" | sed 's/BOOTSTRAP_RESULT://' | tr -d '\r' | tr -d '\n')
+
+if [ -z "$COOLIFY_TOKEN" ]; then
+  echo "Error: Failed to generate Coolify API token. Raw output:"
+  echo "$COOLIFY_RAW_OUTPUT"
+  exit 1
+fi
 echo "Token generated successfully (hidden)."
 
 # 3b. Authorize Coolify SSH key and fix group permissions
@@ -174,15 +181,22 @@ if (!$dest) {
     $dest->server_id = 0;
     $dest->save();
 }
-print($dest->uuid);
+print("DEST_RESULT:" . $dest->uuid);
 '
-DESTINATION_UUID=$(gcloud compute ssh "$SSH_USER@$VM_NAME" \
+DESTINATION_RAW_OUTPUT=$(gcloud compute ssh "$SSH_USER@$VM_NAME" \
   --project "$PROJECT_ID" \
   --zone "$ZONE" \
   --tunnel-through-iap \
-  --command "sudo docker exec coolify php artisan tinker --execute '$DEST_TINKER_CMD'" 2>/dev/null)
+  --quiet \
+  --command "sudo docker exec coolify php artisan tinker --execute '$DEST_TINKER_CMD'")
 
-DESTINATION_UUID=$(echo "$DESTINATION_UUID" | grep -v "WARNING" | grep -v "To increase" | grep -v "please see" | xargs)
+DESTINATION_UUID=$(echo "$DESTINATION_RAW_OUTPUT" | grep "DEST_RESULT:" | sed 's/DEST_RESULT://' | tr -d '\r' | tr -d '\n')
+
+if [ -z "$DESTINATION_UUID" ]; then
+  echo "Error: Failed to get Destination UUID. Raw output:"
+  echo "$DESTINATION_RAW_OUTPUT"
+  exit 1
+fi
 echo "Destination UUID: $DESTINATION_UUID"
 
 # 5. Update Secret Manager
