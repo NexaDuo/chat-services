@@ -413,8 +413,8 @@ jobs:
       - name: Run Playwright OAuth checks
         working-directory: onboarding
         env:
-          BASE_URL_CHATWOOT: https://chat.${{ env.BASE_DOMAIN }}
-          BASE_URL_DIFY: https://dify.${{ env.BASE_DOMAIN }}
+          CHATWOOT_URL: https://chat.${{ env.BASE_DOMAIN }}
+          DIFY_URL: https://dify.${{ env.BASE_DOMAIN }}
         run: npx playwright test 04-oauth.spec.ts
 
       - uses: actions/upload-artifact@v4

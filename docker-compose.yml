@@ -93,6 +93,8 @@ services:
       - ${PWD}/observability/promtail/promtail.yaml:/etc/promtail/promtail.yaml:ro
 
   grafana:
+    ports:
+      - "3002:3000"
     volumes:
       - ${PWD}/observability/grafana/provisioning:/etc/grafana/provisioning:ro
 
