@@ -21,6 +21,7 @@ on:
         options:
           - validate          # public smoke checks; no writes
           - routes            # refresh Traefik proxy routes (fast, no terraform)
+          - sync              # synchronize tenants from tenants.yaml to DB
           - tenant            # terraform apply tenant (Coolify services + envs)
           - build-images      # build & push middleware/self-healing images
           - bootstrap         # bootstrap-coolify.sh (installs Coolify on the VM)
@@ -329,14 +330,66 @@ jobs:
         run: echo "::notice::dry_run=true; skipping refresh-coolify-routes.sh."
 
   # -----------------------------------------------------------------------
-  # onboarding: create initial admins (idempotent; safe on re-runs)
+  # sync: synchronize tenants from tenants.yaml to Postgres
   # -----------------------------------------------------------------------
-  onboarding:
+  sync:
     needs: [routes]
     if: |
       always() &&
-      (inputs.segment == 'onboarding' ||
+      (inputs.segment == 'sync' ||
        (inputs.segment == 'all' && (needs.routes.result == 'success' || needs.routes.result == 'skipped')))
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOYER_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Fetch and mask secrets
+        id: secrets
+        run: |
+          DB_URL=$(gcloud secrets versions access latest --secret=production_database_url --project="${{ env.PROJECT_ID }}")
+          echo "::add-mask::$DB_URL"
+          echo "database_url=$DB_URL" >> "$GITHUB_OUTPUT"
+
+          HANDOFF_SECRET=$(gcloud secrets versions access latest --secret=handoff_shared_secret --project="${{ env.PROJECT_ID }}")
+          echo "::add-mask::$HANDOFF_SECRET"
+          echo "handoff_secret=$HANDOFF_SECRET" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Sync tenants
+        if: inputs.dry_run == false
+        env:
+          DATABASE_URL: ${{ steps.secrets.outputs.database_url }}
+          HANDOFF_SHARED_SECRET: ${{ steps.secrets.outputs.handoff_secret }}
+        run: npm run tenants:sync
+
+      - name: Dry-run note
+        if: inputs.dry_run == true
+        run: echo "::notice::dry_run=true; skipping tenants:sync."
+
+  # -----------------------------------------------------------------------
+  # onboarding: create initial admins (idempotent; safe on re-runs)
+  # -----------------------------------------------------------------------
+  onboarding:
+    needs: [sync]
+    if: |
+      always() &&
+      (inputs.segment == 'onboarding' ||
+       (inputs.segment == 'all' && (needs.sync.result == 'success' || needs.sync.result == 'skipped')))
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
