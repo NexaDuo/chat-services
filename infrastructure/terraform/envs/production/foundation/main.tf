@@ -39,6 +39,33 @@ module "dns_grafana" {
   proxied = true
 }
 
+module "dns_evolution" {
+  source = "../../../modules/cloudflare-dns"
+
+  zone_id = var.cloudflare_zone_id
+  name    = "evolution"
+  value   = "${module.tunnel.tunnel_id}.cfargotunnel.com"
+  proxied = true
+}
+
+module "dns_middleware" {
+  source = "../../../modules/cloudflare-dns"
+
+  zone_id = var.cloudflare_zone_id
+  name    = "middleware"
+  value   = "${module.tunnel.tunnel_id}.cfargotunnel.com"
+  proxied = true
+}
+
+module "dns_coolify" {
+  source = "../../../modules/cloudflare-dns"
+
+  zone_id = var.cloudflare_zone_id
+  name    = "coolify"
+  value   = "${module.tunnel.tunnel_id}.cfargotunnel.com"
+  proxied = true
+}
+
 module "backup_storage" {
   source = "../../../modules/gcp-storage"
 
