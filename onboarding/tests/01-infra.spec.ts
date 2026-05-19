@@ -2,13 +2,14 @@ import { test, expect } from '@playwright/test';
 
 const CHATWOOT_URL = process.env.CHATWOOT_URL || 'http://localhost:3000';
 const DIFY_URL = process.env.DIFY_URL || 'http://localhost:3001';
+const DIFY_API_URL = process.env.DIFY_API_URL || DIFY_URL; // Fallback to DIFY_URL if API_URL not set
 const GRAFANA_URL = process.env.GRAFANA_URL || 'http://localhost:3002';
 
 test.describe('Infrastructure Health', () => {
   const targets = [
     { name: 'Chatwoot', url: CHATWOOT_URL, path: '/' },
     { name: 'Dify Web', url: DIFY_URL, path: '/signin' },
-    { name: 'Dify API', url: DIFY_URL, path: '/console/api/setup' },
+    { name: 'Dify API', url: DIFY_API_URL, path: '/console/api/setup' },
     { name: 'Grafana', url: GRAFANA_URL, path: '/api/health' }
   ];
 

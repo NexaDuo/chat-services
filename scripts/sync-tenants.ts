@@ -143,7 +143,11 @@ async function main() {
   
   try {
     await syncDatabase(pool, config.tenants);
-    syncSecrets(config.global.gcp_project_id, config.tenants);
+    if (process.env.SKIP_GCP_SYNC === 'true') {
+      logger.log('Skipping GCP Secrets sync as requested.');
+    } else {
+      syncSecrets(config.global.gcp_project_id, config.tenants);
+    }
     logger.log('Tenant sync completed successfully.');
   } catch (error) {
     logger.error('Error during sync process:', error);
