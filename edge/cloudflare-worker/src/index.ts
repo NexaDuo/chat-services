@@ -9,9 +9,17 @@ type Bindings = {
 
 const app = new Hono<{ Bindings: Bindings }>()
 
-// Simple in-memory cache for slug -> accountId mappings
+type TenantData = {
+  accountId: string
+  overrides?: {
+    chatwootUrl?: string
+    difyUrl?: string
+  }
+}
+
+// Simple in-memory cache for slug -> tenant data mappings
 // Max size and TTL (10 minutes)
-const TENANT_CACHE = new Map<string, { accountId: string, expiresAt: number }>()
+const TENANT_CACHE = new Map<string, TenantData & { expiresAt: number }>()
 const CACHE_TTL_MS = 10 * 60 * 1000 // 10 minutes
 
 /**
@@ -36,13 +44,14 @@ class TenantRewriter {
 }
 
 /**
- * Resolve tenant slug to accountId via Middleware
+ * Resolve tenant slug to accountId and overrides via Middleware
  */
-async function resolveTenant(tenant: string, env: Bindings): Promise<string | null> {
+async function resolveTenant(tenant: string, env: Bindings): Promise<TenantData | null> {
   // 1. Check Cache
   const cached = TENANT_CACHE.get(tenant)
   if (cached && cached.expiresAt > Date.now()) {
-    return cached.accountId
+    const { expiresAt, ...data } = cached
+    return data
   }
 
   // 2. Fetch from Middleware
@@ -58,18 +67,29 @@ async function resolveTenant(tenant: string, env: Bindings): Promise<string | nu
       return null
     }
 
-    const data = await response.json() as { accountId: string }
-    const accountId = data.accountId
-
+    const data = await response.json() as TenantData
+    
     // 3. Update Cache
     TENANT_CACHE.set(tenant, {
-      accountId,
+      ...data,
       expiresAt: Date.now() + CACHE_TTL_MS
     })
 
-    return accountId
+    return data
   } catch (error) {
     console.error(`Error resolving tenant ${tenant}:`, error)
+    return null
+  }
+}
+
+/**
+ * Safely extract hostname from a URL string
+ */
+function getHostname(urlStr: string | undefined): string | null {
+  if (!urlStr) return null
+  try {
+    return new URL(urlStr).hostname
+  } catch (e) {
     return null
   }
 }
@@ -80,16 +100,19 @@ app.all('/:tenant/*', async (c) => {
   const url = new URL(c.req.url)
   const hostname = url.hostname
 
-  // 1. Resolve Tenant ID
-  const accountId = await resolveTenant(tenant, env)
-  if (!accountId) {
+  // 1. Resolve Tenant ID and Overrides
+  const tenantData = await resolveTenant(tenant, env)
+  if (!tenantData) {
     return c.text('Tenant not found', 404)
   }
+  const { accountId, overrides } = tenantData
 
   // 2. Determine Backend Origin
   let originHostname = env.CHAT_ORIGIN
   if (hostname.includes('dify')) {
-    originHostname = env.DIFY_ORIGIN
+    originHostname = getHostname(overrides?.difyUrl) || env.DIFY_ORIGIN
+  } else if (overrides?.chatwootUrl) {
+    originHostname = getHostname(overrides.chatwootUrl) || env.CHAT_ORIGIN
   }
 
   // 3. Handle WebSocket Upgrade
