@@ -99,6 +99,28 @@ gcloud secrets versions add terraform_tfvars_production \
   --project=$PROJECT
 ```
 
+### 5. Individual Secrets in Secret Manager
+
+The deployment workflow and runtime services depend on specific secrets being present in GCP Secret Manager (Project `nexaduo-492818`).
+
+| Secret Name | Purpose |
+|---|---|
+| `production_database_url` | Connection string for the production PostgreSQL instance. |
+| `handoff_shared_secret` | Shared secret for secure handoff between services. |
+
+To verify or create these secrets:
+
+```bash
+# List secrets to verify existence
+gcloud secrets list --project=nexaduo-492818
+
+# Create a secret if missing
+gcloud secrets create production_database_url --replication-policy=automatic --project=nexaduo-492818
+
+# Add a version (replace with real value)
+echo "your-secret-value" | gcloud secrets versions add production_database_url --data-file=- --project=nexaduo-492818
+```
+
 ## How to Run
 
 GitHub UI: **Actions** → **Deploy production (segmented)** → **Run workflow** → choose `segment` and `dry_run`.
