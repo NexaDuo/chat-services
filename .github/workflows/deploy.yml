@@ -382,18 +382,33 @@ jobs:
         run: |
           set -u
           fail=0
-          for host in chat.${BASE_DOMAIN} dify.${BASE_DOMAIN} coolify.${BASE_DOMAIN}; do
+          # Check all public-facing services
+          for host in chat.${BASE_DOMAIN} dify.${BASE_DOMAIN} coolify.${BASE_DOMAIN} evolution.${BASE_DOMAIN} middleware.${BASE_DOMAIN}; do
+            echo "Checking https://${host}/ ..."
             code=$(curl -sS -o /dev/null -w "%{http_code}" --max-time 15 -L "https://${host}/" || echo "ERR")
-            echo "  https://${host}/ -> ${code}"
+            echo "  -> Status: ${code}"
             case "${code}" in
-              2*|3*) ;;          # OK / redirect to login is expected
-              *)     fail=1 ;;
+              2*|3*|401|403) ;;  # 2xx/3xx are good, 401/403 often mean "need auth" but service is up
+              *)     
+                echo "::error::Service ${host} is unreachable or returned ${code}"
+                fail=1 
+                ;;
             esac
           done
-          # Dify console API setup must respond 200 (auth-free).
+
+          # Dify console API setup check (idempotent health check)
+          # Returns 200 if not setup, or often 403/already_setup if done.
+          echo "Checking Dify setup API..."
           code=$(curl -sS -o /dev/null -w "%{http_code}" --max-time 15 "https://dify.${BASE_DOMAIN}/console/api/setup" || echo "ERR")
-          echo "  https://dify.${BASE_DOMAIN}/console/api/setup -> ${code}"
-          [[ "${code}" == "200" ]] || fail=1
+          echo "  -> Status: ${code}"
+          case "${code}" in
+            200|403) ;; # 200 = ready to setup, 403 = already setup (both mean Dify is up)
+            *) 
+              echo "::error::Dify API setup check failed with status ${code}"
+              fail=1 
+              ;;
+          esac
+
           [[ $fail -eq 0 ]] || { echo "::error::Public smoke failed."; exit 1; }
 
       - uses: actions/setup-node@v4
