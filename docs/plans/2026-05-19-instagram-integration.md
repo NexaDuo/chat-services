@@ -1,40 +1,40 @@
-# Integração Instagram via Evolution API Implementation Plan
+# Instagram Integration via Evolution API Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Integrar o Instagram Direct Messages à stack NexaDuo utilizando a Evolution API v2 como bridge para o Chatwoot, permitindo que agentes de IA (Dify) respondam aos clientes.
+**Goal:** Integrate Instagram Direct Messages to the NexaDuo stack using Evolution API v2 as a bridge to Chatwoot, allowing AI agents (Dify) to respond to customers.
 
 **Architecture:** 
-1. **Evolution API**: Cria uma instância do tipo `instagram`.
-2. **Chatwoot**: Recebe as mensagens via "API Channel" (configurado automaticamente pela Evolution).
-3. **Middleware**: Recebe webhooks do Chatwoot e encaminha para o Dify.
-4. **Dify**: Processa a mensagem e retorna a resposta via Middleware -> Chatwoot -> Evolution -> Instagram.
+1. **Evolution API**: Creates an instance of type `instagram`.
+2. **Chatwoot**: Receives messages via "API Channel" (automatically configured by Evolution).
+3. **Middleware**: Receives webhooks from Chatwoot and forwards them to Dify.
+4. **Dify**: Processes the message and returns the response via Middleware -> Chatwoot -> Evolution -> Instagram.
 
 **Tech Stack:** Evolution API v2.1.1, Chatwoot v3+, Node.js (Middleware), Dify.
 
 ---
 
-### Task 1: Verificação de Infraestrutura
+### Task 1: Infrastructure Verification
 
 **Files:**
 - Modify: `.env` (verify variables)
 - Test: `scripts/health-check-all.sh`
 
-- [ ] **Step 1: Verificar se a Evolution API está rodando**
-Run: `curl -I http://localhost:8080/health` (ou URL pública se estiver em prod)
+- [ ] **Step 1: Verify if Evolution API is running**
+Run: `curl -I http://localhost:8080/health` (or public URL if in production)
 Expected: HTTP 200
 
-- [ ] **Step 2: Validar chaves de API no .env**
-Certifique-se de que `EVOLUTION_AUTHENTICATION_API_KEY` e `EVOLUTION_CHATWOOT_URL` estão corretos.
+- [ ] **Step 2: Validate API keys in .env**
+Ensure that `EVOLUTION_AUTHENTICATION_API_KEY` and `EVOLUTION_CHATWOOT_URL` are correct.
 
 ---
 
-### Task 2: Criação da Instância Instagram na Evolution API
+### Task 2: Create Instagram Instance in Evolution API
 
 **Files:**
 - Create: `scripts/provision-instagram.sh`
 
-- [ ] **Step 1: Criar script de provisionamento**
+- [ ] **Step 1: Create provisioning script**
 
 ```bash
 #!/usr/bin/env bash
@@ -76,46 +76,46 @@ curl --location "$EVO_URL/chatwoot/set/$INSTANCE_NAME" \
 }"
 ```
 
-- [ ] **Step 2: Dar permissão de execução**
+- [ ] **Step 2: Give execution permission**
 Run: `chmod +x scripts/provision-instagram.sh`
 
 ---
 
-### Task 3: Login e Conexão
+### Task 3: Login and Connection
 
-- [ ] **Step 1: Realizar o login no Instagram via Evolution API**
-A Evolution API para Instagram exige autenticação por usuário/senha ou via Manager (v2).
-Use o endpoint `/instance/connect/instagram` para realizar o login se necessário, ou use o Dashboard da Evolution se disponível.
+- [ ] **Step 1: Login to Instagram via Evolution API**
+The Evolution API for Instagram requires authentication via user/password or via Manager (v2).
+Use the endpoint `/instance/connect/instagram` to log in if necessary, or use the Evolution Dashboard if available.
 
 ---
 
-### Task 4: Provisionamento do Tenant no Middleware
+### Task 4: Tenant Provisioning in Middleware
 
 **Files:**
-- Modify: `middleware/tenants.json` (ou via CLI)
+- Modify: `middleware/tenants.json` (or via CLI)
 
-- [ ] **Step 1: Registrar o novo Account ID no Middleware**
-Run: `npm run provision-tenant -- --slug instagram-bot --account-id <ACCOUNT_ID>` (no diretório `provisioning`)
+- [ ] **Step 1: Register the new Account ID in Middleware**
+Run: `npm run provision-tenant -- --slug instagram-bot --account-id <ACCOUNT_ID>` (in `provisioning` directory)
 
-- [ ] **Step 2: Validar o mapeamento no .env (TENANT_MAP)**
-Se estiver usando `TENANT_MAP` em vez de DB, adicione a entrada correspondente.
+- [ ] **Step 2: Validate the mapping in .env (TENANT_MAP)**
+If using `TENANT_MAP` instead of DB, add the corresponding entry.
 
 ---
 
-### Task 5: Teste de ponta a ponta
+### Task 5: End-to-End Test
 
-- [ ] **Step 1: Enviar um Direct para o Instagram conectado**
-- [ ] **Step 2: Verificar no Chatwoot se a mensagem chegou**
-- [ ] **Step 3: Verificar nos logs do Middleware se o Dify foi acionado**
+- [ ] **Step 1: Send a Direct message to the connected Instagram**
+- [ ] **Step 2: Verify in Chatwoot if the message arrived**
+- [ ] **Step 3: Verify in Middleware logs if Dify was triggered**
 Run: `docker compose logs -f middleware`
-- [ ] **Step 4: Confirmar se a resposta da IA chegou ao Instagram**
+- [ ] **Step 4: Confirm if the AI response arrived on Instagram**
 
 ---
 
-### Task 6: Documentação
+### Task 6: Documentation
 
 **Files:**
 - Modify: `README.md`
 
-- [ ] **Step 1: Adicionar seção sobre Instagram no README**
-Documentar o uso do script `provision-instagram.sh`.
+- [ ] **Step 1: Add Instagram section to README**
+Document the usage of the `provision-instagram.sh` script.
