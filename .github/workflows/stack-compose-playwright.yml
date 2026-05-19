@@ -49,9 +49,9 @@ jobs:
           DIFY_SANDBOX_API_KEY=dummy-key
           DIFY_PLUGIN_DAEMON_KEY=dummy-key
           DIFY_PLUGIN_DIFY_INNER_API_KEY=dummy-key
-          DIFY_CONSOLE_API_URL=http://localhost:5001
-          DIFY_CONSOLE_WEB_URL=http://localhost:3001
-          DIFY_APP_API_URL=http://localhost:5001
+          DIFY_CONSOLE_API_URL=http://dify-api:5001
+          DIFY_CONSOLE_WEB_URL=http://dify-web:3000
+          DIFY_APP_API_URL=http://dify-api:5001
           MIDDLEWARE_IMAGE=ghcr.io/nexaduo/middleware:latest
           SELF_HEALING_IMAGE=ghcr.io/nexaduo/self-healing-agent:latest
           HANDOFF_SHARED_SECRET=ci-dummy-handoff-secret-32
