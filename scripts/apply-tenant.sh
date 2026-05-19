@@ -83,8 +83,8 @@ for attempt in $(seq 1 "${MAX_ATTEMPTS}"); do
     exit 0
   fi
 
-  if grep -q "409 Conflict creating service envs" "${LOG}"; then
-    echo "Detected 409 on service envs; cleaning auto-populated envs and retrying..."
+  if grep -qiE "409 Conflict|already exists" "${LOG}"; then
+    echo "Detected 409 conflict or existing resource; cleaning auto-populated envs and retrying..."
     "${PROJECT_ROOT}/scripts/clean-service-envs.sh"
     continue
   fi

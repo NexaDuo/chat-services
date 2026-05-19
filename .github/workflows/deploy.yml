@@ -276,8 +276,8 @@ jobs:
             rc=${PIPESTATUS[0]}
             echo "::endgroup::"
             [[ $rc -eq 0 ]] && exit 0
-            if grep -q "409 Conflict creating service envs" /tmp/tf-apply.log; then
-              echo "::warning::Detected Coolify 409 on service envs; cleaning auto-populated envs."
+            if grep -qiE "409 Conflict|already exists" /tmp/tf-apply.log; then
+              echo "::warning::Detected Coolify conflict on service envs; cleaning auto-populated envs."
               chmod +x ../../../../../scripts/clean-service-envs.sh
               ../../../../../scripts/clean-service-envs.sh
               # Re-plan after the clean to refresh state.
@@ -375,7 +375,29 @@ jobs:
         env:
           DATABASE_URL: ${{ steps.secrets.outputs.database_url }}
           HANDOFF_SHARED_SECRET: ${{ steps.secrets.outputs.handoff_secret }}
-        run: npm run tenants:sync
+        run: |
+          # The secret is likely 'postgresql://postgres:pass@localhost:5432/middleware'
+          # Establish tunnel to VM port 5432
+          echo "Establishing IAP tunnel..."
+          gcloud compute ssh "${{ env.VM_NAME }}" \
+            --project="${{ env.PROJECT_ID }}" \
+            --zone="${{ env.ZONE }}" \
+            --tunnel-through-iap \
+            -- -L 5432:localhost:5432 -N -f
+          
+          # Wait for tunnel
+          for i in $(seq 1 10); do
+            if nc -z localhost 5432; then
+              echo "Tunnel ready."
+              break
+            fi
+            sleep 2
+          done
+          
+          npm run tenants:sync
+          
+          # Cleanup
+          pkill -f "gcloud compute ssh.*-L 5432:localhost:5432" || true
 
       - name: Dry-run note
         if: inputs.dry_run == true
