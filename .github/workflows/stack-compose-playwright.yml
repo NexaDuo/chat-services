@@ -27,9 +27,9 @@ jobs:
           cache-dependency-path: onboarding/package-lock.json
 
       - name: Install dependencies
-        working-directory: onboarding
         run: |
           npm ci
+          cd onboarding && npm ci
           npx playwright install --with-deps chromium
 
       - name: Prepare .env for CI
@@ -108,7 +108,7 @@ jobs:
 
       - name: Sync tenants to CI database
         env:
-          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/middleware
+          DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/middleware
           SKIP_GCP_SYNC: 'true'
         run: npm run tenants:sync
 
