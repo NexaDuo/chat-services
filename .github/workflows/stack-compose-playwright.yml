@@ -32,6 +32,10 @@ jobs:
           cd onboarding && npm ci
           npx playwright install --with-deps chromium
 
+      - name: Setup hosts
+        run: |
+          sudo echo "127.0.0.1 dify-api dify-web chatwoot-rails middleware" | sudo tee -a /etc/hosts
+
       - name: Prepare .env for CI
         run: |
           cat > .env <<EOF
@@ -44,13 +48,13 @@ jobs:
           POSTGRES_PASSWORD=postgres
           REDIS_PASSWORD=redis
           CHATWOOT_SECRET_KEY_BASE=$(openssl rand -hex 32)
-          CHATWOOT_FRONTEND_URL=http://localhost:3000
+          CHATWOOT_FRONTEND_URL=http://chatwoot-rails:3000
           DIFY_SECRET_KEY=$(openssl rand -hex 32)
           DIFY_SANDBOX_API_KEY=dummy-key
           DIFY_PLUGIN_DAEMON_KEY=dummy-key
           DIFY_PLUGIN_DIFY_INNER_API_KEY=dummy-key
           DIFY_CONSOLE_API_URL=http://dify-api:5001
-          DIFY_CONSOLE_WEB_URL=http://dify-web:3000
+          DIFY_CONSOLE_WEB_URL=http://dify-web:3001
           DIFY_APP_API_URL=http://dify-api:5001
           MIDDLEWARE_IMAGE=ghcr.io/nexaduo/middleware:latest
           SELF_HEALING_IMAGE=ghcr.io/nexaduo/self-healing-agent:latest
@@ -79,28 +83,28 @@ jobs:
         # Poll until localhost:3000 returns a non-empty HTTP response.
         # Dify and Middleware also need time for migrations and boot.
         run: |
-          echo "Waiting for Chatwoot Rails (127.0.0.1:3000)..."
+          echo "Waiting for Chatwoot Rails (chatwoot-rails:3000)..."
           for i in $(seq 1 60); do
-            code=$(curl -sS -o /dev/null -w "%{http_code}" --max-time 5 http://127.0.0.1:3000/ 2>/dev/null || echo "000")
-            echo "  attempt ${i}/60: 127.0.0.1:3000 -> ${code}"
+            code=$(curl -sS -o /dev/null -w "%{http_code}" --max-time 5 http://chatwoot-rails:3000/ 2>/dev/null || echo "000")
+            echo "  attempt ${i}/60: chatwoot-rails:3000 -> ${code}"
             case "${code}" in 2*|3*|4*) echo "Chatwoot ready."; break ;; esac
             sleep 5
           done
           [[ "${code}" =~ ^[234] ]] || { echo "::error::Chatwoot did not become ready in time."; exit 1; }
 
-          echo "Waiting for Dify API (127.0.0.1:5001)..."
+          echo "Waiting for Dify API (dify-api:5001)..."
           for i in $(seq 1 60); do
-            code=$(curl -sS -o /dev/null -w "%{http_code}" --max-time 5 http://127.0.0.1:5001/console/api/setup 2>/dev/null || echo "000")
-            echo "  attempt ${i}/60: 127.0.0.1:5001 -> ${code}"
+            code=$(curl -sS -o /dev/null -w "%{http_code}" --max-time 5 http://dify-api:5001/console/api/setup 2>/dev/null || echo "000")
+            echo "  attempt ${i}/60: dify-api:5001 -> ${code}"
             case "${code}" in 2*|3*|4*) echo "Dify API ready."; break ;; esac
             sleep 5
           done
           [[ "${code}" =~ ^[234] ]] || { echo "::error::Dify API did not become ready in time."; exit 1; }
 
-          echo "Waiting for Middleware (/health at 127.0.0.1:4000)..."
+          echo "Waiting for Middleware (/health at middleware:4000)..."
           for i in $(seq 1 30); do
-            code=$(curl -sS -o /dev/null -w "%{http_code}" --max-time 5 http://127.0.0.1:4000/health 2>/dev/null || echo "000")
-            echo "  attempt ${i}/30: 127.0.0.1:4000/health -> ${code}"
+            code=$(curl -sS -o /dev/null -w "%{http_code}" --max-time 5 http://middleware:4000/health 2>/dev/null || echo "000")
+            echo "  attempt ${i}/30: middleware:4000/health -> ${code}"
             [[ "${code}" == "200" ]] && { echo "Middleware ready."; break; }
             sleep 5
           done
@@ -115,10 +119,10 @@ jobs:
       - name: Stage 1 - Infrastructure Health
         working-directory: onboarding
         env:
-          CHATWOOT_URL: http://127.0.0.1:3000
-          DIFY_URL: http://127.0.0.1:3001
-          DIFY_API_URL: http://127.0.0.1:5001
-          GRAFANA_URL: http://127.0.0.1:3002
+          CHATWOOT_URL: http://chatwoot-rails:3000
+          DIFY_URL: http://dify-web:3001
+          DIFY_API_URL: http://dify-api:5001
+          GRAFANA_URL: http://localhost:3002
         run: npx playwright test tests/01-infra.spec.ts
 
       - name: Stage 2 - Initial Onboarding (Setup)
@@ -126,8 +130,8 @@ jobs:
         env:
           ADMIN_EMAIL: alexandre@nexaduo.com
           ADMIN_PASSWORD: AdminPass123!
-          CHATWOOT_URL: http://127.0.0.1:3000
-          DIFY_URL: http://127.0.0.1:3001
+          CHATWOOT_URL: http://chatwoot-rails:3000
+          DIFY_URL: http://dify-web:3001
         run: npx playwright test tests/02-setup.spec.ts
 
       - name: Stage 3 - Functional Smoke Tests
@@ -135,15 +139,15 @@ jobs:
         env:
           ADMIN_EMAIL: alexandre@nexaduo.com
           ADMIN_PASSWORD: AdminPass123!
-          CHATWOOT_URL: http://127.0.0.1:3000
-          DIFY_URL: http://127.0.0.1:3001
-          GRAFANA_URL: http://127.0.0.1:3002
+          CHATWOOT_URL: http://chatwoot-rails:3000
+          DIFY_URL: http://dify-web:3001
+          GRAFANA_URL: http://localhost:3002
         run: npx playwright test tests/03-smoke.spec.ts
 
       - name: Stage 4 - Hybrid Tenant Resolution
         working-directory: onboarding
         env:
-          MIDDLEWARE_URL: http://127.0.0.1:4000
+          MIDDLEWARE_URL: http://middleware:4000
           HANDOFF_SHARED_SECRET: ci-dummy-handoff-secret-32
         run: npx playwright test tests/07-hybrid-tenants.spec.ts
 
