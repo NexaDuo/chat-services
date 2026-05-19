@@ -70,14 +70,7 @@ resource "cloudflare_zero_trust_tunnel_cloudflared_config" "config" {
   }
 }
 
-# CNAME para o painel do Coolify
-resource "cloudflare_record" "coolify_cname" {
-  zone_id = var.zone_id
-  name    = "coolify"
-  content = "${cloudflare_zero_trust_tunnel_cloudflared.main.id}.cfargotunnel.com"
-  type    = "CNAME"
-  proxied = var.proxied
-}
+# CNAME rules are now managed outside this module for consistency
 
 output "tunnel_id" {
   value = cloudflare_zero_trust_tunnel_cloudflared.main.id
