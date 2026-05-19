@@ -64,8 +64,14 @@ CREATE TABLE IF NOT EXISTS configs (
 
 CREATE TABLE IF NOT EXISTS tenants (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  slug TEXT UNIQUE,
   subdomain TEXT NOT NULL UNIQUE,
+  name TEXT,
   chatwoot_account_id TEXT NOT NULL,
+  status TEXT DEFAULT 'active',
+  infra_type TEXT DEFAULT 'shared',
+  chatwoot_url TEXT,
+  dify_url TEXT,
   dify_api_key TEXT,
   dify_app_type TEXT DEFAULT 'chatflow',
   created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,

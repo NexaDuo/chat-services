@@ -1,0 +1,22 @@
+# tenants.yaml
+global:
+  gcp_project_id: "nexaduo-492818"
+  base_domain: "nexaduo.com"
+  default_chatwoot_url: "https://chat.nexaduo.com"
+  default_dify_url: "https://dify.nexaduo.com"
+
+tenants:
+  - slug: nexaduo
+    name: NexaDuo Main
+    chatwoot_account_id: 1
+    status: active
+    # uses defaults
+
+  - slug: acme-dedicated
+    name: Acme Dedicated
+    chatwoot_account_id: 1
+    status: onboarding
+    infra:
+      type: dedicated
+      chatwoot_url: "https://chat.acme.com"
+      dify_url: "https://dify.acme.com"

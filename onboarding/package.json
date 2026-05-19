@@ -14,11 +14,12 @@
     "verify:grafana-access": "node verify-grafana-access.js"
   },
   "dependencies": {
+    "dotenv": "^16.4.5",
     "playwright": "^1.42.1",
-    "dotenv": "^16.4.5"
+    "yaml": "^2.9.0"
   },
   "devDependencies": {
-    "tsx": "^4.19.3",
-    "@playwright/test": "^1.42.1"
+    "@playwright/test": "^1.42.1",
+    "tsx": "^4.19.3"
   }
 }

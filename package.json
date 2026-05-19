@@ -1,0 +1,16 @@
+{
+  "name": "chat-services-root",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "tenants:sync": "tsx scripts/sync-tenants.ts"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.3",
+    "yaml": "^2.7.0",
+    "pg": "^8.13.3",
+    "dotenv": "^16.4.7",
+    "@types/pg": "^8.11.11",
+    "@types/node": "^22.13.5"
+  }
+}
