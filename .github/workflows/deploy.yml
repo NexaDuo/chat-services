@@ -289,6 +289,22 @@ jobs:
           done
           exit 1
 
+      - name: Redeploy services to pick up env vars
+        if: inputs.dry_run == false
+        run: |
+          url="$(gcloud secrets versions access latest --secret=coolify_url --project="${{ env.PROJECT_ID }}")"
+          token="$(gcloud secrets versions access latest --secret=coolify_api_token --project="${{ env.PROJECT_ID }}")"
+          base="${url%/api/v1}"
+          
+          echo "=== Re-deploying tenant services ==="
+          for svc in shared chatwoot dify nexaduo; do
+            uuid="$(cd infrastructure/terraform/envs/production/tenant && terraform state show "coolify_service.${svc}" 2>/dev/null \
+              | awk '/^    uuid /{gsub(/"/,""); print $3; exit}' || true)"
+            [[ -z "${uuid}" ]] && continue
+            echo "  deploying ${svc} (${uuid})..."
+            curl -sS -o /dev/null -X POST -H "Authorization: Bearer ${token}" "${base}/api/v1/deploy?uuid=${uuid}"
+          done
+
   # -----------------------------------------------------------------------
   # routes: refresh the Coolify proxy (Traefik) - fast, no terraform
   # -----------------------------------------------------------------------
