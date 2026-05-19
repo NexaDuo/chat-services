@@ -61,6 +61,13 @@ Access all services with the same credentials:
 | **Dify** | `http://localhost:3001` | `https://dify.nexaduo.com` |
 | **Grafana** | `http://localhost:3002` | `https://grafana.nexaduo.com` |
 
+### 4. Instagram Integration
+Para provisionar uma nova instância do Instagram Direct Messages:
+1. Garanta que a Evolution API e o Chatwoot estejam rodando.
+2. Execute o script: `./scripts/provision-instagram.sh <nome_instancia> <chatwoot_account_id>`
+3. Acesse o log da Evolution API para realizar o login via QR Code ou Pairing Code (ou utilize o dashboard se disponível).
+4. As mensagens começarão a chegar no Chatwoot no canal API correspondente.
+
 ## 🛠️ Stack Components
 
 *   **Runtime:** Node.js 22 (Fastify), Ruby on Rails (Chatwoot), Python (Dify).

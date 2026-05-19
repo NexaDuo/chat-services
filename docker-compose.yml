@@ -23,14 +23,22 @@
 
 services:
   # Local overrides to enforce cross-stack dependencies which Coolify ignores
-  chatwoot-init:
+  chatwoot-rails:
+    ports:
+      - "3000:3000"
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
 
+  dify-web:
+    ports:
+      - "3001:3000"
+
   dify-api:
+    ports:
+      - "5001:5001"
     depends_on:
       postgres:
         condition: service_healthy
@@ -44,6 +52,7 @@ services:
         condition: service_started
       dify-ssrf-proxy:
         condition: service_started
+
 
   dify-worker:
     depends_on:
@@ -60,6 +69,8 @@ services:
         condition: service_healthy
 
   evolution-api:
+    ports:
+      - "8080:8080"
     depends_on:
       postgres:
         condition: service_healthy
@@ -67,9 +78,33 @@ services:
         condition: service_healthy
 
   middleware:
+    ports:
+      - "4000:4000"
     depends_on:
       postgres:
         condition: service_healthy
+
+  loki:
+    volumes:
+      - ${PWD}/observability/loki/loki.yaml:/etc/loki/loki.yaml:ro
+  
+  promtail:
+    volumes:
+      - ${PWD}/observability/promtail/promtail.yaml:/etc/promtail/promtail.yaml:ro
+
+  grafana:
+    volumes:
+      - ${PWD}/observability/grafana/provisioning:/etc/grafana/provisioning:ro
+
+  prometheus:
+    volumes:
+      - ${PWD}/observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+
+  postgres:
+    ports:
+      - "5432:5432"
+    volumes:
+      - ${PWD}/infrastructure/postgres/01-init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
 
   self-healing-agent:
     depends_on:

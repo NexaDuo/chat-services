@@ -8,5 +8,9 @@
     "name": "NexaDuo Main",
     "slug": "nexaduo-main",
     "accountId": "1"
+  },
+  {
+    "slug": "instagram-bot",
+    "accountId": "1"
   }
 ]
