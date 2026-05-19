@@ -402,13 +402,18 @@ resource "coolify_service_envs" "nexaduo" {
     value = "http://dify-api:5001/v1"
   }
   env {
-    key        = "HANDOFF_SECRET"
+    key        = "HANDOFF_SHARED_SECRET"
     value      = data.google_secret_manager_secret_version.handoff_shared_secret.secret_data
     is_literal = true
   }
   env {
     key   = "HANDOFF_LABEL"
     value = "atendimento-humano"
+  }
+  env {
+    key        = "DATABASE_URL"
+    value      = "postgresql://postgres:${data.google_secret_manager_secret_version.postgres_password.secret_data}@postgres:5432/middleware"
+    is_literal = true
   }
   env {
     key   = "GRAFANA_ADMIN_USER"
