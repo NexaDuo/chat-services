@@ -40,9 +40,13 @@ local_code_for_host() {
 check_local_not_404() {
   local host="$1"
   local code
-  code="$(local_code_for_host "${host}")"
+  if [[ "${host}" == "middleware.${BASE_DOMAIN}" ]]; then
+    code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 15 -H "Host: ${host}" http://127.0.0.1/health || true)"
+  else
+    code="$(local_code_for_host "${host}")"
+  fi
   echo "Local Traefik ${host} -> HTTP ${code}"
-  [[ "${code}" != "404" ]]
+  [[ "${code}" != "404" && "${code}" != "000" ]]
 }
 
 check_local_dify_setup() {
@@ -228,7 +232,12 @@ check_public_not_404 "chat.${BASE_DOMAIN}"
 check_public_not_404 "dify.${BASE_DOMAIN}"
 check_public_not_404 "coolify.${BASE_DOMAIN}"
 check_public_not_404 "evolution.${BASE_DOMAIN}"
-check_public_not_404 "middleware.${BASE_DOMAIN}"
+
+echo "Checking Middleware health..."
+middleware_code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 "https://middleware.${BASE_DOMAIN}/health")"
+echo "Public middleware.${BASE_DOMAIN}/health -> HTTP ${middleware_code}"
+[[ "${middleware_code}" == "200" ]] || { echo "Middleware health check failing at edge." >&2; exit 1; }
+
 if [[ "${SKIP_GRAFANA}" != "true" ]]; then
   check_public_not_404 "grafana.${BASE_DOMAIN}"
 fi
