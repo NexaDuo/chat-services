@@ -474,7 +474,7 @@ jobs:
           set -u
           fail=0
           # Check all public-facing services
-          for host in chat.${BASE_DOMAIN} dify.${BASE_DOMAIN} coolify.${BASE_DOMAIN} evolution.${BASE_DOMAIN} middleware.${BASE_DOMAIN}; do
+          for host in chat.${BASE_DOMAIN} dify.${BASE_DOMAIN} coolify.${BASE_DOMAIN} evolution.${BASE_DOMAIN}; do
             echo "Checking https://${host}/ ..."
             code=$(curl -sS -o /dev/null -w "%{http_code}" --max-time 15 -L "https://${host}/" || echo "ERR")
             echo "  -> Status: ${code}"
@@ -486,6 +486,15 @@ jobs:
                 ;;
             esac
           done
+
+          # Middleware check (use /health because root is 404)
+          echo "Checking https://middleware.${BASE_DOMAIN}/health ..."
+          code=$(curl -sS -o /dev/null -w "%{http_code}" --max-time 15 -L "https://middleware.${BASE_DOMAIN}/health" || echo "ERR")
+          echo "  -> Status: ${code}"
+          if [[ "${code}" != "200" ]]; then
+            echo "::error::Service middleware.${BASE_DOMAIN} is unreachable or health check failed with status ${code}"
+            fail=1
+          fi
 
           # Dify console API setup check (idempotent health check)
           # Returns 200 if not setup, or often 403/already_setup if done.
