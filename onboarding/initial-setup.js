@@ -27,7 +27,7 @@ async function setupChatwoot() {
     if (page.url().includes('/login') || page.url().includes('/app/accounts')) {
       console.log('  - Chatwoot is already configured.');
       await browser.close();
-      return;
+      return true;
     }
 
     await page.fill('input[name="user[name]"]', 'NexaDuo Admin');
@@ -53,8 +53,10 @@ async function setupChatwoot() {
     // We wait for any URL change that suggests success
     await page.waitForURL(/\/(app|login|dashboard|accounts)/, { timeout: 30000 });
     console.log('OK Chatwoot Admin created successfully!');
+    return true;
   } catch (err) {
     console.error('FAIL Chatwoot Setup failed:', err.message);
+    return false;
   } finally {
     await browser.close();
   }
@@ -73,7 +75,7 @@ async function setupDify() {
     if (page.url().includes('/signin') || page.url().includes('/apps')) {
       console.log('  - Dify is already configured.');
       await browser.close();
-      return;
+      return true;
     }
 
     await page.waitForSelector('input', { timeout: 60000 });
@@ -93,8 +95,10 @@ async function setupDify() {
 
     await page.waitForURL(/\/(signin|apps)/, { timeout: 60000 });
     console.log('OK Dify Admin created successfully!');
+    return true;
   } catch (err) {
     console.error('FAIL Dify Setup failed:', err.message);
+    return false;
   } finally {
     await browser.close();
   }
@@ -102,9 +106,14 @@ async function setupDify() {
 
 async function run() {
   console.log('--- NexaDuo Stack Automation ---');
-  await setupChatwoot();
-  await setupDify();
+  const chatwootOk = await setupChatwoot();
+  const difyOk = await setupDify();
   console.log('---------------------------------');
+  
+  if (!chatwootOk || !difyOk) {
+    console.error('ERROR: One or more setup tasks failed.');
+    process.exit(1);
+  }
 }
 
 run();

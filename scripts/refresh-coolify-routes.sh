@@ -94,9 +94,11 @@ sudo docker restart coolify-proxy >/dev/null
 sleep 5
 
 need_fallback=0
-check_local_not_404 "chat.${BASE_DOMAIN}"   || need_fallback=1
-check_local_not_404 "dify.${BASE_DOMAIN}"   || need_fallback=1
-check_local_not_404 "coolify.${BASE_DOMAIN}" || need_fallback=1
+check_local_not_404 "chat.${BASE_DOMAIN}"       || need_fallback=1
+check_local_not_404 "dify.${BASE_DOMAIN}"       || need_fallback=1
+check_local_not_404 "coolify.${BASE_DOMAIN}"     || need_fallback=1
+check_local_not_404 "evolution.${BASE_DOMAIN}"   || need_fallback=1
+check_local_not_404 "middleware.${BASE_DOMAIN}"  || need_fallback=1
 check_local_dify_setup                       || need_fallback=1
 if [[ "${SKIP_GRAFANA}" != "true" ]]; then
   check_local_not_404 "grafana.${BASE_DOMAIN}" || need_fallback=1
@@ -108,9 +110,14 @@ if [[ "${need_fallback}" == "1" ]]; then
   chat_container="$(container_by_subname chatwoot-rails)"
   dify_container="$(container_by_subname dify-web)"
   dify_api_container="$(container_by_subname dify-api)"
+  evolution_container="$(container_by_subname evolution-api)"
+  middleware_container="$(container_by_subname middleware)"
+
   [[ -n "${chat_container}" ]] || { echo "chatwoot-rails container not found" >&2; exit 1; }
   [[ -n "${dify_container}" ]] || { echo "dify-web container not found" >&2; exit 1; }
   [[ -n "${dify_api_container}" ]] || { echo "dify-api container not found" >&2; exit 1; }
+  [[ -n "${evolution_container}" ]] || { echo "evolution-api container not found" >&2; exit 1; }
+  [[ -n "${middleware_container}" ]] || { echo "middleware container not found" >&2; exit 1; }
 
   # Grafana is opt-in: skip when SKIP_GRAFANA=true or its container is missing.
   grafana_container=""
@@ -162,6 +169,14 @@ http:
       rule: "Host(\`coolify.${BASE_DOMAIN}\`)"
       entryPoints: [http, https]
       service: nexaduo-coolify-svc
+    nexaduo-evolution:
+      rule: "Host(\`evolution.${BASE_DOMAIN}\`)"
+      entryPoints: [http, https]
+      service: nexaduo-evolution-svc
+    nexaduo-middleware:
+      rule: "Host(\`middleware.${BASE_DOMAIN}\`)"
+      entryPoints: [http, https]
+      service: nexaduo-middleware-svc
 ${grafana_router}
   services:
     nexaduo-chat-svc:
@@ -180,6 +195,14 @@ ${grafana_router}
       loadBalancer:
         servers:
           - url: "http://coolify:8080"
+    nexaduo-evolution-svc:
+      loadBalancer:
+        servers:
+          - url: "http://${evolution_container}:8080"
+    nexaduo-middleware-svc:
+      loadBalancer:
+        servers:
+          - url: "http://${middleware_container}:4000"
 ${grafana_service}
 EOF
   sudo install -o root -g root -m 0644 "${tmp_file}" /data/coolify/proxy/dynamic/nexaduo-routes.yaml
@@ -188,10 +211,12 @@ EOF
   sudo docker restart coolify-proxy >/dev/null
   sleep 5
 
-  check_local_not_404 "chat.${BASE_DOMAIN}"    || { echo "chat route still 404 after fallback." >&2; exit 1; }
-  check_local_not_404 "dify.${BASE_DOMAIN}"    || { echo "dify route still 404 after fallback." >&2; exit 1; }
-  check_local_not_404 "coolify.${BASE_DOMAIN}" || { echo "coolify route still 404 after fallback." >&2; exit 1; }
-  check_local_dify_setup                        || { echo "dify setup API still failing after fallback." >&2; exit 1; }
+  check_local_not_404 "chat.${BASE_DOMAIN}"       || { echo "chat route still 404 after fallback." >&2; exit 1; }
+  check_local_not_404 "dify.${BASE_DOMAIN}"       || { echo "dify route still 404 after fallback." >&2; exit 1; }
+  check_local_not_404 "coolify.${BASE_DOMAIN}"     || { echo "coolify route still 404 after fallback." >&2; exit 1; }
+  check_local_not_404 "evolution.${BASE_DOMAIN}"   || { echo "evolution route still 404 after fallback." >&2; exit 1; }
+  check_local_not_404 "middleware.${BASE_DOMAIN}"  || { echo "middleware route still 404 after fallback." >&2; exit 1; }
+  check_local_dify_setup                          || { echo "dify setup API still failing after fallback." >&2; exit 1; }
   if [[ "${SKIP_GRAFANA}" != "true" ]]; then
     check_local_not_404 "grafana.${BASE_DOMAIN}" || { echo "grafana route still 404 after fallback." >&2; exit 1; }
   fi
@@ -202,6 +227,8 @@ echo "Checking public domains..."
 check_public_not_404 "chat.${BASE_DOMAIN}"
 check_public_not_404 "dify.${BASE_DOMAIN}"
 check_public_not_404 "coolify.${BASE_DOMAIN}"
+check_public_not_404 "evolution.${BASE_DOMAIN}"
+check_public_not_404 "middleware.${BASE_DOMAIN}"
 if [[ "${SKIP_GRAFANA}" != "true" ]]; then
   check_public_not_404 "grafana.${BASE_DOMAIN}"
 fi
