@@ -146,3 +146,20 @@ resource "google_compute_instance" "vm" {
 output "public_ip" {
   value = google_compute_address.static_ip.address
 }
+
+resource "google_compute_disk" "postgres_disk" {
+  name  = "${var.name}-postgres-disk"
+  type  = "pd-ssd"
+  zone  = var.zone
+  size  = var.disk_size
+  lifecycle {
+    prevent_destroy = true
+  }
+}
+
+resource "google_compute_attached_disk" "postgres_attached" {
+  device_name = "postgres-disk"
+  disk        = google_compute_disk.postgres_disk.id
+  instance    = google_compute_instance.vm.id
+}
+
