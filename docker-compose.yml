@@ -99,6 +99,7 @@ services:
   promtail:
     volumes:
       - ${PWD}/observability/promtail/promtail.yaml:/etc/promtail/promtail.yaml:ro
+      - promtail-data:/var/promtail
 
   grafana:
     ports:
@@ -120,3 +121,6 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+
+volumes:
+  promtail-data:
