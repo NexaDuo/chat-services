@@ -7,8 +7,8 @@ This directory contains utilities for management, deployment, and maintenance of
 ### `deploy-production.sh`
 The main orchestrator. Manages Terraform execution for the foundation and calls the bootstrap and application deployment scripts.
 
-### `deploy-tenant-direct.sh`
-The deployment engine for the application layer. Transfers `docker-compose.yml` and `.env` files (populated with GCP secrets) via SCP and executes the startup command via SSH on the VM.
+### `apply-tenant.sh`
+The deployment engine for the application layer. Runs `terraform apply` in the tenant layer with a retry loop that works around Coolify service envs 409 conflict issues and triggers service redeployments via Coolify API.
 
 ### `bootstrap-coolify.sh`
 Configures the newly created VM: installs Coolify, generates initial API tokens, and synchronizes necessary secrets to GCP Secret Manager.

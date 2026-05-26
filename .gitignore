@@ -8,6 +8,7 @@
 .agents/
 .claude/
 skills-lock.json
+.antigravitycli/
 
 # Node
 node_modules/
@@ -28,6 +29,7 @@ volumes/
 data/
 onboarding/*.png
 onboarding/test-results/
+test-results/
 
 # Logs
 *.log

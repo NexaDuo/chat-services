@@ -54,6 +54,7 @@ services:
       - /opt/nexaduo/observability/promtail/promtail.yaml:/etc/promtail/promtail.yaml:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - promtail-data:/var/promtail
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
     networks:
       - chat-network
   grafana:
