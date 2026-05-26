@@ -12,10 +12,10 @@ BASE="${URL%/api/v1}"
 
 # Mapping Service Names to Local Files and UUIDs
 declare -A SERVICES=(
-  ["shared"]="cptudr03mfpifug3rsdjet41"
-  ["chatwoot"]="rl3esrvnj7pfww9y25j8okhy"
-  ["dify"]="e2h1z9nbliudddkpuigs0igt"
-  ["nexaduo"]="kh0g7bovvsmtf9riyocndet3"
+  ["shared"]="b19ay7as9n0lgwq1nxm39z5q"
+  ["chatwoot"]="eclpweb8dog0qmg0jbok4lpt"
+  ["dify"]="x13ip0okvgohmencusvy7oki"
+  ["nexaduo"]="dsgwuwrdnmue9nhdkeovb6tx"
 )
 
 # Upload PHP helper
@@ -31,12 +31,15 @@ for name in "${!SERVICES[@]}"; do
   
   echo "=== Syncing ${name} (${uuid}) ==="
   
-  # Send compose file content via stdin to a single SSH command
-  cat "${file}" | gcloud compute ssh ubuntu@${VM_NAME} --project="${PROJECT_ID}" --zone="${ZONE}" --tunnel-through-iap \
-    --command "sudo docker exec -i coolify php fix_compose.php ${uuid}"
+  # Upload compose file to VM
+  gcloud compute scp --tunnel-through-iap --project="${PROJECT_ID}" --zone="${ZONE}" "${file}" ubuntu@${VM_NAME}:/tmp/${name}.yml
+  
+  # Copy to coolify container and run fix_compose
+  gcloud compute ssh ubuntu@${VM_NAME} --project="${PROJECT_ID}" --zone="${ZONE}" --tunnel-through-iap \
+    --command "sudo docker cp /tmp/${name}.yml coolify:/tmp/${name}.yml && sudo docker exec coolify sh -c 'php fix_compose.php ${uuid} < /tmp/${name}.yml'"
   
   echo "Triggering Deploy via API..."
-  curl -sS -X POST -H "Authorization: Bearer ${token}" "${BASE}/api/v1/deploy?uuid=${uuid}" -o /dev/null
+  curl -sS -X POST -H "Authorization: Bearer ${TOKEN}" "${BASE}/api/v1/deploy?uuid=${uuid}" -o /dev/null
 done
 
 echo "=== All services synced and redeploy triggered. ==="
