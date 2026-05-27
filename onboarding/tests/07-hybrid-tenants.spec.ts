@@ -28,9 +28,13 @@ test.describe('Hybrid Tenant Resolution Verification', () => {
       console.warn('Warning: HANDOFF_SHARED_SECRET not set in environment. Test might fail if Middleware requires it.');
     }
 
+    const targetEnv = process.env.ENVIRONMENT || 'production';
     console.log(`Using Middleware URL: ${middlewareUrl}`);
+    console.log(`Filtering verification for environment: ${targetEnv}`);
 
-    for (const tenant of tenantsConfig.tenants) {
+    const targetTenants = tenantsConfig.tenants.filter((t: any) => (t.environment || 'production') === targetEnv);
+
+    for (const tenant of targetTenants) {
       console.log(`Verifying tenant: ${tenant.slug}`);
       const response = await request.get(`${middlewareUrl}/resolve-tenant?subdomain=${tenant.slug}`, {
         headers: {
@@ -53,7 +57,7 @@ test.describe('Hybrid Tenant Resolution Verification', () => {
         expect(data.overrides.chatwootUrl).toBe(tenant.infra.chatwoot_url);
         expect(data.overrides.difyUrl).toBe(tenant.infra.dify_url);
       } else {
-        expect(data.infraType).toBe('shared' || undefined); // MiddleWare might return 'shared'
+        expect(['shared', undefined]).toContain(data.infraType);
       }
     }
   });
