@@ -7,9 +7,6 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
-/**
- * Redacts sensitive information from strings before logging.
- */
 function maskSensitiveData(text: string): string {
   if (!text) return text;
   let masked = text;
@@ -22,15 +19,12 @@ function maskSensitiveData(text: string): string {
         masked = masked.split(url.password).join('[PASSWORD_REDACTED]');
       }
     } catch {
-      // Not a valid URL, ignore password masking
+      // Not a valid URL
     }
   }
   return masked;
 }
 
-/**
- * Safe logging wrapper.
- */
 const logger = {
   log: (message: string) => {
     console.log(maskSensitiveData(message));
@@ -50,6 +44,7 @@ interface TenantConfig {
   name: string;
   chatwoot_account_id: number;
   status: string;
+  environment: string;
   infra?: {
     type: string;
     chatwoot_url?: string;
@@ -60,8 +55,7 @@ interface TenantConfig {
 interface TenantsYaml {
   global: {
     gcp_project_id: string;
-    default_chatwoot_url: string;
-    default_dify_url: string;
+    base_domain: string;
   };
   tenants: TenantConfig[];
 }
@@ -69,8 +63,6 @@ interface TenantsYaml {
 async function syncDatabase(pool: Pool, tenants: TenantConfig[]) {
   logger.log('Syncing database...');
   for (const tenant of tenants) {
-    // Note: 'subdomain' is required in the schema (middleware database)
-    // We use 'slug' as the 'subdomain' as it is the primary identifier.
     const query = `
       INSERT INTO tenants (slug, subdomain, name, chatwoot_account_id, status, infra_type, chatwoot_url, dify_url)
       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
@@ -86,9 +78,9 @@ async function syncDatabase(pool: Pool, tenants: TenantConfig[]) {
     `;
     const values = [
       tenant.slug,
-      tenant.slug, // Using slug as subdomain
+      tenant.slug,
       tenant.name, 
-      tenant.chatwoot_account_id.toString(), // Cast to TEXT for the schema
+      tenant.chatwoot_account_id.toString(),
       tenant.status,
       tenant.infra?.type || 'shared',
       tenant.infra?.chatwoot_url || null,
@@ -110,7 +102,6 @@ function syncSecrets(projectId: string, tenants: TenantConfig[]) {
       logger.log(`Creating secret: ${secretName}...`);
       try {
         execSync(`gcloud secrets create ${secretName} --replication-policy="automatic" --project=${projectId}`, { stdio: 'ignore' });
-        // Add a placeholder version using input to avoid echoing secrets in logs
         execSync(`gcloud secrets versions add ${secretName} --data-file=- --project=${projectId}`, {
           input: "placeholder-key",
           stdio: ['pipe', 'ignore', 'ignore']
@@ -133,6 +124,17 @@ async function main() {
   const fileContent = fs.readFileSync(yamlPath, 'utf8');
   const config = yaml.parse(fileContent) as TenantsYaml;
   
+  const targetEnv = process.argv[2] || process.env.ENVIRONMENT || 'production';
+  logger.log(`Target filtering environment: ${targetEnv}`);
+
+  const targetTenants = config.tenants.filter(t => (t.environment || 'production') === targetEnv);
+  logger.log(`Found ${targetTenants.length} tenants for environment ${targetEnv}`);
+
+  if (targetTenants.length === 0) {
+    logger.log('No tenants to sync. Exiting successfully.');
+    return;
+  }
+
   const connectionString = process.env.DATABASE_URL;
   if (!connectionString) {
     logger.error('Error: DATABASE_URL environment variable is not set');
@@ -142,11 +144,11 @@ async function main() {
   const pool = new Pool({ connectionString });
   
   try {
-    await syncDatabase(pool, config.tenants);
+    await syncDatabase(pool, targetTenants);
     if (process.env.SKIP_GCP_SYNC === 'true') {
       logger.log('Skipping GCP Secrets sync as requested.');
     } else {
-      syncSecrets(config.global.gcp_project_id, config.tenants);
+      syncSecrets(config.global.gcp_project_id, targetTenants);
     }
     logger.log('Tenant sync completed successfully.');
   } catch (error) {
