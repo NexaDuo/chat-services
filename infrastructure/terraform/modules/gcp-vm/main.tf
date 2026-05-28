@@ -152,9 +152,6 @@ resource "google_compute_disk" "postgres_disk" {
   type  = "pd-ssd"
   zone  = var.zone
   size  = var.disk_size
-  lifecycle {
-    prevent_destroy = true
-  }
 }
 
 resource "google_compute_attached_disk" "postgres_attached" {
