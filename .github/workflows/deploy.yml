@@ -62,19 +62,19 @@ env:
   PROJECT_ID: nexaduo-492818
   ZONE: us-central1-b
   REGION: us-central1
-  VM_NAME: ${{ (github.event.inputs.environment || (github.event_name == 'pull_request' && 'staging' || 'production')) == 'production' && 'nexaduo-chat-services' || 'nexaduo-chat-services-staging' }}
+  VM_NAME: ${{ if(eq(github.event.inputs.environment || if(eq(github.event_name, 'pull_request'), 'staging', 'production'), 'production'), 'nexaduo-chat-services', 'nexaduo-chat-services-staging') }}
   BASE_DOMAIN: nexaduo.com
   TFVARS_PATH: infrastructure/terraform/envs/production/terraform.tfvars
   
   # Dynamic Fallbacks for automated triggers
-  TARGET_ENVIRONMENT: ${{ github.event.inputs.environment || (github.event_name == 'pull_request' && 'staging' || 'production') }}
+  TARGET_ENVIRONMENT: ${{ github.event.inputs.environment || if(eq(github.event_name, 'pull_request'), 'staging', 'production') }}
   IS_DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
   TARGET_SEGMENT: ${{ github.event.inputs.segment || 'all' }}
 
 # Prevent two runs of the same segment/env racing on terraform state.
 concurrency:
-  group: deploy-${{ github.event.inputs.environment || (github.event_name == 'pull_request' && 'staging' || 'production') }}-${{ github.ref }}
-  cancel-in-progress: ${{ (github.event.inputs.environment || (github.event_name == 'pull_request' && 'staging' || 'production')) == 'staging' }}
+  group: deploy-${{ github.event.inputs.environment || if(eq(github.event_name, 'pull_request'), 'staging', 'production') }}-${{ github.ref }}
+  cancel-in-progress: ${{ eq(github.event.inputs.environment || if(eq(github.event_name, 'pull_request'), 'staging', 'production'), 'staging') }}
 
 jobs:
   # -----------------------------------------------------------------------
