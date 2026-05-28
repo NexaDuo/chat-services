@@ -1,15 +1,5 @@
 name: Deploy production (segmented)
 
-# Manual production deploy of the stack, segmented by layer to reduce blast
-# radius and let operators re-apply only what changed. Each job is independent;
-# pick "all" for the full pipeline (foundation -> bootstrap -> build-images ->
-# tenant -> routes -> onboarding -> validate).
-#
-# One-time setup: see docs/deploy-via-github-actions.md
-#   - Repo variables: TF_BACKEND_PREFIX_FOUNDATION, TF_BACKEND_PREFIX_TENANT,
-#     GCP_WORKLOAD_IDENTITY_PROVIDER, GCP_DEPLOYER_SERVICE_ACCOUNT
-#   - Repo secrets: CLOUDFLARE_API_TOKEN (consumed by the Cloudflare provider)
-
 on:
   workflow_dispatch:
     inputs:
@@ -33,8 +23,16 @@ on:
         required: true
         type: boolean
         default: true
+      environment:
+        description: 'Target Environment'
+        required: true
+        type: choice
+        default: staging
+        options:
+          - staging
+          - production
       tenant_subset:
-        description: 'For segment=tenant: which service to apply via -target. "all" = everything.'
+        description: 'For segment=tenant: which service to apply via -target. \"all\" = everything.'
         required: false
         type: choice
         default: all
@@ -49,6 +47,10 @@ on:
         required: false
         type: boolean
         default: true
+  pull_request:
+    branches: [ main ]
+  push:
+    branches: [ main ]
 
 permissions:
   contents: read
@@ -60,26 +62,59 @@ env:
   PROJECT_ID: nexaduo-492818
   ZONE: us-central1-b
   REGION: us-central1
-  VM_NAME: nexaduo-chat-services
+  VM_NAME: ${{ (github.event.inputs.environment || (github.event_name == 'pull_request' && 'staging' || 'production')) == 'production' && 'nexaduo-chat-services' || 'nexaduo-chat-services-staging' }}
   BASE_DOMAIN: nexaduo.com
   TFVARS_PATH: infrastructure/terraform/envs/production/terraform.tfvars
+  
+  # Dynamic Fallbacks for automated triggers
+  TARGET_ENVIRONMENT: ${{ github.event.inputs.environment || (github.event_name == 'pull_request' && 'staging' || 'production') }}
+  IS_DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
+  TARGET_SEGMENT: ${{ github.event.inputs.segment || 'all' }}
 
-# Prevent two runs of the same segment racing on terraform state.
+# Prevent two runs of the same segment/env racing on terraform state.
 concurrency:
-  group: deploy-prod-${{ inputs.segment }}
-  cancel-in-progress: false
+  group: deploy-${{ github.event.inputs.environment || (github.event_name == 'pull_request' && 'staging' || 'production') }}-${{ github.ref }}
+  cancel-in-progress: ${{ (github.event.inputs.environment || (github.event_name == 'pull_request' && 'staging' || 'production')) == 'staging' }}
 
 jobs:
   # -----------------------------------------------------------------------
-  # foundation: terraform apply for the infra layer (VM, VPC, DNS, Tunnel, AR)
+  # resolve-env: parses tenants.yaml and outputs active environment metadata
+  # -----------------------------------------------------------------------
+  resolve-env:
+    runs-on: ubuntu-latest
+    outputs:
+      primary_url: ${{ steps.extract.outputs.primary_url }}
+      tenants: ${{ steps.extract.outputs.tenants }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract Tenant Metadata
+        id: extract
+        run: |
+          # Extract all active tenants matching the environment to a compact JSON array
+          TENANTS_JSON=$(yq eval -o=json '.tenants[] | select(.status == "active" and .environment == "${{ env.TARGET_ENVIRONMENT }}")' tenants.yaml | jq -c -s '.')
+          echo "tenants=$TENANTS_JSON" >> "$GITHUB_OUTPUT"
+          
+          # Grab primary tenant url for GHA Environment link
+          PRIMARY_URL=$(echo "$TENANTS_JSON" | jq -r '.[0].infra.chatwoot_url // empty')
+          [[ -n "$PRIMARY_URL" ]] || PRIMARY_URL="https://chat${{ env.TARGET_ENVIRONMENT == 'production' && '' || '-stg' }}.nexaduo.com"
+          echo "primary_url=$PRIMARY_URL" >> "$GITHUB_OUTPUT"
+          
+          # Print for verification
+          echo "Active Tenants: $TENANTS_JSON"
+          echo "Primary Endpoint: $PRIMARY_URL"
+
+  # -----------------------------------------------------------------------
+  # foundation: terraform apply for the infra layer
   # -----------------------------------------------------------------------
   foundation:
-    if: inputs.segment == 'foundation' || inputs.segment == 'all'
+    needs: [resolve-env]
+    if: env.TARGET_SEGMENT == 'foundation' || env.TARGET_SEGMENT == 'all'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment:
-      name: production
-      url: https://${{ env.BASE_DOMAIN }}
+      name: ${{ env.TARGET_ENVIRONMENT }}
+      url: ${{ needs.resolve-env.outputs.primary_url }}
     steps:
       - uses: actions/checkout@v4
 
@@ -98,11 +133,9 @@ jobs:
       - name: Restore terraform.tfvars from Secret Manager
         run: |
           gcloud secrets versions access latest \
-            --secret=terraform_tfvars_production \
+            --secret=terraform_tfvars_${{ env.TARGET_ENVIRONMENT }} \
             --project="${PROJECT_ID}" > "${TFVARS_PATH}"
 
-      # Init MUST run before preflight: preflight uses `terraform state show/import`
-      # which requires an initialized backend.
       - name: Terraform init
         working-directory: infrastructure/terraform/envs/production/foundation
         run: |
@@ -111,6 +144,11 @@ jobs:
             -backend-config="prefix=${{ vars.TF_BACKEND_PREFIX_FOUNDATION }}"
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+
+      - name: Select or Create Workspace
+        working-directory: infrastructure/terraform/envs/production/foundation
+        run: |
+          terraform workspace select "${{ env.TARGET_ENVIRONMENT }}" || terraform workspace new "${{ env.TARGET_ENVIRONMENT }}"
 
       - name: Preflight (undelete + import WIF/tunnel survivors)
         working-directory: infrastructure/terraform/envs/production/foundation
@@ -124,15 +162,12 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
 
-      # Plan is shown as redacted text in the job log only. We deliberately do NOT
-      # upload tfplan.bin: the foundation plan includes Cloudflare API tokens and
-      # a binary plan artifact would expose them to anyone with Actions read access.
       - name: Show plan (redacted)
         working-directory: infrastructure/terraform/envs/production/foundation
         run: terraform show -no-color tfplan.bin | head -c 100000
 
       - name: Terraform apply (skipped if dry_run)
-        if: inputs.dry_run == false
+        if: env.IS_DRY_RUN == 'false'
         working-directory: infrastructure/terraform/envs/production/foundation
         run: terraform apply -auto-approve tfplan.bin
         env:
@@ -142,13 +177,11 @@ jobs:
   # bootstrap: install Coolify on the VM (one-time per VM)
   # -----------------------------------------------------------------------
   bootstrap:
-    needs: [foundation]
-    # foundation may have been skipped when segment=bootstrap; always() + result
-    # check handles the GH Actions skip-cascade.
+    needs: [resolve-env, foundation]
     if: |
       always() &&
-      (inputs.segment == 'bootstrap' ||
-       (inputs.segment == 'all' && needs.foundation.result == 'success'))
+      (env.TARGET_SEGMENT == 'bootstrap' ||
+       (env.TARGET_SEGMENT == 'all' && needs.foundation.result == 'success'))
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -161,9 +194,6 @@ jobs:
 
       - uses: google-github-actions/setup-gcloud@v2
 
-      # bootstrap-coolify.sh runs `terraform output -raw tunnel_token` from the
-      # foundation layer. GH Actions jobs are isolated, so we must install
-      # Terraform here and re-init the foundation backend.
       - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: ${{ env.TF_VERSION }}
@@ -177,24 +207,28 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
 
+      - name: Select Workspace
+        working-directory: infrastructure/terraform/envs/production/foundation
+        run: |
+          terraform workspace select "${{ env.TARGET_ENVIRONMENT }}"
+
       - name: Bootstrap Coolify
-        if: inputs.dry_run == false
+        if: env.IS_DRY_RUN == 'false'
         run: |
           chmod +x scripts/bootstrap-coolify.sh
           ./scripts/bootstrap-coolify.sh
 
       - name: Dry-run note
-        if: inputs.dry_run == true
+        if: env.IS_DRY_RUN == 'true'
         run: echo "::notice::dry_run=true; skipping bootstrap-coolify.sh."
 
   # -----------------------------------------------------------------------
-  # build-images: invokes the existing publish-images.yml as a reusable workflow.
-  # Skipped on dry_run (image push has side effects: AR storage + tag pollution).
+  # build-images: builds and publishes intermediate stack images
   # -----------------------------------------------------------------------
   build-images:
     if: |
-      (inputs.segment == 'build-images' || inputs.segment == 'all') &&
-      inputs.dry_run == false
+      (env.TARGET_SEGMENT == 'build-images' || env.TARGET_SEGMENT == 'all') &&
+      env.IS_DRY_RUN == 'false'
     uses: ./.github/workflows/publish-images.yml
     secrets: inherit
     with:
@@ -204,13 +238,16 @@ jobs:
   # tenant: terraform apply tenant (Coolify services + envs)
   # -----------------------------------------------------------------------
   tenant:
-    needs: [build-images]
+    needs: [resolve-env, build-images]
     if: |
       always() &&
-      (inputs.segment == 'tenant' ||
-       (inputs.segment == 'all' && (needs.build-images.result == 'success' || needs.build-images.result == 'skipped')))
+      (env.TARGET_SEGMENT == 'tenant' ||
+       (env.TARGET_SEGMENT == 'all' && (needs.build-images.result == 'success' || needs.build-images.result == 'skipped')))
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    environment:
+      name: ${{ env.TARGET_ENVIRONMENT }}
+      url: ${{ needs.resolve-env.outputs.primary_url }}
     steps:
       - uses: actions/checkout@v4
 
@@ -228,7 +265,7 @@ jobs:
       - name: Restore terraform.tfvars from Secret Manager
         run: |
           gcloud secrets versions access latest \
-            --secret=terraform_tfvars_production \
+            --secret=terraform_tfvars_${{ env.TARGET_ENVIRONMENT }} \
             --project="${PROJECT_ID}" > "${TFVARS_PATH}"
 
       - name: Terraform init
@@ -238,10 +275,15 @@ jobs:
             -backend-config="bucket=nexaduo-terraform-state" \
             -backend-config="prefix=${{ vars.TF_BACKEND_PREFIX_TENANT }}"
 
+      - name: Select or Create Workspace
+        working-directory: infrastructure/terraform/envs/production/tenant
+        run: |
+          terraform workspace select "${{ env.TARGET_ENVIRONMENT }}" || terraform workspace new "${{ env.TARGET_ENVIRONMENT }}"
+
       - name: Compute -target args (tenant_subset)
         id: targets
         run: |
-          case "${{ inputs.tenant_subset }}" in
+          case "${{ inputs.tenant_subset || 'all' }}" in
             chatwoot) echo "args=-target=coolify_service.chatwoot -target=coolify_service_envs.chatwoot" >> "$GITHUB_OUTPUT" ;;
             dify)     echo "args=-target=coolify_service.dify     -target=coolify_service_envs.dify"     >> "$GITHUB_OUTPUT" ;;
             nexaduo)  echo "args=-target=coolify_service.nexaduo  -target=coolify_service_envs.nexaduo"  >> "$GITHUB_OUTPUT" ;;
@@ -253,21 +295,13 @@ jobs:
         working-directory: infrastructure/terraform/envs/production/tenant
         run: terraform plan -var-file=../terraform.tfvars ${{ steps.targets.outputs.args }} -out=tfplan.bin
 
-      # Show plan as redacted text in the job log; do NOT upload tfplan.bin as
-      # an artifact. The tenant plan embeds secret values pulled from Secret
-      # Manager (Postgres password, OAuth secret, etc.), and any user with
-      # Actions read access could download the binary plan and extract them.
       - name: Show plan (redacted)
         working-directory: infrastructure/terraform/envs/production/tenant
         run: terraform show -no-color tfplan.bin | head -c 100000
 
       - name: Terraform apply with 409-aware retry (skipped if dry_run)
-        if: inputs.dry_run == false
+        if: env.IS_DRY_RUN == 'false'
         working-directory: infrastructure/terraform/envs/production/tenant
-        # Mirror apply-tenant.sh logic: only retry the known Coolify race
-        # ("409 Conflict creating service envs"), and run clean-service-envs.sh
-        # between attempts. Any other error fails fast so we do not mask real
-        # bugs (credentials, schema drift, etc.).
         run: |
           set +e
           for attempt in 1 2 3; do
@@ -280,7 +314,6 @@ jobs:
               echo "::warning::Detected Coolify conflict on service envs; cleaning auto-populated envs."
               chmod +x ../../../../../scripts/clean-service-envs.sh
               ../../../../../scripts/clean-service-envs.sh
-              # Re-plan after the clean to refresh state.
               terraform plan -var-file=../terraform.tfvars ${{ steps.targets.outputs.args }} -out=tfplan.bin
               continue
             fi
@@ -290,11 +323,12 @@ jobs:
           exit 1
 
       - name: Redeploy services to pick up env vars
-        if: inputs.dry_run == false
+        if: env.IS_DRY_RUN == 'false'
         run: |
           url="$(gcloud secrets versions access latest --secret=coolify_url --project="${{ env.PROJECT_ID }}")"
           token="$(gcloud secrets versions access latest --secret=coolify_api_token --project="${{ env.PROJECT_ID }}")"
           base="${url%/api/v1}"
+          suffix="${{ env.TARGET_ENVIRONMENT == 'production' && '' || concat('-', env.TARGET_ENVIRONMENT) }}"
           
           echo "=== Re-deploying tenant services ==="
           for svc in shared chatwoot dify nexaduo; do
@@ -309,11 +343,11 @@ jobs:
   # routes: refresh the Coolify proxy (Traefik) - fast, no terraform
   # -----------------------------------------------------------------------
   routes:
-    needs: [tenant]
+    needs: [resolve-env, tenant]
     if: |
       always() &&
-      (inputs.segment == 'routes' ||
-       (inputs.segment == 'all' && (needs.tenant.result == 'success' || needs.tenant.result == 'skipped')))
+      (env.TARGET_SEGMENT == 'routes' ||
+       (env.TARGET_SEGMENT == 'all' && (needs.tenant.result == 'success' || needs.tenant.result == 'skipped')))
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -327,33 +361,30 @@ jobs:
       - uses: google-github-actions/setup-gcloud@v2
 
       - name: Refresh Coolify routes
-        if: inputs.dry_run == false
+        if: env.IS_DRY_RUN == 'false'
         env:
           BASE_DOMAIN: ${{ env.BASE_DOMAIN }}
           PROJECT_ID: ${{ env.PROJECT_ID }}
           ZONE: ${{ env.ZONE }}
           VM_NAME: ${{ env.VM_NAME }}
-          # SKIP_GRAFANA=true tells refresh-coolify-routes.sh to omit the Grafana
-          # route from the Traefik fallback so this segment can recover Chatwoot/
-          # Dify even when nexaduo-app (Grafana) is down.
-          SKIP_GRAFANA: ${{ inputs.skip_grafana && 'true' || 'false' }}
+          SKIP_GRAFANA: ${{ (inputs.skip_grafana || 'true') && 'true' || 'false' }}
         run: |
           chmod +x scripts/refresh-coolify-routes.sh
           ./scripts/refresh-coolify-routes.sh
 
       - name: Dry-run note
-        if: inputs.dry_run == true
+        if: env.IS_DRY_RUN == 'true'
         run: echo "::notice::dry_run=true; skipping refresh-coolify-routes.sh."
 
   # -----------------------------------------------------------------------
   # sync: synchronize tenants from tenants.yaml to Postgres
   # -----------------------------------------------------------------------
   sync:
-    needs: [routes]
+    needs: [resolve-env, routes]
     if: |
       always() &&
-      (inputs.segment == 'sync' ||
-       (inputs.segment == 'all' && (needs.routes.result == 'success' || needs.routes.result == 'skipped')))
+      (env.TARGET_SEGMENT == 'sync' ||
+       (env.TARGET_SEGMENT == 'all' && (needs.routes.result == 'success' || needs.routes.result == 'skipped')))
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -370,7 +401,7 @@ jobs:
       - name: Fetch and mask secrets
         id: secrets
         run: |
-          DB_URL=$(gcloud secrets versions access latest --secret=production_database_url --project="${{ env.PROJECT_ID }}")
+          DB_URL=$(gcloud secrets versions access latest --secret=${{ env.TARGET_ENVIRONMENT }}_database_url --project="${{ env.PROJECT_ID }}")
           echo "::add-mask::$DB_URL"
           echo "database_url=$DB_URL" >> "$GITHUB_OUTPUT"
 
@@ -387,13 +418,11 @@ jobs:
         run: npm ci
 
       - name: Sync tenants
-        if: inputs.dry_run == false
+        if: env.IS_DRY_RUN == 'false'
         env:
           DATABASE_URL: ${{ steps.secrets.outputs.database_url }}
           HANDOFF_SHARED_SECRET: ${{ steps.secrets.outputs.handoff_secret }}
         run: |
-          # The secret is likely 'postgresql://postgres:pass@localhost:5432/middleware'
-          # Establish tunnel to VM port 5432
           echo "Establishing IAP tunnel..."
           gcloud compute ssh "${{ env.VM_NAME }}" \
             --project="${{ env.PROJECT_ID }}" \
@@ -401,7 +430,6 @@ jobs:
             --tunnel-through-iap \
             -- -L 5432:localhost:5432 -N -f
           
-          # Wait for tunnel
           for i in $(seq 1 10); do
             if nc -z localhost 5432; then
               echo "Tunnel ready."
@@ -410,24 +438,23 @@ jobs:
             sleep 2
           done
           
-          npm run tenants:sync
+          npm run tenants:sync -- "${{ env.TARGET_ENVIRONMENT }}"
           
-          # Cleanup
           pkill -f "gcloud compute ssh.*-L 5432:localhost:5432" || true
 
       - name: Dry-run note
-        if: inputs.dry_run == true
+        if: env.IS_DRY_RUN == 'true'
         run: echo "::notice::dry_run=true; skipping tenants:sync."
 
   # -----------------------------------------------------------------------
   # onboarding: create initial admins (idempotent; safe on re-runs)
   # -----------------------------------------------------------------------
   onboarding:
-    needs: [sync]
+    needs: [resolve-env, sync]
     if: |
       always() &&
-      (inputs.segment == 'onboarding' ||
-       (inputs.segment == 'all' && (needs.sync.result == 'success' || needs.sync.result == 'skipped')))
+      (env.TARGET_SEGMENT == 'onboarding' ||
+       (env.TARGET_SEGMENT == 'all' && (needs.sync.result == 'success' || needs.sync.result == 'skipped')))
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -441,75 +468,59 @@ jobs:
       - uses: google-github-actions/setup-gcloud@v2
 
       - name: Onboard admins
-        if: inputs.dry_run == false
+        if: env.IS_DRY_RUN == 'false'
         run: |
           chmod +x scripts/onboard-prod.sh
           ./scripts/onboard-prod.sh
 
       - name: Dry-run note
-        if: inputs.dry_run == true
+        if: env.IS_DRY_RUN == 'true'
         run: echo "::notice::dry_run=true; skipping onboard-prod.sh."
 
   # -----------------------------------------------------------------------
-  # validate: public smoke probes against production. Must NOT depend on
-  # local Docker, localhost ports, or admin credentials.
+  # validate: public smoke probes using a dynamic GHA matrix
   # -----------------------------------------------------------------------
   validate:
-    needs: [onboarding]
+    needs: [resolve-env, onboarding]
     if: |
       always() &&
-      (inputs.segment == 'validate' ||
-       (inputs.segment == 'all' && (needs.onboarding.result == 'success' || needs.onboarding.result == 'skipped')))
+      (env.TARGET_SEGMENT == 'validate' ||
+       (env.TARGET_SEGMENT == 'all' && (needs.onboarding.result == 'success' || needs.onboarding.result == 'skipped')))
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    strategy:
+      matrix:
+        tenant: ${{ fromJson(needs.resolve-env.outputs.tenants) }}
     steps:
       - uses: actions/checkout@v4
 
-      # Public probes against the edge: every domain must respond and not 502.
-      # We DO NOT call health-check-all.sh here: that script targets local Docker
-      # and is meant to run on the VM. Run it remotely from a separate task if
-      # you need container-level health.
       - name: Public smoke (HTTPS reachability)
         run: |
           set -u
           fail=0
-          # Check all public-facing services
-          for host in chat.${BASE_DOMAIN} dify.${BASE_DOMAIN} coolify.${BASE_DOMAIN} evolution.${BASE_DOMAIN}; do
-            echo "Checking https://${host}/ ..."
-            code=$(curl -sS -o /dev/null -w "%{http_code}" --max-time 15 -L "https://${host}/" || echo "ERR")
-            echo "  -> Status: ${code}"
-            case "${code}" in
-              2*|3*|401|403) ;;  # 2xx/3xx are good, 401/403 often mean "need auth" but service is up
-              *)     
-                echo "::error::Service ${host} is unreachable or returned ${code}"
-                fail=1 
-                ;;
-            esac
-          done
-
-          # Middleware check (use /health because root is 404)
-          echo "Checking https://middleware.${BASE_DOMAIN}/health ..."
-          code=$(curl -sS -o /dev/null -w "%{http_code}" --max-time 15 -L "https://middleware.${BASE_DOMAIN}/health" || echo "ERR")
-          echo "  -> Status: ${code}"
-          if [[ "${code}" != "200" ]]; then
-            echo "::error::Service middleware.${BASE_DOMAIN} is unreachable or health check failed with status ${code}"
-            fail=1
-          fi
-
-          # Dify console API setup check (idempotent health check)
-          # Returns 200 if not setup, or often 403/already_setup if done.
-          echo "Checking Dify setup API..."
-          code=$(curl -sS -o /dev/null -w "%{http_code}" --max-time 15 "https://dify.${BASE_DOMAIN}/console/api/setup" || echo "ERR")
+          
+          chatwoot_url="${{ matrix.tenant.infra.chatwoot_url }}"
+          dify_url="${{ matrix.tenant.infra.dify_url }}"
+          
+          # Check Chatwoot
+          echo "Checking Chatwoot at ${chatwoot_url} ..."
+          code=$(curl -sS -o /dev/null -w "%{http_code}" --max-time 15 -L "${chatwoot_url}/" || echo "ERR")
           echo "  -> Status: ${code}"
           case "${code}" in
-            200|403) ;; # 200 = ready to setup, 403 = already setup (both mean Dify is up)
-            *) 
-              echo "::error::Dify API setup check failed with status ${code}"
-              fail=1 
-              ;;
+            2*|3*|401|403) ;;
+            *) echo "::error::Chatwoot ${chatwoot_url} returned ${code}"; fail=1 ;;
           esac
 
-          [[ $fail -eq 0 ]] || { echo "::error::Public smoke failed."; exit 1; }
+          # Check Dify console API setup check
+          echo "Checking Dify setup API at ${dify_url}/console/api/setup ..."
+          code=$(curl -sS -o /dev/null -w "%{http_code}" --max-time 15 "${dify_url}/console/api/setup" || echo "ERR")
+          echo "  -> Status: ${code}"
+          case "${code}" in
+            200|403) ;;
+            *) echo "::error::Dify API setup check failed for ${dify_url} with status ${code}"; fail=1 ;;
+          esac
+
+          [[ $fail -eq 0 ]] || { echo "::error::Smoke checks failed."; exit 1; }
 
       - uses: actions/setup-node@v4
         with:
@@ -523,18 +534,15 @@ jobs:
           npm ci
           npx playwright install --with-deps chromium
 
-      # OAuth spec uses production URLs and unauthenticated endpoints; no
-      # ADMIN_PASSWORD required. Tracks issue #5.
       - name: Run Playwright OAuth checks
         working-directory: onboarding
         env:
-          CHATWOOT_URL: https://chat.${{ env.BASE_DOMAIN }}
-          DIFY_URL: https://dify.${{ env.BASE_DOMAIN }}
+          ENVIRONMENT: ${{ env.TARGET_ENVIRONMENT }}
         run: npx playwright test 04-oauth.spec.ts
 
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: playwright-report-${{ github.run_id }}
+          name: playwright-report-${{ matrix.tenant.slug }}-${{ github.run_id }}
           path: onboarding/playwright-report
           retention-days: 14
