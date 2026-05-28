@@ -196,6 +196,7 @@ jobs:
           terraform workspace select "${{ needs.resolve-env.outputs.target_environment }}" || terraform workspace new "${{ needs.resolve-env.outputs.target_environment }}"
 
       - name: Preflight (undelete + import WIF/tunnel survivors)
+        if: needs.resolve-env.outputs.target_environment == 'production'
         working-directory: infrastructure/terraform/envs/production/foundation
         run: |
           chmod +x ../../../../../scripts/preflight-foundation.sh

@@ -121,6 +121,7 @@ module "artifact_registry" {
 }
 
 module "gh_publisher" {
+  count  = local.is_prod ? 1 : 0
   source = "../../../modules/gcp-gh-publisher"
 
   project_id                      = var.gcp_project_id
@@ -152,10 +153,10 @@ output "artifact_registry_url" {
 }
 
 output "gh_publisher_service_account" {
-  value = module.gh_publisher.service_account_email
+  value = local.is_prod ? module.gh_publisher[0].service_account_email : ""
 }
 
 output "gh_workload_identity_provider" {
   description = "Pass this as workload_identity_provider in .github/workflows/publish-images.yml"
-  value       = module.gh_publisher.workload_identity_provider
+  value       = local.is_prod ? module.gh_publisher[0].workload_identity_provider : ""
 }
