@@ -7,7 +7,7 @@ data "coolify_servers" "main" {}
 
 locals {
   env            = terraform.workspace
-  is_prod        = local.env == "production"
+  is_prod        = local.env == "production" || local.env == "default"
   service_suffix = local.is_prod ? "" : "-${local.env}"
   dns_suffix     = local.is_prod ? "" : "-stg"
 

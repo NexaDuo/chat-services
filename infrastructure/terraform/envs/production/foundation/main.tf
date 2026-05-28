@@ -1,6 +1,6 @@
 locals {
   env       = terraform.workspace
-  is_prod   = local.env == "production"
+  is_prod   = local.env == "production" || local.env == "default"
   vm_suffix = local.is_prod ? "" : "-${local.env}"
   vm_name   = "${var.app_name}${local.vm_suffix}"
 
