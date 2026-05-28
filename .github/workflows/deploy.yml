@@ -284,11 +284,13 @@ jobs:
   # tenant: terraform apply tenant (Coolify services + envs)
   # -----------------------------------------------------------------------
   tenant:
-    needs: [resolve-env, build-images]
+    needs: [resolve-env, build-images, bootstrap]
     if: |
       always() &&
       (needs.resolve-env.outputs.target_segment == 'tenant' ||
-       (needs.resolve-env.outputs.target_segment == 'all' && (needs.build-images.result == 'success' || needs.build-images.result == 'skipped')))
+       (needs.resolve-env.outputs.target_segment == 'all' && 
+        (needs.build-images.result == 'success' || needs.build-images.result == 'skipped') &&
+        (needs.bootstrap.result == 'success' || needs.bootstrap.result == 'skipped')))
     runs-on: ubuntu-latest
     timeout-minutes: 25
     environment:
@@ -425,11 +427,13 @@ jobs:
   # sync: synchronize tenants from tenants.yaml to Postgres
   # -----------------------------------------------------------------------
   sync:
-    needs: [resolve-env, routes]
+    needs: [resolve-env, tenant, routes]
     if: |
       always() &&
       (needs.resolve-env.outputs.target_segment == 'sync' ||
-       (needs.resolve-env.outputs.target_segment == 'all' && (needs.routes.result == 'success' || needs.routes.result == 'skipped')))
+       (needs.resolve-env.outputs.target_segment == 'all' && 
+        needs.tenant.result == 'success' && 
+        (needs.routes.result == 'success' || needs.routes.result == 'skipped')))
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -495,11 +499,13 @@ jobs:
   # onboarding: create initial admins (idempotent; safe on re-runs)
   # -----------------------------------------------------------------------
   onboarding:
-    needs: [resolve-env, sync]
+    needs: [resolve-env, tenant, sync]
     if: |
       always() &&
       (needs.resolve-env.outputs.target_segment == 'onboarding' ||
-       (needs.resolve-env.outputs.target_segment == 'all' && (needs.sync.result == 'success' || needs.sync.result == 'skipped')))
+       (needs.resolve-env.outputs.target_segment == 'all' && 
+        needs.tenant.result == 'success' && 
+        (needs.sync.result == 'success' || needs.sync.result == 'skipped')))
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -526,11 +532,13 @@ jobs:
   # validate: public smoke probes using a dynamic GHA matrix
   # -----------------------------------------------------------------------
   validate:
-    needs: [resolve-env, onboarding]
+    needs: [resolve-env, tenant, onboarding]
     if: |
       always() &&
       (needs.resolve-env.outputs.target_segment == 'validate' ||
-       (needs.resolve-env.outputs.target_segment == 'all' && (needs.onboarding.result == 'success' || needs.onboarding.result == 'skipped')))
+       (needs.resolve-env.outputs.target_segment == 'all' && 
+        needs.tenant.result == 'success' && 
+        (needs.onboarding.result == 'success' || needs.onboarding.result == 'skipped')))
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:

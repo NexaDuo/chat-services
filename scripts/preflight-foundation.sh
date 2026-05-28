@@ -40,8 +40,12 @@ ensure_in_state() {
   if terraform state show "${addr}" >/dev/null 2>&1; then
     return 0
   fi
+  local var_file=""
+  if [[ -f "../terraform.tfvars" ]]; then
+    var_file="-var-file=../terraform.tfvars"
+  fi
   echo "  importing ${addr}"
-  terraform import "$@" "${addr}" "${id}"
+  terraform import -input=false ${var_file} "$@" "${addr}" "${id}"
 }
 
 POOL_STATE="$(pool_state)"
