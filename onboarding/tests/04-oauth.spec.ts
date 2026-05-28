@@ -10,18 +10,29 @@ test.describe('Google OAuth init endpoints', () => {
     const page = await ctx.newPage();
     
     console.log(`Checking Chatwoot OAuth at ${CHATWOOT_URL}/auth/google_oauth2...`);
-    const response = await page.goto(`${CHATWOOT_URL}/auth/google_oauth2`);
     
-    // In Chatwoot, this often leads directly to accounts.google.com
+    // Go to Chatwoot homepage first to set up active page context
+    await page.goto(CHATWOOT_URL);
+    
+    // Trigger POST request using a dynamic form submission in the browser page
+    const responsePromise = page.waitForNavigation();
+    await page.evaluate((url) => {
+      const form = document.createElement('form');
+      form.method = 'POST';
+      form.action = url;
+      document.body.appendChild(form);
+      form.submit();
+    }, `${CHATWOOT_URL}/auth/google_oauth2`);
+    
+    const response = await responsePromise;
     const finalUrl = page.url();
-    const res = await response;
-    const body = await res?.text() || '';
+    const body = await response?.text() || '';
     
     expect(
       finalUrl, 
       `Expected redirect chain to end at accounts.google.com but got ${finalUrl}. Body: ${body}`
     ).toMatch(/^https:\/\/accounts\.google\.com\//);
-    expect(res?.status(), `Final response should be 200 (Google sign-in page); got ${res?.status()}`).toBe(200);
+    expect(response?.status(), `Final response should be 200 (Google sign-in page); got ${response?.status()}`).toBe(200);
 
     await ctx.close();
   });
