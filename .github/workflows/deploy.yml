@@ -338,11 +338,26 @@ jobs:
         id: targets
         run: |
           case "${{ inputs.tenant_subset || 'all' }}" in
-            chatwoot) echo "args=-target=coolify_service.chatwoot -target=coolify_service_envs.chatwoot" >> "$GITHUB_OUTPUT" ;;
-            dify)     echo "args=-target=coolify_service.dify     -target=coolify_service_envs.dify"     >> "$GITHUB_OUTPUT" ;;
-            nexaduo)  echo "args=-target=coolify_service.nexaduo  -target=coolify_service_envs.nexaduo"  >> "$GITHUB_OUTPUT" ;;
-            shared)   echo "args=-target=coolify_service.shared   -target=coolify_service_envs.shared"   >> "$GITHUB_OUTPUT" ;;
-            *)        echo "args=" >> "$GITHUB_OUTPUT" ;;
+            chatwoot)
+              echo "args=-target=coolify_service.chatwoot -target=coolify_service_envs.chatwoot" >> "$GITHUB_OUTPUT"
+              echo "stage1=-target=coolify_project.main -target=coolify_service.chatwoot" >> "$GITHUB_OUTPUT"
+              ;;
+            dify)
+              echo "args=-target=coolify_service.dify     -target=coolify_service_envs.dify"     >> "$GITHUB_OUTPUT"
+              echo "stage1=-target=coolify_project.main -target=coolify_service.dify" >> "$GITHUB_OUTPUT"
+              ;;
+            nexaduo)
+              echo "args=-target=coolify_service.nexaduo  -target=coolify_service_envs.nexaduo"  >> "$GITHUB_OUTPUT"
+              echo "stage1=-target=coolify_project.main -target=coolify_service.nexaduo" >> "$GITHUB_OUTPUT"
+              ;;
+            shared)
+              echo "args=-target=coolify_service.shared   -target=coolify_service_envs.shared"   >> "$GITHUB_OUTPUT"
+              echo "stage1=-target=coolify_project.main -target=coolify_service.shared" >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo "args=" >> "$GITHUB_OUTPUT"
+              echo "stage1=-target=coolify_project.main -target=coolify_service.shared -target=coolify_service.chatwoot -target=coolify_service.dify -target=coolify_service.nexaduo" >> "$GITHUB_OUTPUT"
+              ;;
           esac
 
       - name: Terraform plan
@@ -353,28 +368,20 @@ jobs:
         working-directory: infrastructure/terraform/envs/production/tenant
         run: terraform show -no-color tfplan.bin | head -c 100000
 
-      - name: Terraform apply with 409-aware retry (skipped if dry_run)
+      - name: Terraform apply (skipped if dry_run)
         if: needs.resolve-env.outputs.is_dry_run == 'false'
         working-directory: infrastructure/terraform/envs/production/tenant
         run: |
-          set +e
-          for attempt in 1 2 3; do
-            echo "::group::Apply attempt $attempt"
-            terraform apply -auto-approve tfplan.bin 2>&1 | tee /tmp/tf-apply.log
-            rc=${PIPESTATUS[0]}
-            echo "::endgroup::"
-            [[ $rc -eq 0 ]] && exit 0
-            if grep -qiE "409 Conflict|already exists" /tmp/tf-apply.log; then
-              echo "::warning::Detected Coolify conflict on service envs; cleaning auto-populated envs."
-              chmod +x ../../../../../scripts/clean-service-envs.sh
-              ../../../../../scripts/clean-service-envs.sh
-              terraform plan -var-file=../terraform.tfvars ${{ steps.targets.outputs.args }} -out=tfplan.bin
-              continue
-            fi
-            echo "::error::Apply failed with a non-409 error; not retrying." >&2
-            exit "$rc"
-          done
-          exit 1
+          echo "=== Step 1: Pre-creating projects and services to trigger Coolify auto-population ==="
+          terraform apply -auto-approve -var-file=../terraform.tfvars ${{ steps.targets.outputs.stage1 }}
+
+          echo "=== Step 2: Cleaning auto-populated placeholder environment variables ==="
+          chmod +x ../../../../../scripts/clean-service-envs.sh
+          ../../../../../scripts/clean-service-envs.sh
+
+          echo "=== Step 3: Performing clean plan and full apply with actual environment values ==="
+          terraform plan -var-file=../terraform.tfvars ${{ steps.targets.outputs.args }} -out=tfplan.bin
+          terraform apply -auto-approve tfplan.bin
 
       - name: Redeploy services to pick up env vars
         if: needs.resolve-env.outputs.is_dry_run == 'false'
