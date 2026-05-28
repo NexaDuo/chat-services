@@ -27,7 +27,7 @@ resource "coolify_service" "shared" {
   server_uuid      = tolist(data.coolify_servers.main.servers)[0].uuid
   project_uuid     = coolify_project.main.uuid
   destination_uuid = data.google_secret_manager_secret_version.coolify_destination_uuid.secret_data
-  environment_name = local.env
+  environment_name = "production"
   instant_deploy   = true
 
   compose = file("${path.root}/../../../../../deploy/docker-compose.shared.yml")
@@ -78,7 +78,7 @@ resource "coolify_service" "chatwoot" {
   server_uuid      = tolist(data.coolify_servers.main.servers)[0].uuid
   project_uuid     = coolify_project.main.uuid
   destination_uuid = data.google_secret_manager_secret_version.coolify_destination_uuid.secret_data
-  environment_name = local.env
+  environment_name = "production"
   instant_deploy   = true
 
   compose = file("${path.root}/../../../../../deploy/docker-compose.chatwoot.yml")
@@ -180,7 +180,7 @@ resource "coolify_service" "dify" {
   server_uuid      = tolist(data.coolify_servers.main.servers)[0].uuid
   project_uuid     = coolify_project.main.uuid
   destination_uuid = data.google_secret_manager_secret_version.coolify_destination_uuid.secret_data
-  environment_name = local.env
+  environment_name = "production"
   instant_deploy   = true
 
   compose = file("${path.root}/../../../../../deploy/docker-compose.dify.yml")
@@ -329,7 +329,7 @@ resource "coolify_service" "nexaduo" {
   server_uuid      = tolist(data.coolify_servers.main.servers)[0].uuid
   project_uuid     = coolify_project.main.uuid
   destination_uuid = data.google_secret_manager_secret_version.coolify_destination_uuid.secret_data
-  environment_name = local.env
+  environment_name = "production"
   instant_deploy   = true
 
   compose = file("${path.root}/../../../../../deploy/docker-compose.nexaduo.yml")
