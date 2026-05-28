@@ -43,6 +43,7 @@ services:
       GOOGLE_CLIENT_ID: ${GOOGLE_OAUTH_CLIENT_ID}
       GOOGLE_CLIENT_SECRET: ${GOOGLE_OAUTH_CLIENT_SECRET}
       GOOGLE_OAUTH_CALLBACK_URL: https://chat.nexaduo.com/omniauth/google_oauth2/callback
+      OMNIAUTH_PROVIDERS: google_oauth2
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.chatwoot.rule=Host(`chat.nexaduo.com`)"
