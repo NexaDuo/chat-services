@@ -5,19 +5,29 @@
 # Look up the local Coolify server (single-server setup; index [0]).
 data "coolify_servers" "main" {}
 
+locals {
+  env            = terraform.workspace
+  is_prod        = local.env == "production"
+  service_suffix = local.is_prod ? "" : "-${local.env}"
+  dns_suffix     = local.is_prod ? "" : "-stg"
+
+  chatwoot_frontend_url = "https://chat${local.dns_suffix}.${var.base_domain}"
+  dify_url              = "https://dify${local.dns_suffix}.${var.base_domain}"
+}
+
 resource "coolify_project" "main" {
-  name = "NexaDuo Chat Services"
+  name = "NexaDuo Chat Services (${local.env})"
 }
 
 # ---------------------------------------------------------------------------
 # Stack 1/4 — Shared (Postgres 16+pgvector, Redis 7).
 # ---------------------------------------------------------------------------
 resource "coolify_service" "shared" {
-  name             = "nexaduo-shared"
+  name             = "nexaduo-shared${local.service_suffix}"
   server_uuid      = tolist(data.coolify_servers.main.servers)[0].uuid
   project_uuid     = coolify_project.main.uuid
   destination_uuid = data.google_secret_manager_secret_version.coolify_destination_uuid.secret_data
-  environment_name = "production"
+  environment_name = local.env
   instant_deploy   = true
 
   compose = file("${path.root}/../../../../../deploy/docker-compose.shared.yml")
@@ -64,11 +74,11 @@ resource "coolify_service_envs" "shared" {
 # Stack 2/4 — Chatwoot
 # ---------------------------------------------------------------------------
 resource "coolify_service" "chatwoot" {
-  name             = "nexaduo-chatwoot"
+  name             = "nexaduo-chatwoot${local.service_suffix}"
   server_uuid      = tolist(data.coolify_servers.main.servers)[0].uuid
   project_uuid     = coolify_project.main.uuid
   destination_uuid = data.google_secret_manager_secret_version.coolify_destination_uuid.secret_data
-  environment_name = "production"
+  environment_name = local.env
   instant_deploy   = true
 
   compose = file("${path.root}/../../../../../deploy/docker-compose.chatwoot.yml")
@@ -128,7 +138,7 @@ resource "coolify_service_envs" "chatwoot" {
   }
   env {
     key   = "CHATWOOT_FRONTEND_URL"
-    value = var.chatwoot_frontend_url
+    value = local.chatwoot_frontend_url
   }
   env {
     key   = "CHATWOOT_INSTALLATION_NAME"
@@ -158,7 +168,7 @@ resource "coolify_service_envs" "chatwoot" {
   }
   env {
     key   = "GOOGLE_OAUTH_CALLBACK_URL"
-    value = "${var.chatwoot_frontend_url}/omniauth/google_oauth2/callback"
+    value = "${local.chatwoot_frontend_url}/omniauth/google_oauth2/callback"
   }
 }
 
@@ -166,11 +176,11 @@ resource "coolify_service_envs" "chatwoot" {
 # Stack 3/4 — Dify
 # ---------------------------------------------------------------------------
 resource "coolify_service" "dify" {
-  name             = "nexaduo-dify"
+  name             = "nexaduo-dify${local.service_suffix}"
   server_uuid      = tolist(data.coolify_servers.main.servers)[0].uuid
   project_uuid     = coolify_project.main.uuid
   destination_uuid = data.google_secret_manager_secret_version.coolify_destination_uuid.secret_data
-  environment_name = "production"
+  environment_name = local.env
   instant_deploy   = true
 
   compose = file("${path.root}/../../../../../deploy/docker-compose.dify.yml")
@@ -242,19 +252,19 @@ resource "coolify_service_envs" "dify" {
   }
   env {
     key   = "DIFY_CONSOLE_API_URL"
-    value = var.dify_console_api_url
+    value = local.dify_url
   }
   env {
     key   = "DIFY_APP_API_URL"
-    value = var.dify_app_api_url
+    value = local.dify_url
   }
   env {
     key   = "NEXT_PUBLIC_COOKIE_DOMAIN"
-    value = "dify.nexaduo.com"
+    value = "dify${local.dns_suffix}.${var.base_domain}"
   }
   env {
     key   = "COOKIE_DOMAIN"
-    value = "dify.nexaduo.com"
+    value = "dify${local.dns_suffix}.${var.base_domain}"
   }
   env {
     key   = "HOSTNAME"
@@ -289,15 +299,15 @@ resource "coolify_service_envs" "dify" {
   }
   env {
     key   = "CONSOLE_WEB_URL"
-    value = "https://dify.nexaduo.com"
+    value = local.dify_url
   }
   env {
     key   = "SERVICE_API_URL"
-    value = "https://dify.nexaduo.com"
+    value = local.dify_url
   }
   env {
     key   = "APP_WEB_URL"
-    value = "https://dify.nexaduo.com"
+    value = local.dify_url
   }
   env {
     key        = "GOOGLE_CLIENT_ID"
@@ -315,11 +325,11 @@ resource "coolify_service_envs" "dify" {
 # Stack 4/4 — NexaDuo
 # ---------------------------------------------------------------------------
 resource "coolify_service" "nexaduo" {
-  name             = "nexaduo-app"
+  name             = "nexaduo-app${local.service_suffix}"
   server_uuid      = tolist(data.coolify_servers.main.servers)[0].uuid
   project_uuid     = coolify_project.main.uuid
   destination_uuid = data.google_secret_manager_secret_version.coolify_destination_uuid.secret_data
-  environment_name = "production"
+  environment_name = local.env
   instant_deploy   = true
 
   compose = file("${path.root}/../../../../../deploy/docker-compose.nexaduo.yml")
@@ -456,7 +466,7 @@ resource "coolify_service_envs" "nexaduo" {
   }
   env {
     key   = "GF_SERVER_ROOT_URL"
-    value = "https://grafana.nexaduo.com"
+    value = "https://grafana${local.dns_suffix}.${var.base_domain}"
   }
 }
 

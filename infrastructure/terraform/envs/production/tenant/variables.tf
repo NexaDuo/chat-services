@@ -66,3 +66,9 @@ variable "self_healing_image" {
   type        = string
   description = "Pre-built self-healing-agent image with registry prefix"
 }
+
+variable "base_domain" {
+  type    = string
+  default = "nexaduo.com"
+}
+
