@@ -328,7 +328,6 @@ jobs:
           url="$(gcloud secrets versions access latest --secret=coolify_url --project="${{ env.PROJECT_ID }}")"
           token="$(gcloud secrets versions access latest --secret=coolify_api_token --project="${{ env.PROJECT_ID }}")"
           base="${url%/api/v1}"
-          suffix="${{ env.TARGET_ENVIRONMENT == 'production' && '' || concat('-', env.TARGET_ENVIRONMENT) }}"
           
           echo "=== Re-deploying tenant services ==="
           for svc in shared chatwoot dify nexaduo; do
