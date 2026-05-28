@@ -32,7 +32,7 @@ on:
           - staging
           - production
       tenant_subset:
-        description: 'For segment=tenant: which service to apply via -target. \"all\" = everything.'
+        description: 'For segment=tenant: which service to apply via -target. "all" = everything.'
         required: false
         type: choice
         default: all
@@ -62,19 +62,13 @@ env:
   PROJECT_ID: nexaduo-492818
   ZONE: us-central1-b
   REGION: us-central1
-  VM_NAME: ${{ if(eq(github.event.inputs.environment || if(eq(github.event_name, 'pull_request'), 'staging', 'production'), 'production'), 'nexaduo-chat-services', 'nexaduo-chat-services-staging') }}
   BASE_DOMAIN: nexaduo.com
   TFVARS_PATH: infrastructure/terraform/envs/production/terraform.tfvars
-  
-  # Dynamic Fallbacks for automated triggers
-  TARGET_ENVIRONMENT: ${{ github.event.inputs.environment || if(eq(github.event_name, 'pull_request'), 'staging', 'production') }}
-  IS_DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
-  TARGET_SEGMENT: ${{ github.event.inputs.segment || 'all' }}
 
-# Prevent two runs of the same segment/env racing on terraform state.
+# Prevent two runs of the same event/branch racing on terraform state.
 concurrency:
-  group: deploy-${{ github.event.inputs.environment || if(eq(github.event_name, 'pull_request'), 'staging', 'production') }}-${{ github.ref }}
-  cancel-in-progress: ${{ eq(github.event.inputs.environment || if(eq(github.event_name, 'pull_request'), 'staging', 'production'), 'staging') }}
+  group: deploy-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   # -----------------------------------------------------------------------
@@ -83,37 +77,88 @@ jobs:
   resolve-env:
     runs-on: ubuntu-latest
     outputs:
-      primary_url: ${{ steps.extract.outputs.primary_url }}
-      tenants: ${{ steps.extract.outputs.tenants }}
+      target_environment: ${{ steps.resolve.outputs.target_environment }}
+      is_dry_run: ${{ steps.resolve.outputs.is_dry_run }}
+      target_segment: ${{ steps.resolve.outputs.target_segment }}
+      vm_name: ${{ steps.resolve.outputs.vm_name }}
+      primary_url: ${{ steps.resolve.outputs.primary_url }}
+      tenants: ${{ steps.resolve.outputs.tenants }}
     steps:
       - uses: actions/checkout@v4
 
-      - name: Extract Tenant Metadata
-        id: extract
+      - name: Resolve Environment Parameters
+        id: resolve
         run: |
-          # Extract all active tenants matching the environment to a compact JSON array
-          TENANTS_JSON=$(yq eval -o=json '.tenants[] | select(.status == "active" and .environment == "${{ env.TARGET_ENVIRONMENT }}")' tenants.yaml | jq -c -s '.')
+          # 1. Resolve TARGET_ENVIRONMENT
+          # Manual inputs.environment has precedence. Otherwise, pull_request targets staging, push targets production.
+          ENV="${{ inputs.environment }}"
+          if [[ -z "$ENV" ]]; then
+            if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+              ENV="staging"
+            else
+              ENV="production"
+            fi
+          fi
+          echo "target_environment=$ENV" >> "$GITHUB_OUTPUT"
+
+          # 2. Resolve IS_DRY_RUN
+          # Manual inputs.dry_run has precedence. Otherwise, automatic events execute apply (false).
+          DRY="${{ inputs.dry_run }}"
+          if [[ -z "$DRY" ]]; then
+            DRY="false"
+          fi
+          echo "is_dry_run=$DRY" >> "$GITHUB_OUTPUT"
+
+          # 3. Resolve TARGET_SEGMENT
+          # Manual inputs.segment has precedence. Otherwise, automatic is 'all'.
+          SEG="${{ inputs.segment }}"
+          if [[ -z "$SEG" ]]; then
+            SEG="all"
+          fi
+          echo "target_segment=$SEG" >> "$GITHUB_OUTPUT"
+
+          # 4. Resolve VM_NAME
+          if [[ "$ENV" == "production" ]]; then
+            VM="nexaduo-chat-services"
+          else
+            VM="nexaduo-chat-services-staging"
+          fi
+          echo "vm_name=$VM" >> "$GITHUB_OUTPUT"
+
+          # 5. Parse tenants.yaml to extract matching active tenants
+          TENANTS_JSON=$(yq eval -o=json ".tenants[] | select(.status == \"active\" and .environment == \"$ENV\")" tenants.yaml | jq -c -s '.')
           echo "tenants=$TENANTS_JSON" >> "$GITHUB_OUTPUT"
-          
-          # Grab primary tenant url for GHA Environment link
+
+          # 6. Resolve primary URL
           PRIMARY_URL=$(echo "$TENANTS_JSON" | jq -r '.[0].infra.chatwoot_url // empty')
-          [[ -n "$PRIMARY_URL" ]] || PRIMARY_URL="https://chat${{ env.TARGET_ENVIRONMENT == 'production' && '' || '-stg' }}.nexaduo.com"
+          if [[ -z "$PRIMARY_URL" ]]; then
+            if [[ "$ENV" == "production" ]]; then
+              PRIMARY_URL="https://chat.nexaduo.com"
+            else
+              PRIMARY_URL="https://chat-stg.nexaduo.com"
+            fi
+          fi
           echo "primary_url=$PRIMARY_URL" >> "$GITHUB_OUTPUT"
-          
-          # Print for verification
-          echo "Active Tenants: $TENANTS_JSON"
-          echo "Primary Endpoint: $PRIMARY_URL"
+
+          # Print outputs for validation in log
+          echo "=== RESOLVED PARAMETERS ==="
+          echo "Target Environment: $ENV"
+          echo "Is Dry Run: $DRY"
+          echo "Target Segment: $SEG"
+          echo "VM Name: $VM"
+          echo "Primary URL: $PRIMARY_URL"
+          echo "Tenants JSON: $TENANTS_JSON"
 
   # -----------------------------------------------------------------------
-  # foundation: terraform apply for the infra layer
+  # foundation: terraform apply for the infra layer (VM, VPC, DNS, Tunnel, AR)
   # -----------------------------------------------------------------------
   foundation:
     needs: [resolve-env]
-    if: env.TARGET_SEGMENT == 'foundation' || env.TARGET_SEGMENT == 'all'
+    if: needs.resolve-env.outputs.target_segment == 'foundation' || needs.resolve-env.outputs.target_segment == 'all'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment:
-      name: ${{ env.TARGET_ENVIRONMENT }}
+      name: ${{ needs.resolve-env.outputs.target_environment }}
       url: ${{ needs.resolve-env.outputs.primary_url }}
     steps:
       - uses: actions/checkout@v4
@@ -133,7 +178,7 @@ jobs:
       - name: Restore terraform.tfvars from Secret Manager
         run: |
           gcloud secrets versions access latest \
-            --secret=terraform_tfvars_${{ env.TARGET_ENVIRONMENT }} \
+            --secret=terraform_tfvars_${{ needs.resolve-env.outputs.target_environment }} \
             --project="${PROJECT_ID}" > "${TFVARS_PATH}"
 
       - name: Terraform init
@@ -148,7 +193,7 @@ jobs:
       - name: Select or Create Workspace
         working-directory: infrastructure/terraform/envs/production/foundation
         run: |
-          terraform workspace select "${{ env.TARGET_ENVIRONMENT }}" || terraform workspace new "${{ env.TARGET_ENVIRONMENT }}"
+          terraform workspace select "${{ needs.resolve-env.outputs.target_environment }}" || terraform workspace new "${{ needs.resolve-env.outputs.target_environment }}"
 
       - name: Preflight (undelete + import WIF/tunnel survivors)
         working-directory: infrastructure/terraform/envs/production/foundation
@@ -167,7 +212,7 @@ jobs:
         run: terraform show -no-color tfplan.bin | head -c 100000
 
       - name: Terraform apply (skipped if dry_run)
-        if: env.IS_DRY_RUN == 'false'
+        if: needs.resolve-env.outputs.is_dry_run == 'false'
         working-directory: infrastructure/terraform/envs/production/foundation
         run: terraform apply -auto-approve tfplan.bin
         env:
@@ -180,8 +225,8 @@ jobs:
     needs: [resolve-env, foundation]
     if: |
       always() &&
-      (env.TARGET_SEGMENT == 'bootstrap' ||
-       (env.TARGET_SEGMENT == 'all' && needs.foundation.result == 'success'))
+      (needs.resolve-env.outputs.target_segment == 'bootstrap' ||
+       (needs.resolve-env.outputs.target_segment == 'all' && needs.foundation.result == 'success'))
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -210,25 +255,26 @@ jobs:
       - name: Select Workspace
         working-directory: infrastructure/terraform/envs/production/foundation
         run: |
-          terraform workspace select "${{ env.TARGET_ENVIRONMENT }}"
+          terraform workspace select "${{ needs.resolve-env.outputs.target_environment }}"
 
       - name: Bootstrap Coolify
-        if: env.IS_DRY_RUN == 'false'
+        if: needs.resolve-env.outputs.is_dry_run == 'false'
         run: |
           chmod +x scripts/bootstrap-coolify.sh
           ./scripts/bootstrap-coolify.sh
 
       - name: Dry-run note
-        if: env.IS_DRY_RUN == 'true'
+        if: needs.resolve-env.outputs.is_dry_run == 'true'
         run: echo "::notice::dry_run=true; skipping bootstrap-coolify.sh."
 
   # -----------------------------------------------------------------------
   # build-images: builds and publishes intermediate stack images
   # -----------------------------------------------------------------------
   build-images:
+    needs: [resolve-env]
     if: |
-      (env.TARGET_SEGMENT == 'build-images' || env.TARGET_SEGMENT == 'all') &&
-      env.IS_DRY_RUN == 'false'
+      (needs.resolve-env.outputs.target_segment == 'build-images' || needs.resolve-env.outputs.target_segment == 'all') &&
+      needs.resolve-env.outputs.is_dry_run == 'false'
     uses: ./.github/workflows/publish-images.yml
     secrets: inherit
     with:
@@ -241,12 +287,12 @@ jobs:
     needs: [resolve-env, build-images]
     if: |
       always() &&
-      (env.TARGET_SEGMENT == 'tenant' ||
-       (env.TARGET_SEGMENT == 'all' && (needs.build-images.result == 'success' || needs.build-images.result == 'skipped')))
+      (needs.resolve-env.outputs.target_segment == 'tenant' ||
+       (needs.resolve-env.outputs.target_segment == 'all' && (needs.build-images.result == 'success' || needs.build-images.result == 'skipped')))
     runs-on: ubuntu-latest
     timeout-minutes: 25
     environment:
-      name: ${{ env.TARGET_ENVIRONMENT }}
+      name: ${{ needs.resolve-env.outputs.target_environment }}
       url: ${{ needs.resolve-env.outputs.primary_url }}
     steps:
       - uses: actions/checkout@v4
@@ -265,7 +311,7 @@ jobs:
       - name: Restore terraform.tfvars from Secret Manager
         run: |
           gcloud secrets versions access latest \
-            --secret=terraform_tfvars_${{ env.TARGET_ENVIRONMENT }} \
+            --secret=terraform_tfvars_${{ needs.resolve-env.outputs.target_environment }} \
             --project="${PROJECT_ID}" > "${TFVARS_PATH}"
 
       - name: Terraform init
@@ -278,7 +324,7 @@ jobs:
       - name: Select or Create Workspace
         working-directory: infrastructure/terraform/envs/production/tenant
         run: |
-          terraform workspace select "${{ env.TARGET_ENVIRONMENT }}" || terraform workspace new "${{ env.TARGET_ENVIRONMENT }}"
+          terraform workspace select "${{ needs.resolve-env.outputs.target_environment }}" || terraform workspace new "${{ needs.resolve-env.outputs.target_environment }}"
 
       - name: Compute -target args (tenant_subset)
         id: targets
@@ -300,7 +346,7 @@ jobs:
         run: terraform show -no-color tfplan.bin | head -c 100000
 
       - name: Terraform apply with 409-aware retry (skipped if dry_run)
-        if: env.IS_DRY_RUN == 'false'
+        if: needs.resolve-env.outputs.is_dry_run == 'false'
         working-directory: infrastructure/terraform/envs/production/tenant
         run: |
           set +e
@@ -323,7 +369,7 @@ jobs:
           exit 1
 
       - name: Redeploy services to pick up env vars
-        if: env.IS_DRY_RUN == 'false'
+        if: needs.resolve-env.outputs.is_dry_run == 'false'
         run: |
           url="$(gcloud secrets versions access latest --secret=coolify_url --project="${{ env.PROJECT_ID }}")"
           token="$(gcloud secrets versions access latest --secret=coolify_api_token --project="${{ env.PROJECT_ID }}")"
@@ -345,8 +391,8 @@ jobs:
     needs: [resolve-env, tenant]
     if: |
       always() &&
-      (env.TARGET_SEGMENT == 'routes' ||
-       (env.TARGET_SEGMENT == 'all' && (needs.tenant.result == 'success' || needs.tenant.result == 'skipped')))
+      (needs.resolve-env.outputs.target_segment == 'routes' ||
+       (needs.resolve-env.outputs.target_segment == 'all' && (needs.tenant.result == 'success' || needs.tenant.result == 'skipped')))
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -360,19 +406,19 @@ jobs:
       - uses: google-github-actions/setup-gcloud@v2
 
       - name: Refresh Coolify routes
-        if: env.IS_DRY_RUN == 'false'
+        if: needs.resolve-env.outputs.is_dry_run == 'false'
         env:
           BASE_DOMAIN: ${{ env.BASE_DOMAIN }}
           PROJECT_ID: ${{ env.PROJECT_ID }}
           ZONE: ${{ env.ZONE }}
-          VM_NAME: ${{ env.VM_NAME }}
+          VM_NAME: ${{ needs.resolve-env.outputs.vm_name }}
           SKIP_GRAFANA: ${{ (inputs.skip_grafana || 'true') && 'true' || 'false' }}
         run: |
           chmod +x scripts/refresh-coolify-routes.sh
           ./scripts/refresh-coolify-routes.sh
 
       - name: Dry-run note
-        if: env.IS_DRY_RUN == 'true'
+        if: needs.resolve-env.outputs.is_dry_run == 'true'
         run: echo "::notice::dry_run=true; skipping refresh-coolify-routes.sh."
 
   # -----------------------------------------------------------------------
@@ -382,8 +428,8 @@ jobs:
     needs: [resolve-env, routes]
     if: |
       always() &&
-      (env.TARGET_SEGMENT == 'sync' ||
-       (env.TARGET_SEGMENT == 'all' && (needs.routes.result == 'success' || needs.routes.result == 'skipped')))
+      (needs.resolve-env.outputs.target_segment == 'sync' ||
+       (needs.resolve-env.outputs.target_segment == 'all' && (needs.routes.result == 'success' || needs.routes.result == 'skipped')))
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -400,7 +446,7 @@ jobs:
       - name: Fetch and mask secrets
         id: secrets
         run: |
-          DB_URL=$(gcloud secrets versions access latest --secret=${{ env.TARGET_ENVIRONMENT }}_database_url --project="${{ env.PROJECT_ID }}")
+          DB_URL=$(gcloud secrets versions access latest --secret=${{ needs.resolve-env.outputs.target_environment }}_database_url --project="${{ env.PROJECT_ID }}")
           echo "::add-mask::$DB_URL"
           echo "database_url=$DB_URL" >> "$GITHUB_OUTPUT"
 
@@ -417,13 +463,13 @@ jobs:
         run: npm ci
 
       - name: Sync tenants
-        if: env.IS_DRY_RUN == 'false'
+        if: needs.resolve-env.outputs.is_dry_run == 'false'
         env:
           DATABASE_URL: ${{ steps.secrets.outputs.database_url }}
           HANDOFF_SHARED_SECRET: ${{ steps.secrets.outputs.handoff_secret }}
         run: |
           echo "Establishing IAP tunnel..."
-          gcloud compute ssh "${{ env.VM_NAME }}" \
+          gcloud compute ssh "${{ needs.resolve-env.outputs.vm_name }}" \
             --project="${{ env.PROJECT_ID }}" \
             --zone="${{ env.ZONE }}" \
             --tunnel-through-iap \
@@ -437,12 +483,12 @@ jobs:
             sleep 2
           done
           
-          npm run tenants:sync -- "${{ env.TARGET_ENVIRONMENT }}"
+          npm run tenants:sync -- "${{ needs.resolve-env.outputs.target_environment }}"
           
           pkill -f "gcloud compute ssh.*-L 5432:localhost:5432" || true
 
       - name: Dry-run note
-        if: env.IS_DRY_RUN == 'true'
+        if: needs.resolve-env.outputs.is_dry_run == 'true'
         run: echo "::notice::dry_run=true; skipping tenants:sync."
 
   # -----------------------------------------------------------------------
@@ -452,8 +498,8 @@ jobs:
     needs: [resolve-env, sync]
     if: |
       always() &&
-      (env.TARGET_SEGMENT == 'onboarding' ||
-       (env.TARGET_SEGMENT == 'all' && (needs.sync.result == 'success' || needs.sync.result == 'skipped')))
+      (needs.resolve-env.outputs.target_segment == 'onboarding' ||
+       (needs.resolve-env.outputs.target_segment == 'all' && (needs.sync.result == 'success' || needs.sync.result == 'skipped')))
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -467,13 +513,13 @@ jobs:
       - uses: google-github-actions/setup-gcloud@v2
 
       - name: Onboard admins
-        if: env.IS_DRY_RUN == 'false'
+        if: needs.resolve-env.outputs.is_dry_run == 'false'
         run: |
           chmod +x scripts/onboard-prod.sh
           ./scripts/onboard-prod.sh
 
       - name: Dry-run note
-        if: env.IS_DRY_RUN == 'true'
+        if: needs.resolve-env.outputs.is_dry_run == 'true'
         run: echo "::notice::dry_run=true; skipping onboard-prod.sh."
 
   # -----------------------------------------------------------------------
@@ -483,8 +529,8 @@ jobs:
     needs: [resolve-env, onboarding]
     if: |
       always() &&
-      (env.TARGET_SEGMENT == 'validate' ||
-       (env.TARGET_SEGMENT == 'all' && (needs.onboarding.result == 'success' || needs.onboarding.result == 'skipped')))
+      (needs.resolve-env.outputs.target_segment == 'validate' ||
+       (needs.resolve-env.outputs.target_segment == 'all' && (needs.onboarding.result == 'success' || needs.onboarding.result == 'skipped')))
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
@@ -536,7 +582,7 @@ jobs:
       - name: Run Playwright OAuth checks
         working-directory: onboarding
         env:
-          ENVIRONMENT: ${{ env.TARGET_ENVIRONMENT }}
+          ENVIRONMENT: ${{ needs.resolve-env.outputs.target_environment }}
         run: npx playwright test 04-oauth.spec.ts
 
       - uses: actions/upload-artifact@v4
