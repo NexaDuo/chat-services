@@ -262,6 +262,9 @@ jobs:
 
       - name: Bootstrap Coolify
         if: needs.resolve-env.outputs.is_dry_run == 'false'
+        env:
+          APP_NAME: ${{ needs.resolve-env.outputs.vm_name }}
+          GCP_ZONE: ${{ env.ZONE }}
         run: |
           chmod +x scripts/bootstrap-coolify.sh
           ./scripts/bootstrap-coolify.sh
