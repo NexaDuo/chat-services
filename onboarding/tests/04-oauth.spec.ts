@@ -23,7 +23,7 @@ test.describe('Google OAuth init endpoints', () => {
     ).toMatch(/^https:\/\/accounts\.google\.com\//);
     expect(res?.status(), `Final response should be 200 (Google sign-in page); got ${res?.status()}`).toBe(200);
 
-    await ctx.dispose();
+    await ctx.close();
   });
 
   test('Dify: /console/api/oauth/login/google issues a redirect to accounts.google.com', async ({ browser }) => {
@@ -47,6 +47,6 @@ test.describe('Google OAuth init endpoints', () => {
       `Expected redirect chain to end at accounts.google.com but got ${finalUrl}. Body: ${body}`
     ).toMatch(/^https:\/\/accounts\.google\.com\//);
 
-    await ctx.dispose();
+    await ctx.close();
   });
 });

@@ -16,6 +16,8 @@ services:
         set -e
         echo "==> Running db:prepare (idempotent)";
         bundle exec rails db:prepare;
+        echo "==> Clearing onboarding if admin exists";
+        bundle exec rails r "Redis::Alfred.delete(Redis::Alfred::CHATWOOT_INSTALLATION_ONBOARDING) if User.where(type: 'SuperAdmin').exists?";
         echo "==> Chatwoot DB ready.";
     networks:
       - chat-network
