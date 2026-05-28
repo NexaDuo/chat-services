@@ -200,6 +200,8 @@ jobs:
         run: |
           chmod +x ../../../../../scripts/preflight-foundation.sh
           ../../../../../scripts/preflight-foundation.sh
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
 
       - name: Terraform plan
         working-directory: infrastructure/terraform/envs/production/foundation
