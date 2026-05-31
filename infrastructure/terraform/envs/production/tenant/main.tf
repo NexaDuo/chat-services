@@ -85,7 +85,6 @@ resource "coolify_service" "chatwoot" {
 
   depends_on = [
     coolify_service.shared,
-    coolify_service_envs.shared,
   ]
 
   lifecycle {
@@ -187,7 +186,6 @@ resource "coolify_service" "dify" {
 
   depends_on = [
     coolify_service.shared,
-    coolify_service_envs.shared,
   ]
 
   lifecycle {
@@ -337,9 +335,7 @@ resource "coolify_service" "nexaduo" {
 
   depends_on = [
     coolify_service.chatwoot,
-    coolify_service_envs.chatwoot,
     coolify_service.dify,
-    coolify_service_envs.dify,
   ]
 
   lifecycle {
