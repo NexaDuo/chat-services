@@ -13,4 +13,20 @@ To ensure status synchronization, functional UI (Logs/Terminal), and stable depl
 
 ---
 
-*Last updated: 2026-05-08*
+## Local Development in WSL2 (Docker Desktop Integration)
+
+When running the stack or Coolify locally in Windows Subsystem for Linux (WSL2):
+
+1. **Disable Native Docker Daemon:** The native Linux `docker.service` and `docker.socket` managed by systemd inside the WSL distro must be disabled to avoid port and socket mapping conflicts:
+   ```bash
+   sudo systemctl stop docker.service docker.socket
+   sudo systemctl disable docker.service docker.socket
+   ```
+2. **Use Docker Desktop WSL2 Integration:** Configure Docker Desktop on Windows (Settings > Resources > WSL integration) to expose its daemon to your WSL distro. This mounts a unified `/var/run/docker.sock` that communicates with the Windows host.
+3. **Automated Setup Script:** Run the helper script `scripts/setup-local-wsl.sh` to automatically clean up native daemon conflicts, fix socket permissions, and verify integration.
+4. **Hosts Mapping:** Ensure local domains (e.g., `chat.nexaduo.com`) are mapped to `127.0.0.1` in the Windows hosts file (`C:\Windows\System32\drivers\etc\hosts`) to access them through Traefik.
+
+---
+
+*Last updated: 2026-05-31*
+

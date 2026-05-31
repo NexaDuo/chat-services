@@ -162,11 +162,24 @@ gcloud compute ssh "$SSH_USER@$VM_NAME" \
   --tunnel-through-iap \
   --command '
     sudo usermod -aG docker ubuntu
-    PRIV_KEY_FILE=$(sudo ls /data/coolify/ssh/keys/ssh_key* | grep -v ".lock" | head -n 1)
+    sudo chgrp -R docker /data/coolify
+    sudo chmod -R g+rX /data/coolify
+    echo "Waiting for Coolify to generate SSH key..."
+    for i in $(seq 1 30); do
+      PRIV_KEY_FILE=$(sudo find /data/coolify/ssh/keys -name "ssh_key*" ! -name "*.lock" | head -n 1)
+      if [ -n "$PRIV_KEY_FILE" ]; then
+        break
+      fi
+      sleep 2
+    done
     if [ -n "$PRIV_KEY_FILE" ]; then
       PUB_KEY=$(sudo ssh-keygen -y -f "$PRIV_KEY_FILE")
       echo "$PUB_KEY coolify-internal" | sudo tee -a /home/ubuntu/.ssh/authorized_keys > /dev/null
       sudo docker exec coolify sh -c "mkdir -p /home/www-data/.ssh && ssh-keyscan -H host.docker.internal >> /home/www-data/.ssh/known_hosts && chown -R 9999:9999 /home/www-data/.ssh"
+      echo "Coolify SSH key authorized."
+    else
+      echo "Error: Coolify SSH key was not generated in time." >&2
+      exit 1
     fi
   '
 
