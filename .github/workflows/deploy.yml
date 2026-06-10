@@ -428,7 +428,7 @@ jobs:
           ZONE: ${{ env.ZONE }}
           VM_NAME: ${{ needs.resolve-env.outputs.vm_name }}
           SKIP_GRAFANA: ${{ (inputs.skip_grafana || 'true') && 'true' || 'false' }}
-          DNS_SUFFIX: ${{ needs.resolve-env.outputs.target_environment == 'production' && '' || '-stg' }}
+          DNS_SUFFIX: ${{ needs.resolve-env.outputs.target_environment != 'production' && '-stg' || '' }}
         run: |
           chmod +x scripts/refresh-coolify-routes.sh
           ./scripts/refresh-coolify-routes.sh
@@ -535,8 +535,8 @@ jobs:
       - name: Onboard admins
         if: needs.resolve-env.outputs.is_dry_run == 'false'
         env:
-          CHATWOOT_URL: https://chat${{ needs.resolve-env.outputs.target_environment == 'production' && '' || '-stg' }}.${{ env.BASE_DOMAIN }}
-          DIFY_URL: https://dify${{ needs.resolve-env.outputs.target_environment == 'production' && '' || '-stg' }}.${{ env.BASE_DOMAIN }}
+          CHATWOOT_URL: https://chat${{ needs.resolve-env.outputs.target_environment != 'production' && '-stg' || '' }}.${{ env.BASE_DOMAIN }}
+          DIFY_URL: https://dify${{ needs.resolve-env.outputs.target_environment != 'production' && '-stg' || '' }}.${{ env.BASE_DOMAIN }}
         run: |
           chmod +x scripts/onboard-prod.sh
           ./scripts/onboard-prod.sh

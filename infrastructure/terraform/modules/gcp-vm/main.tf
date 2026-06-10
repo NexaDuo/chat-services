@@ -122,6 +122,15 @@ resource "google_compute_instance" "vm" {
     }
   }
 
+  # Dedicated Postgres data disk, attached inline so it is managed atomically
+  # with the instance. The previous standalone google_compute_attached_disk
+  # resource detached the disk on every apply, corrupting the ext4 filesystem
+  # and the Postgres data dir (observed on both staging and production).
+  attached_disk {
+    source      = google_compute_disk.postgres_disk.id
+    device_name = "postgres-disk"
+  }
+
   network_interface {
     subnetwork = google_compute_subnetwork.subnet.id
     access_config {
@@ -148,15 +157,9 @@ output "public_ip" {
 }
 
 resource "google_compute_disk" "postgres_disk" {
-  name  = "${var.name}-postgres-disk"
-  type  = "pd-ssd"
-  zone  = var.zone
-  size  = var.disk_size
-}
-
-resource "google_compute_attached_disk" "postgres_attached" {
-  device_name = "postgres-disk"
-  disk        = google_compute_disk.postgres_disk.id
-  instance    = google_compute_instance.vm.id
+  name = "${var.name}-postgres-disk"
+  type = "pd-ssd"
+  zone = var.zone
+  size = var.disk_size
 }
 
