@@ -557,8 +557,9 @@ jobs:
         needs.tenant.result == 'success' && 
         (needs.onboarding.result == 'success' || needs.onboarding.result == 'skipped')))
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     strategy:
+      fail-fast: false
       matrix:
         tenant: ${{ fromJson(needs.resolve-env.outputs.tenants) }}
     steps:
@@ -592,6 +593,24 @@ jobs:
 
           [[ $fail -eq 0 ]] || { echo "::error::Smoke checks failed."; exit 1; }
 
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOYER_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Fetch and mask validation secrets
+        id: secrets
+        run: |
+          ADMIN_PASSWORD=$(gcloud secrets versions access latest --secret=admin_password --project="${PROJECT_ID}")
+          echo "::add-mask::$ADMIN_PASSWORD"
+          echo "admin_password=$ADMIN_PASSWORD" >> "$GITHUB_OUTPUT"
+
+          HANDOFF_SECRET=$(gcloud secrets versions access latest --secret=handoff_shared_secret --project="${PROJECT_ID}")
+          echo "::add-mask::$HANDOFF_SECRET"
+          echo "handoff_secret=$HANDOFF_SECRET" >> "$GITHUB_OUTPUT"
+
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -604,11 +623,40 @@ jobs:
           npm ci
           npx playwright install --with-deps chromium
 
-      - name: Run Playwright OAuth checks
+      # Functional validation suite (gates the deploy). Environment-aware via
+      # ENVIRONMENT + per-tenant URLs; covers infra reachability, Chatwoot/Dify
+      # login, Google OAuth wiring, and middleware tenant resolution.
+      - name: Run Playwright validation suite
         working-directory: onboarding
         env:
           ENVIRONMENT: ${{ needs.resolve-env.outputs.target_environment }}
-        run: npx playwright test 04-oauth.spec.ts
+          ADMIN_EMAIL: alexandre@nexaduo.com
+          ADMIN_PASSWORD: ${{ steps.secrets.outputs.admin_password }}
+          HANDOFF_SHARED_SECRET: ${{ steps.secrets.outputs.handoff_secret }}
+          CHATWOOT_URL: ${{ matrix.tenant.infra.chatwoot_url }}
+          DIFY_URL: ${{ matrix.tenant.infra.dify_url }}
+          DIFY_API_URL: ${{ matrix.tenant.infra.dify_url }}
+          GRAFANA_URL: https://grafana${{ needs.resolve-env.outputs.target_environment != 'production' && '-stg' || '' }}.${{ env.BASE_DOMAIN }}
+          COOLIFY_URL: https://coolify${{ needs.resolve-env.outputs.target_environment != 'production' && '-stg' || '' }}.${{ env.BASE_DOMAIN }}
+          MIDDLEWARE_URL: https://middleware${{ needs.resolve-env.outputs.target_environment != 'production' && '-stg' || '' }}.${{ env.BASE_DOMAIN }}
+        run: |
+          npx playwright test \
+            01-infra.spec.ts \
+            03-smoke.spec.ts \
+            04-oauth.spec.ts \
+            07-hybrid-tenants.spec.ts
+
+      # Console/network error scan across the app frontends. Reported but not
+      # blocking, since SPAs routinely emit benign console noise.
+      - name: Console & network error scan (non-blocking)
+        working-directory: onboarding
+        continue-on-error: true
+        env:
+          CHATWOOT_URL: ${{ matrix.tenant.infra.chatwoot_url }}
+          DIFY_URL: ${{ matrix.tenant.infra.dify_url }}
+          GRAFANA_URL: https://grafana${{ needs.resolve-env.outputs.target_environment != 'production' && '-stg' || '' }}.${{ env.BASE_DOMAIN }}
+          COOLIFY_URL: https://coolify${{ needs.resolve-env.outputs.target_environment != 'production' && '-stg' || '' }}.${{ env.BASE_DOMAIN }}
+        run: npx playwright test 05-console-network.spec.ts
 
       - uses: actions/upload-artifact@v4
         if: always()
