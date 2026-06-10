@@ -7,6 +7,9 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: postgres
       TZ: ${TZ:-UTC}
+      # Use a subdirectory of the mounted disk as PGDATA. Mounting the ext4
+      # disk root directly fails initdb because of its lost+found directory.
+      PGDATA: /var/lib/postgresql/data/pgdata
     volumes:
       - /opt/nexaduo/postgres-data:/var/lib/postgresql/data
       - /opt/nexaduo/postgres/01-init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
