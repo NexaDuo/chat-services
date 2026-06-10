@@ -9,6 +9,7 @@
 .claude/
 skills-lock.json
 .antigravitycli/
+.serena/
 
 # Node
 node_modules/

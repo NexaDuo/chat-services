@@ -28,6 +28,11 @@ variable "proxied" {
   default = true
 }
 
+variable "dns_suffix" {
+  type    = string
+  default = ""
+}
+
 resource "random_id" "tunnel_secret" {
   byte_length = 32
 }
@@ -45,31 +50,31 @@ resource "cloudflare_zero_trust_tunnel_cloudflared_config" "config" {
   config {
     # Ingress rules
     ingress_rule {
-      hostname = "realtime.${var.base_domain}"
+      hostname = "realtime${var.dns_suffix}.${var.base_domain}"
       service  = "http://coolify-realtime:6001"
     }
     ingress_rule {
-      hostname = "coolify.${var.base_domain}"
+      hostname = "coolify${var.dns_suffix}.${var.base_domain}"
       service  = "http://coolify-proxy:80"
     }
     ingress_rule {
-      hostname = "chat.${var.base_domain}"
+      hostname = "chat${var.dns_suffix}.${var.base_domain}"
       service  = "http://coolify-proxy:80"
     }
     ingress_rule {
-      hostname = "dify.${var.base_domain}"
+      hostname = "dify${var.dns_suffix}.${var.base_domain}"
       service  = "http://coolify-proxy:80"
     }
     ingress_rule {
-      hostname = "grafana.${var.base_domain}"
+      hostname = "grafana${var.dns_suffix}.${var.base_domain}"
       service  = "http://coolify-proxy:80"
     }
     ingress_rule {
-      hostname = "evolution.${var.base_domain}"
+      hostname = "evolution${var.dns_suffix}.${var.base_domain}"
       service  = "http://coolify-proxy:80"
     }
     ingress_rule {
-      hostname = "middleware.${var.base_domain}"
+      hostname = "middleware${var.dns_suffix}.${var.base_domain}"
       service  = "http://coolify-proxy:80"
     }
     ingress_rule {

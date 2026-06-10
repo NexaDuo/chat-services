@@ -65,7 +65,7 @@ resource "coolify_service_envs" "shared" {
   }
   env {
     key        = "TUNNEL_TOKEN"
-    value      = data.google_secret_manager_secret_version.tunnel_token.secret_data
+    value      = data.terraform_remote_state.foundation.outputs.tunnel_token
     is_literal = true
   }
 }

@@ -62,8 +62,14 @@ data "google_secret_manager_secret_version" "coolify_url" {
   secret = "coolify_url"
 }
 
-data "google_secret_manager_secret_version" "tunnel_token" {
-  secret = "tunnel_token"
+data "terraform_remote_state" "foundation" {
+  backend   = "gcs"
+  workspace = terraform.workspace
+
+  config = {
+    bucket = "nexaduo-terraform-state"
+    prefix = "terraform/foundation"
+  }
 }
 
 data "google_secret_manager_secret_version" "google_oauth_client_id" {

@@ -95,6 +95,7 @@ module "tunnel" {
   name        = "${var.app_name}-${local.env}-tunnel"
   zone_id     = var.cloudflare_zone_id
   base_domain = var.base_domain
+  dns_suffix  = local.dns_suffix
   proxied     = true
 }
 
