@@ -20,6 +20,15 @@ PROJECT_ID="${GCP_PROJECT_ID:-nexaduo-492818}"
 POOL_ID="${WIF_POOL_ID:-github}"
 PROVIDER_ID="${WIF_PROVIDER_ID:-nexaduo-chat-services}"
 
+# Pre-existing global singletons shared across the prod-tier workspaces.
+# When provisioning production greenfield (empty `production` workspace) these
+# already exist in GCP (originally created under the `default` workspace), so a
+# plain apply would 409. Import them into the current state instead.
+PUBLISHER_SA_ID="${PUBLISHER_SA_ID:-gh-publisher}"
+PUBLISHER_SA_EMAIL="${PUBLISHER_SA_ID}@${PROJECT_ID}.iam.gserviceaccount.com"
+AR_REPO_ID="${AR_REPO_ID:-nexaduo}"
+AR_LOCATION="${AR_LOCATION:-us-central1}"
+
 pool_state() {
   gcloud iam workload-identity-pools describe "${POOL_ID}" \
     --location=global --project="${PROJECT_ID}" \
@@ -58,7 +67,7 @@ fi
 
 if [[ "${POOL_STATE}" == "ACTIVE" ]]; then
   ensure_in_state \
-    "module.gh_publisher.google_iam_workload_identity_pool.github" \
+    "module.gh_publisher[0].google_iam_workload_identity_pool.github" \
     "projects/${PROJECT_ID}/locations/global/workloadIdentityPools/${POOL_ID}" \
     "$@"
 
@@ -73,8 +82,26 @@ if [[ "${POOL_STATE}" == "ACTIVE" ]]; then
 
   if [[ "${PROVIDER_STATE}" == "ACTIVE" ]]; then
     ensure_in_state \
-      "module.gh_publisher.google_iam_workload_identity_pool_provider.github" \
+      "module.gh_publisher[0].google_iam_workload_identity_pool_provider.github" \
       "projects/${PROJECT_ID}/locations/global/workloadIdentityPools/${POOL_ID}/providers/${PROVIDER_ID}" \
       "$@"
   fi
+fi
+
+# Publisher service account (impersonated by GitHub Actions via WIF).
+if gcloud iam service-accounts describe "${PUBLISHER_SA_EMAIL}" \
+     --project="${PROJECT_ID}" >/dev/null 2>&1; then
+  ensure_in_state \
+    "module.gh_publisher[0].google_service_account.publisher" \
+    "projects/${PROJECT_ID}/serviceAccounts/${PUBLISHER_SA_EMAIL}" \
+    "$@"
+fi
+
+# Artifact Registry repository that holds the stack images.
+if gcloud artifacts repositories describe "${AR_REPO_ID}" \
+     --location="${AR_LOCATION}" --project="${PROJECT_ID}" >/dev/null 2>&1; then
+  ensure_in_state \
+    "module.artifact_registry.google_artifact_registry_repository.main" \
+    "projects/${PROJECT_ID}/locations/${AR_LOCATION}/repositories/${AR_REPO_ID}" \
+    "$@"
 fi
