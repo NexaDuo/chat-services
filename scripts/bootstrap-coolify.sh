@@ -210,6 +210,15 @@ gcloud compute ssh "$SSH_USER@$VM_NAME" \
   '
 rm -rf "${SEED_TMP}"
 
+# 3d. Authenticate Docker against Artifact Registry on the VM.
+# The nexaduo stack pulls private images (middleware, self-healing-agent). The
+# VM SA has artifactregistry.reader, but Docker needs the gcloud credential
+# helper configured or `docker compose up` aborts with "Unauthenticated request".
+echo "Configuring Docker auth for Artifact Registry on the VM..."
+gcloud compute ssh "$SSH_USER@$VM_NAME" \
+  --project "$PROJECT_ID" --zone "$ZONE" --tunnel-through-iap --quiet \
+  --command "sudo gcloud auth configure-docker ${GCP_REGION:-us-central1}-docker.pkg.dev --quiet"
+
 # 4. Create and Get Destination UUID via Tinker
 echo "Ensuring destination 'nexaduo-network' via Tinker..."
 DEST_TINKER_CMD='
