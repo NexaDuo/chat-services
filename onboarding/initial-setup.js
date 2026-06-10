@@ -24,8 +24,14 @@ async function setupChatwoot() {
     await page.goto(`${CHATWOOT_URL}/installation/onboarding`, { waitUntil: 'networkidle', timeout: 90000 });
     console.log('  - Page loaded:', page.url());
 
-    if (page.url().includes('/login') || page.url().includes('/app/accounts')) {
-      console.log('  - Chatwoot is already configured.');
+    // Idempotency: an already-onboarded Chatwoot redirects away from the
+    // onboarding form (to /, /app/login, /app/accounts, ...). Treat the
+    // absence of the signup form as "already configured" instead of timing
+    // out on page.fill.
+    const onboardingForm = page.locator('input[name="user[name]"]');
+    const formVisible = await onboardingForm.isVisible({ timeout: 10000 }).catch(() => false);
+    if (!formVisible || !page.url().includes('/installation/onboarding')) {
+      console.log('  - Chatwoot is already configured (no onboarding form).');
       await browser.close();
       return true;
     }
