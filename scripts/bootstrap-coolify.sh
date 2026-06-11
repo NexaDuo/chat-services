@@ -219,6 +219,27 @@ gcloud compute ssh "$SSH_USER@$VM_NAME" \
   --project "$PROJECT_ID" --zone "$ZONE" --tunnel-through-iap --quiet \
   --command "sudo gcloud auth configure-docker ${GCP_REGION:-us-central1}-docker.pkg.dev --quiet"
 
+# 3e. Install the daily Postgres backup cron on the VM.
+# The stack has no backups otherwise (scripts/backup.sh is local-dev only and
+# was never wired). We upload scripts/vm-backup.sh (container/DB-agnostic) and
+# register a root cron that dumps every DB nightly to the GCS backup bucket.
+# Idempotent: the existing cron line is stripped before re-adding.
+BACKUP_BUCKET="${BACKUP_BUCKET:-nexaduo-coolify-backups}"
+echo "Installing daily backup cron on the VM (bucket: ${BACKUP_BUCKET})..."
+gcloud compute scp \
+  --project "$PROJECT_ID" --zone "$ZONE" --tunnel-through-iap --quiet \
+  "${PROJECT_ROOT}/scripts/vm-backup.sh" "$SSH_USER@$VM_NAME:/tmp/vm-backup.sh"
+gcloud compute ssh "$SSH_USER@$VM_NAME" \
+  --project "$PROJECT_ID" --zone "$ZONE" --tunnel-through-iap --quiet \
+  --command "
+    sudo mkdir -p /opt/nexaduo/backups
+    sudo mv /tmp/vm-backup.sh /opt/nexaduo/vm-backup.sh
+    sudo chmod +x /opt/nexaduo/vm-backup.sh
+    CRON_LINE='0 3 * * * BACKUP_BUCKET=${BACKUP_BUCKET} /opt/nexaduo/vm-backup.sh >> /var/log/nexaduo-backup.log 2>&1'
+    ( sudo crontab -l 2>/dev/null | grep -vF '/opt/nexaduo/vm-backup.sh'; echo \"\$CRON_LINE\" ) | sudo crontab -
+    echo 'Backup cron installed:'; sudo crontab -l | grep vm-backup.sh
+  "
+
 # 4. Create and Get Destination UUID via Tinker
 echo "Ensuring destination 'nexaduo-network' via Tinker..."
 DEST_TINKER_CMD='

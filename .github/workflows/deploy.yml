@@ -81,6 +81,7 @@ jobs:
       is_dry_run: ${{ steps.resolve.outputs.is_dry_run }}
       target_segment: ${{ steps.resolve.outputs.target_segment }}
       vm_name: ${{ steps.resolve.outputs.vm_name }}
+      backup_bucket: ${{ steps.resolve.outputs.backup_bucket }}
       primary_url: ${{ steps.resolve.outputs.primary_url }}
       tenants: ${{ steps.resolve.outputs.tenants }}
     steps:
@@ -124,6 +125,15 @@ jobs:
             VM="nexaduo-chat-services-staging"
           fi
           echo "vm_name=$VM" >> "$GITHUB_OUTPUT"
+
+          # 4b. Resolve BACKUP_BUCKET (mirrors foundation backup_storage:
+          #     is_prod ? var.backup_bucket_name : "${name}-${env}").
+          if [[ "$ENV" == "production" ]]; then
+            BUCKET="nexaduo-coolify-backups"
+          else
+            BUCKET="nexaduo-coolify-backups-$ENV"
+          fi
+          echo "backup_bucket=$BUCKET" >> "$GITHUB_OUTPUT"
 
           # 5. Parse tenants.yaml to extract matching active tenants
           TENANTS_JSON=$(yq eval -o=json ".tenants[] | select(.status == \"active\" and .environment == \"$ENV\")" tenants.yaml | jq -c -s '.')
@@ -265,6 +275,7 @@ jobs:
         env:
           APP_NAME: ${{ needs.resolve-env.outputs.vm_name }}
           GCP_ZONE: ${{ env.ZONE }}
+          BACKUP_BUCKET: ${{ needs.resolve-env.outputs.backup_bucket }}
         run: |
           chmod +x scripts/bootstrap-coolify.sh
           ./scripts/bootstrap-coolify.sh
