@@ -348,27 +348,13 @@ jobs:
       - name: Compute -target args (tenant_subset)
         id: targets
         run: |
+          # Only coolify_service_envs are managed (services are data sources).
           case "${{ inputs.tenant_subset || 'all' }}" in
-            chatwoot)
-              echo "args=-target=coolify_service.chatwoot -target=coolify_service_envs.chatwoot" >> "$GITHUB_OUTPUT"
-              echo "stage1=-target=coolify_project.main -target=coolify_service.chatwoot" >> "$GITHUB_OUTPUT"
-              ;;
-            dify)
-              echo "args=-target=coolify_service.dify     -target=coolify_service_envs.dify"     >> "$GITHUB_OUTPUT"
-              echo "stage1=-target=coolify_project.main -target=coolify_service.dify" >> "$GITHUB_OUTPUT"
-              ;;
-            nexaduo)
-              echo "args=-target=coolify_service.nexaduo  -target=coolify_service_envs.nexaduo"  >> "$GITHUB_OUTPUT"
-              echo "stage1=-target=coolify_project.main -target=coolify_service.nexaduo" >> "$GITHUB_OUTPUT"
-              ;;
-            shared)
-              echo "args=-target=coolify_service.shared   -target=coolify_service_envs.shared"   >> "$GITHUB_OUTPUT"
-              echo "stage1=-target=coolify_project.main -target=coolify_service.shared" >> "$GITHUB_OUTPUT"
-              ;;
-            *)
-              echo "args=" >> "$GITHUB_OUTPUT"
-              echo "stage1=-target=coolify_project.main -target=coolify_service.shared -target=coolify_service.chatwoot -target=coolify_service.dify -target=coolify_service.nexaduo" >> "$GITHUB_OUTPUT"
-              ;;
+            chatwoot) echo "args=-target=coolify_service_envs.chatwoot" >> "$GITHUB_OUTPUT" ;;
+            dify)     echo "args=-target=coolify_service_envs.dify"     >> "$GITHUB_OUTPUT" ;;
+            nexaduo)  echo "args=-target=coolify_service_envs.nexaduo"  >> "$GITHUB_OUTPUT" ;;
+            shared)   echo "args=-target=coolify_service_envs.shared"   >> "$GITHUB_OUTPUT" ;;
+            *)        echo "args=" >> "$GITHUB_OUTPUT" ;;
           esac
 
       - name: Terraform plan
@@ -383,15 +369,10 @@ jobs:
         if: needs.resolve-env.outputs.is_dry_run == 'false'
         working-directory: infrastructure/terraform/envs/production/tenant
         run: |
-          echo "=== Step 1: Pre-creating projects and services to trigger Coolify auto-population ==="
-          terraform apply -auto-approve -var-file=../terraform.tfvars ${{ steps.targets.outputs.stage1 }}
-
-          echo "=== Step 2: Cleaning auto-populated placeholder environment variables ==="
-          chmod +x ../../../../../scripts/clean-service-envs.sh
-          ../../../../../scripts/clean-service-envs.sh
-
-          echo "=== Step 3: Performing clean plan and full apply with actual environment values ==="
-          terraform plan -var-file=../terraform.tfvars ${{ steps.targets.outputs.args }} -out=tfplan.bin
+          # Coolify services are data sources (the provider can't UPDATE a
+          # service — it sends destination_uuid, which Coolify rejects), so the
+          # old create+clean-envs dance is gone. Only coolify_service_envs are
+          # managed, applied in-place via PATCH from the plan computed above.
           terraform apply -auto-approve tfplan.bin
 
       - name: Redeploy services to pick up env vars
@@ -403,8 +384,7 @@ jobs:
           
           echo "=== Re-deploying tenant services ==="
           for svc in shared chatwoot dify nexaduo; do
-            uuid="$(cd infrastructure/terraform/envs/production/tenant && terraform state show "coolify_service.${svc}" 2>/dev/null \
-              | awk '/^    uuid /{gsub(/"/,""); print $3; exit}' || true)"
+            uuid="$(cd infrastructure/terraform/envs/production/tenant && terraform output -raw "coolify_${svc}_service_uuid" 2>/dev/null || true)"
             [[ -z "${uuid}" ]] && continue
             echo "  deploying ${svc} (${uuid})..."
             curl -sS -o /dev/null -X POST -H "Authorization: Bearer ${token}" "${base}/api/v1/deploy?uuid=${uuid}"
