@@ -203,9 +203,26 @@ gcloud compute ssh "$SSH_USER@$VM_NAME" \
     sudo mkdir -p /opt/nexaduo/postgres
     sudo rm -rf /opt/nexaduo/postgres/01-init.sql
     sudo mv /tmp/01-init.sql /opt/nexaduo/postgres/01-init.sql
+
+    # Promtail bind-mounts the single promtail.yaml *file*, so replacing the
+    # observability dir below swaps its inode and a running promtail keeps the
+    # old config (it only reads -config.file at startup). Restart it iff the
+    # config content actually changed, so config edits take effect without
+    # churning the container on no-op deploys.
+    NEW_PROMTAIL_SHA="$(sha256sum /tmp/observability/promtail/promtail.yaml 2>/dev/null | awk "{print \$1}")"
     sudo rm -rf /opt/nexaduo/observability
     sudo mv /tmp/observability /opt/nexaduo/observability
     rm -f /tmp/seed.tar.gz
+
+    PT="$(sudo docker ps --filter name=promtail --format "{{.Names}}" | head -1)"
+    if [ -n "$PT" ] && [ -n "$NEW_PROMTAIL_SHA" ]; then
+      CUR_PROMTAIL_SHA="$(sudo docker exec "$PT" sha256sum /etc/promtail/promtail.yaml 2>/dev/null | awk "{print \$1}")"
+      if [ "$NEW_PROMTAIL_SHA" != "$CUR_PROMTAIL_SHA" ]; then
+        echo "Promtail config changed; restarting $PT to reload."
+        sudo docker restart "$PT" >/dev/null || true
+      fi
+    fi
+
     echo "Seeded: $(sudo stat -c %F /opt/nexaduo/postgres/01-init.sql) 01-init.sql"
   '
 rm -rf "${SEED_TMP}"
