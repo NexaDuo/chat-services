@@ -36,6 +36,27 @@ The stack uses a **Hybrid Deployment Model**:
 1. **Foundation (Terraform):** Mature infrastructure components (GCP VM, VPC, Cloudflare Tunnel/DNS, Secrets) are managed via Terraform in `infrastructure/terraform/envs/production/foundation`.
 2. **App Layer (Bash/Docker):** Services are deployed directly via `scripts/deploy-tenant-direct.sh`, which uses SCP/SSH to transfer configurations and start Docker Compose on the VM. This bypasses instabilities in the Coolify Terraform provider.
 
+### Standing up (or rebuilding) an environment from scratch
+
+The tenant Terraform layer manages the four Coolify services as **data sources**
+keyed by `coolify_service_uuids` (the provider can't UPDATE a service — see the
+AVOID list). So the services must pre-exist before `tenant` runs. To provision a
+fresh environment (greenfield, or a clean rebuild):
+
+1. Ensure per-env connection secrets exist: `coolify_url_<env>`,
+   `coolify_api_token_<env>` (Sanctum `<id>|<plaintext>`), `coolify_destination_uuid_<env>`.
+2. `scripts/create-coolify-services.sh <env>` — idempotently creates the Coolify
+   project + the 4 compose services (`nexaduo-{shared,chatwoot,dify,app}[-<env>]`)
+   and prints the `coolify_service_uuids` HCL map. Re-runs and prod are no-ops.
+3. Merge that map into `terraform_tfvars_<env>` (new Secret Manager version).
+4. The normal pipeline takes over: `tenant` reads the data sources, applies
+   `coolify_service_envs`, and redeploys; then `routes`/`sync`/`onboarding`/`validate`.
+
+A teardown is just the inverse: `DELETE /api/v1/services/<uuid>` for each service
+(with `delete_volumes=true`), clear the Postgres bind-mount dir
+`/opt/nexaduo/postgres-data` on the VM (it survives volume deletes), and
+`terraform state rm` the now-absent managed resources.
+
 ## Configuration & Dynamics
 
 The stack uses a **hybrid configuration model**:

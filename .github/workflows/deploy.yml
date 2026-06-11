@@ -492,8 +492,16 @@ jobs:
             --tunnel-through-iap \
             --command='
               set -euo pipefail
-              PG=$(sudo docker ps --filter name=^/postgres- --format "{{.Names}}" | head -1)
-              if [ -z "$PG" ]; then echo "ERROR: postgres container not found" >&2; exit 1; fi
+              # Pick the postgres container that actually owns the middleware DB
+              # (a host can transiently have more than one postgres-* container;
+              # head -1 could pick the wrong one). Probe by connecting to it.
+              PG=""
+              for c in $(sudo docker ps --filter name=^/postgres- --format "{{.Names}}"); do
+                if sudo docker exec "$c" psql -U postgres -d middleware -tAc "SELECT 1" >/dev/null 2>&1; then
+                  PG="$c"; break
+                fi
+              done
+              if [ -z "$PG" ]; then echo "ERROR: no postgres container with a middleware DB found" >&2; exit 1; fi
               echo "Seeding tenants into $PG (db=middleware)"
               sudo docker exec -i "$PG" psql -U postgres -d middleware -v ON_ERROR_STOP=1
             ' < /tmp/tenant-seed.sql
