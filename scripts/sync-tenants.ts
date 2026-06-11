@@ -91,6 +91,45 @@ async function syncDatabase(pool: Pool, tenants: TenantConfig[]) {
   }
 }
 
+/** Quotes a value for inline SQL, or emits NULL. */
+function sqlLiteral(value: string | null): string {
+  if (value === null || value === undefined) return 'NULL';
+  return `'${String(value).replace(/'/g, "''")}'`;
+}
+
+/**
+ * Builds an idempotent seed script (same upsert as `syncDatabase`) for piping
+ * straight into `psql`. Used by CI to seed the middleware DB through
+ * `docker exec` on the VM, because Postgres is only reachable on the internal
+ * docker network (`postgres:5432`) and is not published on the VM host.
+ */
+function buildSeedSql(tenants: TenantConfig[]): string {
+  const rows = tenants.map((tenant) => {
+    const values = [
+      tenant.slug,
+      tenant.slug,
+      tenant.name,
+      tenant.chatwoot_account_id.toString(),
+      tenant.status,
+      tenant.infra?.type || 'shared',
+      tenant.infra?.chatwoot_url || null,
+      tenant.infra?.dify_url || null,
+    ].map(sqlLiteral).join(', ');
+    return `INSERT INTO tenants (slug, subdomain, name, chatwoot_account_id, status, infra_type, chatwoot_url, dify_url)
+VALUES (${values})
+ON CONFLICT (slug) DO UPDATE
+SET subdomain = EXCLUDED.subdomain,
+    name = EXCLUDED.name,
+    chatwoot_account_id = EXCLUDED.chatwoot_account_id,
+    status = EXCLUDED.status,
+    infra_type = EXCLUDED.infra_type,
+    chatwoot_url = EXCLUDED.chatwoot_url,
+    dify_url = EXCLUDED.dify_url,
+    updated_at = CURRENT_TIMESTAMP;`;
+  });
+  return `BEGIN;\n${rows.join('\n')}\nCOMMIT;\n`;
+}
+
 function syncSecrets(projectId: string, tenants: TenantConfig[]) {
   logger.log(`Syncing GCP Secrets for project: ${projectId}...`);
   for (const tenant of tenants) {
@@ -114,11 +153,9 @@ function syncSecrets(projectId: string, tenants: TenantConfig[]) {
   }
 }
 
-// The sync runs against Postgres through an IAP SSH tunnel (CI) whose first
-// query can race the remote forward coming up, occasionally surfacing as a
-// transient `ECONNRESET`/`connection terminated`. Retry such failures rather
-// than failing the whole deploy (which would leave the tenants table unseeded
-// and flake the downstream tenant-resolution checks).
+// The direct DB-sync path (local dev / non-CI) connects over TCP and can hit a
+// transient `ECONNRESET`/`connection terminated` on a flaky link. Retry such
+// failures rather than aborting (CI seeds via psql; see --print-sql).
 const TRANSIENT_CODES = new Set([
   'ECONNRESET', 'ECONNREFUSED', 'ETIMEDOUT', 'EPIPE', 'ENETUNREACH',
   '57P01', '08006', '08003', '08001', // pg: admin shutdown / connection failures
@@ -157,11 +194,27 @@ async function main() {
   
   const fileContent = fs.readFileSync(yamlPath, 'utf8');
   const config = yaml.parse(fileContent) as TenantsYaml;
-  
-  const targetEnv = process.argv[2] || process.env.ENVIRONMENT || 'production';
-  logger.log(`Target filtering environment: ${targetEnv}`);
+
+  const args = process.argv.slice(2);
+  const printSqlOnly = args.includes('--print-sql');
+  const positional = args.filter((a) => !a.startsWith('--'));
+  const targetEnv = positional[0] || process.env.ENVIRONMENT || 'production';
 
   const targetTenants = config.tenants.filter(t => (t.environment || 'production') === targetEnv);
+
+  // --print-sql: emit an idempotent seed script to stdout and exit. CI pipes
+  // this into `docker exec ... psql` on the VM (Postgres is docker-network-only,
+  // not reachable over TCP from the runner). Keep stdout pure SQL.
+  if (printSqlOnly) {
+    if (targetTenants.length === 0) {
+      process.stderr.write(`No tenants for environment ${targetEnv}; nothing to seed.\n`);
+      return;
+    }
+    process.stdout.write(buildSeedSql(targetTenants));
+    return;
+  }
+
+  logger.log(`Target filtering environment: ${targetEnv}`);
   logger.log(`Found ${targetTenants.length} tenants for environment ${targetEnv}`);
 
   if (targetTenants.length === 0) {
@@ -169,25 +222,32 @@ async function main() {
     return;
   }
 
-  const connectionString = process.env.DATABASE_URL;
-  if (!connectionString) {
-    logger.error('Error: DATABASE_URL environment variable is not set');
-    process.exit(1);
-  }
+  // SKIP_DB_SYNC: CI seeds the DB out-of-band via psql (see --print-sql) and
+  // uses this invocation only to reconcile GCP per-tenant secrets.
+  const skipDbSync = process.env.SKIP_DB_SYNC === 'true';
 
   try {
-    // Recreate the pool on each attempt: a reset connection can leave the pool
-    // unusable, and `SELECT 1` probes the tunnel before we start writing. The
-    // sync itself is idempotent (ON CONFLICT DO UPDATE), so re-running is safe.
-    await withRetry('database sync', 5, async () => {
-      const pool = new Pool({ connectionString, connectionTimeoutMillis: 10000 });
-      try {
-        await pool.query('SELECT 1');
-        await syncDatabase(pool, targetTenants);
-      } finally {
-        await pool.end();
+    if (skipDbSync) {
+      logger.log('SKIP_DB_SYNC=true; skipping database sync.');
+    } else {
+      const connectionString = process.env.DATABASE_URL;
+      if (!connectionString) {
+        logger.error('Error: DATABASE_URL environment variable is not set');
+        process.exit(1);
       }
-    });
+      // Recreate the pool on each attempt: a reset connection can leave the
+      // pool unusable, and `SELECT 1` probes it before we start writing. The
+      // sync is idempotent (ON CONFLICT DO UPDATE), so re-running is safe.
+      await withRetry('database sync', 5, async () => {
+        const pool = new Pool({ connectionString, connectionTimeoutMillis: 10000 });
+        try {
+          await pool.query('SELECT 1');
+          await syncDatabase(pool, targetTenants);
+        } finally {
+          await pool.end();
+        }
+      });
+    }
 
     if (process.env.SKIP_GCP_SYNC === 'true') {
       logger.log('Skipping GCP Secrets sync as requested.');

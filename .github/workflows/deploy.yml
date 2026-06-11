@@ -467,17 +467,6 @@ jobs:
 
       - uses: google-github-actions/setup-gcloud@v2
 
-      - name: Fetch and mask secrets
-        id: secrets
-        run: |
-          DB_URL=$(gcloud secrets versions access latest --secret=${{ needs.resolve-env.outputs.target_environment }}_database_url --project="${{ env.PROJECT_ID }}")
-          echo "::add-mask::$DB_URL"
-          echo "database_url=$DB_URL" >> "$GITHUB_OUTPUT"
-
-          HANDOFF_SECRET=$(gcloud secrets versions access latest --secret=handoff_shared_secret --project="${{ env.PROJECT_ID }}")
-          echo "::add-mask::$HANDOFF_SECRET"
-          echo "handoff_secret=$HANDOFF_SECRET" >> "$GITHUB_OUTPUT"
-
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -486,30 +475,34 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Sync tenants
+      # Postgres is reachable only on the internal docker network (postgres:5432)
+      # and is not published on the VM host, so we seed by piping an idempotent
+      # SQL script into `psql` inside the postgres container over IAP SSH —
+      # no TCP tunnel, no DB password (local socket = trust), mirroring the
+      # backup runner's `docker exec` approach.
+      - name: Seed tenant table on VM
         if: needs.resolve-env.outputs.is_dry_run == 'false'
-        env:
-          DATABASE_URL: ${{ steps.secrets.outputs.database_url }}
-          HANDOFF_SHARED_SECRET: ${{ steps.secrets.outputs.handoff_secret }}
         run: |
-          echo "Establishing IAP tunnel..."
+          npm run --silent tenants:sync -- "${{ needs.resolve-env.outputs.target_environment }}" --print-sql > /tmp/tenant-seed.sql
+          echo "--- seed SQL ---"; cat /tmp/tenant-seed.sql
+
           gcloud compute ssh "${{ needs.resolve-env.outputs.vm_name }}" \
             --project="${{ env.PROJECT_ID }}" \
             --zone="${{ env.ZONE }}" \
             --tunnel-through-iap \
-            -- -L 5432:localhost:5432 -N -f
-          
-          for i in $(seq 1 10); do
-            if nc -z localhost 5432; then
-              echo "Tunnel ready."
-              break
-            fi
-            sleep 2
-          done
-          
-          npm run tenants:sync -- "${{ needs.resolve-env.outputs.target_environment }}"
-          
-          pkill -f "gcloud compute ssh.*-L 5432:localhost:5432" || true
+            --command='
+              set -euo pipefail
+              PG=$(sudo docker ps --filter name=^/postgres- --format "{{.Names}}" | head -1)
+              if [ -z "$PG" ]; then echo "ERROR: postgres container not found" >&2; exit 1; fi
+              echo "Seeding tenants into $PG (db=middleware)"
+              sudo docker exec -i "$PG" psql -U postgres -d middleware -v ON_ERROR_STOP=1
+            ' < /tmp/tenant-seed.sql
+
+      - name: Sync tenant GCP secrets
+        if: needs.resolve-env.outputs.is_dry_run == 'false'
+        env:
+          SKIP_DB_SYNC: "true"
+        run: npm run tenants:sync -- "${{ needs.resolve-env.outputs.target_environment }}"
 
       - name: Dry-run note
         if: needs.resolve-env.outputs.is_dry_run == 'true'
