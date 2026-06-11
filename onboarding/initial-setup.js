@@ -78,14 +78,27 @@ async function setupDify() {
     console.log('  - Waiting for Dify install page to render...');
     await page.waitForLoadState('networkidle', { timeout: 30000 }).catch(() => {});
     
+    // An already-configured Dify redirects /install -> /signin (or /apps). Give
+    // it a moment to redirect before deciding — it can be slow right after a
+    // restart, which previously fell through to the form fill and timed out.
+    await page.waitForURL(/\/(signin|apps)/, { timeout: 15000 }).catch(() => {});
     if (page.url().includes('/signin') || page.url().includes('/apps')) {
       console.log('  - Dify is already configured.');
       await browser.close();
       return true;
     }
 
-    await page.waitForSelector('input', { timeout: 60000 });
-    await page.getByPlaceholder(/email/i).fill(ADMIN_EMAIL);
+    // Otherwise expect the first-run setup form. If the email field never shows,
+    // treat it as already-configured rather than failing the whole deploy.
+    const emailField = page.getByPlaceholder(/email/i);
+    try {
+      await emailField.waitFor({ state: 'visible', timeout: 30000 });
+    } catch {
+      console.log('  - No Dify setup form found; assuming already configured.');
+      await browser.close();
+      return true;
+    }
+    await emailField.fill(ADMIN_EMAIL);
     await page.getByPlaceholder(/name/i).fill('NexaDuo');
 
     const passwordInputs = page.locator('input[type="password"]');
