@@ -269,14 +269,16 @@ if [ -z "$DESTINATION_UUID" ]; then
 fi
 echo "Destination UUID: $DESTINATION_UUID"
 
-# 5. Update Secret Manager
-echo "Updating Secret Manager..."
-ensure_secret "coolify_api_token"
-echo -n "$COOLIFY_TOKEN" | gcloud secrets versions add coolify_api_token --project "$PROJECT_ID" --data-file=- --quiet >/dev/null
-ensure_secret "coolify_destination_uuid"
-echo -n "$DESTINATION_UUID" | gcloud secrets versions add coolify_destination_uuid --project "$PROJECT_ID" --data-file=- --quiet >/dev/null
-ensure_secret "coolify_url"
-echo -n "http://$VM_IP:8000/api/v1" | gcloud secrets versions add coolify_url --project "$PROJECT_ID" --data-file=- --quiet >/dev/null
+# 5. Update Secret Manager (per-environment, so a staging deploy never clobbers
+#    production's Coolify connection secrets — and vice-versa).
+ENVIRONMENT="${ENVIRONMENT:-production}"
+echo "Updating Secret Manager (env=${ENVIRONMENT})..."
+ensure_secret "coolify_api_token_${ENVIRONMENT}"
+echo -n "$COOLIFY_TOKEN" | gcloud secrets versions add "coolify_api_token_${ENVIRONMENT}" --project "$PROJECT_ID" --data-file=- --quiet >/dev/null
+ensure_secret "coolify_destination_uuid_${ENVIRONMENT}"
+echo -n "$DESTINATION_UUID" | gcloud secrets versions add "coolify_destination_uuid_${ENVIRONMENT}" --project "$PROJECT_ID" --data-file=- --quiet >/dev/null
+ensure_secret "coolify_url_${ENVIRONMENT}"
+echo -n "http://$VM_IP:8000/api/v1" | gcloud secrets versions add "coolify_url_${ENVIRONMENT}" --project "$PROJECT_ID" --data-file=- --quiet >/dev/null
 
 # 6. Final cleanup and status refresh
 echo "Forcing service status refresh..."

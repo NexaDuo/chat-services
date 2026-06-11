@@ -72,3 +72,14 @@ variable "base_domain" {
   default = "nexaduo.com"
 }
 
+# UUIDs of the pre-existing Coolify services, keyed by stack
+# (shared/chatwoot/dify/nexaduo). The Coolify provider (v0.10.2) cannot UPDATE a
+# service (it sends destination_uuid in the payload, which Coolify rejects), so
+# services are created/managed out-of-band and only their env vars are managed
+# here via coolify_service_envs. Populate per environment from the
+# terraform_tfvars_<env> Secret Manager value.
+variable "coolify_service_uuids" {
+  type        = map(string)
+  description = "Pre-existing Coolify service UUIDs by stack (shared, chatwoot, dify, nexaduo)."
+}
+
