@@ -45,6 +45,13 @@ scrape_configs:
           # Prefer JSON level, then Rails level, then default to INFO
           source: level
           template: '{{ if .level }}{{ .level }}{{ else if .rails_level }}{{ .rails_level }}{{ else }}INFO{{ end }}'
+      - template:
+          # Normalize to canonical UPPER names. Pino emits NUMERIC levels
+          # (10=trace 20=debug 30=info 40=warn 50=error 60=fatal); map those,
+          # and upper-case any text levels (e.g. "info" -> "INFO") so the
+          # `level` label is consistent across Pino / Rails / plain loggers.
+          source: level
+          template: '{{ if eq .level "10" }}TRACE{{ else if eq .level "20" }}DEBUG{{ else if eq .level "30" }}INFO{{ else if eq .level "40" }}WARN{{ else if eq .level "50" }}ERROR{{ else if eq .level "60" }}FATAL{{ else }}{{ .level | ToUpper }}{{ end }}'
       - replace:
           # Mask PII
           expression: '([a-zA-Z0-9]{1,3})[a-zA-Z0-9._%+-]*@([a-zA-Z0-9.-]+\.[a-zA-Z]{2,})'
