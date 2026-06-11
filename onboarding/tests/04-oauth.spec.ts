@@ -40,27 +40,25 @@ test.describe(`Google OAuth init endpoints - Environment: ${targetEnv}`, () => {
       const ctx = await browser.newContext();
       const page = await ctx.newPage();
       
+      // Chatwoot v4 runs OmniAuth 2.x with omniauth-rails_csrf_protection,
+      // which rejects a bare cross-site POST to the request phase (no
+      // authenticity token) and bounces to /auth/sign_in. The provider also
+      // allows GET (allowed_request_methods = [:post, :get]); a GET request is
+      // not CSRF-validated and exercises the real request phase, so we probe
+      // via GET — the same way the Dify check below works. The production flow
+      // supports both methods.
       console.log(`Checking ${tenant.slug} Chatwoot OAuth at ${chatwootUrl}/auth/google_oauth2...`);
-      await page.goto(chatwootUrl);
-      
-      const responsePromise = page.waitForNavigation();
-      await page.evaluate((url) => {
-        const form = document.createElement('form');
-        form.method = 'POST';
-        form.action = url;
-        document.body.appendChild(form);
-        form.submit();
-      }, `${chatwootUrl}/auth/google_oauth2`);
-      
-      const response = await responsePromise;
+      const response = await page.goto(`${chatwootUrl}/auth/google_oauth2`);
+
       const finalUrl = page.url();
+      const status = response?.status();
       const body = await response?.text() || '';
-      
+
       expect(
-        finalUrl, 
+        finalUrl,
         `Expected redirect chain to end at accounts.google.com but got ${finalUrl}. Body: ${body}`
       ).toMatch(/^https:\/\/accounts\.google\.com\//);
-      expect(response?.status()).toBe(200);
+      expect(status).toBe(200);
 
       await ctx.close();
     });

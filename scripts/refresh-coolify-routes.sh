@@ -16,12 +16,19 @@ SKIP_GRAFANA="${SKIP_GRAFANA:-false}"
 check_public_not_404() {
   local host="$1"
   local code
-  code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 "https://${host}")"
-  echo "Public ${host} -> HTTP ${code}"
-  [[ "${code}" != "404" ]] || {
-    echo "${host} is still returning 404 at edge." >&2
-    exit 1
-  }
+  # Retry for ~90s: a service may be mid-restart (e.g. just redeployed), which
+  # briefly surfaces as a 404 at the edge before routing recovers.
+  for attempt in $(seq 1 18); do
+    code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 "https://${host}" || echo 000)"
+    if [[ "${code}" != "404" ]]; then
+      echo "Public ${host} -> HTTP ${code}"
+      return 0
+    fi
+    echo "Public ${host} -> HTTP 404 (attempt ${attempt}/18, retrying in 5s)"
+    sleep 5
+  done
+  echo "${host} is still returning 404 at edge after retries." >&2
+  exit 1
 }
 
 echo "Refreshing Coolify proxy routes on ${VM_NAME} (${PROJECT_ID}/${ZONE}) for *${DNS_SUFFIX}.${BASE_DOMAIN}"

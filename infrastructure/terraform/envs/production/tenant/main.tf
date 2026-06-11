@@ -22,28 +22,12 @@ resource "coolify_project" "main" {
 # ---------------------------------------------------------------------------
 # Stack 1/4 — Shared (Postgres 16+pgvector, Redis 7).
 # ---------------------------------------------------------------------------
-resource "coolify_service" "shared" {
-  name             = "nexaduo-shared${local.service_suffix}"
-  server_uuid      = tolist(data.coolify_servers.main.servers)[0].uuid
-  project_uuid     = coolify_project.main.uuid
-  destination_uuid = data.google_secret_manager_secret_version.coolify_destination_uuid.secret_data
-  environment_name = "production"
-  instant_deploy   = true
-
-  compose = file("${path.root}/../../../../../deploy/docker-compose.shared.yml")
-
-  lifecycle {
-    ignore_changes = [
-      server_uuid,
-      project_uuid,
-      destination_uuid,
-      environment_name,
-    ]
-  }
+data "coolify_service" "shared" {
+  uuid = var.coolify_service_uuids["shared"]
 }
 
 resource "coolify_service_envs" "shared" {
-  uuid = coolify_service.shared.uuid
+  uuid = data.coolify_service.shared.uuid
 
   env {
     key   = "POSTGRES_USER"
@@ -73,32 +57,12 @@ resource "coolify_service_envs" "shared" {
 # ---------------------------------------------------------------------------
 # Stack 2/4 — Chatwoot
 # ---------------------------------------------------------------------------
-resource "coolify_service" "chatwoot" {
-  name             = "nexaduo-chatwoot${local.service_suffix}"
-  server_uuid      = tolist(data.coolify_servers.main.servers)[0].uuid
-  project_uuid     = coolify_project.main.uuid
-  destination_uuid = data.google_secret_manager_secret_version.coolify_destination_uuid.secret_data
-  environment_name = "production"
-  instant_deploy   = true
-
-  compose = file("${path.root}/../../../../../deploy/docker-compose.chatwoot.yml")
-
-  depends_on = [
-    coolify_service.shared,
-  ]
-
-  lifecycle {
-    ignore_changes = [
-      server_uuid,
-      project_uuid,
-      destination_uuid,
-      environment_name,
-    ]
-  }
+data "coolify_service" "chatwoot" {
+  uuid = var.coolify_service_uuids["chatwoot"]
 }
 
 resource "coolify_service_envs" "chatwoot" {
-  uuid = coolify_service.chatwoot.uuid
+  uuid = data.coolify_service.chatwoot.uuid
 
   env {
     key   = "POSTGRES_HOST"
@@ -174,32 +138,12 @@ resource "coolify_service_envs" "chatwoot" {
 # ---------------------------------------------------------------------------
 # Stack 3/4 — Dify
 # ---------------------------------------------------------------------------
-resource "coolify_service" "dify" {
-  name             = "nexaduo-dify${local.service_suffix}"
-  server_uuid      = tolist(data.coolify_servers.main.servers)[0].uuid
-  project_uuid     = coolify_project.main.uuid
-  destination_uuid = data.google_secret_manager_secret_version.coolify_destination_uuid.secret_data
-  environment_name = "production"
-  instant_deploy   = true
-
-  compose = file("${path.root}/../../../../../deploy/docker-compose.dify.yml")
-
-  depends_on = [
-    coolify_service.shared,
-  ]
-
-  lifecycle {
-    ignore_changes = [
-      server_uuid,
-      project_uuid,
-      destination_uuid,
-      environment_name,
-    ]
-  }
+data "coolify_service" "dify" {
+  uuid = var.coolify_service_uuids["dify"]
 }
 
 resource "coolify_service_envs" "dify" {
-  uuid = coolify_service.dify.uuid
+  uuid = data.coolify_service.dify.uuid
 
   env {
     key   = "POSTGRES_HOST"
@@ -322,34 +266,12 @@ resource "coolify_service_envs" "dify" {
 # ---------------------------------------------------------------------------
 # Stack 4/4 — NexaDuo
 # ---------------------------------------------------------------------------
-resource "coolify_service" "nexaduo" {
-  name             = "nexaduo-app${local.service_suffix}"
-  server_uuid      = tolist(data.coolify_servers.main.servers)[0].uuid
-  project_uuid     = coolify_project.main.uuid
-  destination_uuid = data.google_secret_manager_secret_version.coolify_destination_uuid.secret_data
-  environment_name = "production"
-  instant_deploy   = true
-
-  compose = file("${path.root}/../../../../../deploy/docker-compose.nexaduo.yml")
-
-
-  depends_on = [
-    coolify_service.chatwoot,
-    coolify_service.dify,
-  ]
-
-  lifecycle {
-    ignore_changes = [
-      server_uuid,
-      project_uuid,
-      destination_uuid,
-      environment_name,
-    ]
-  }
+data "coolify_service" "nexaduo" {
+  uuid = var.coolify_service_uuids["nexaduo"]
 }
 
 resource "coolify_service_envs" "nexaduo" {
-  uuid = coolify_service.nexaduo.uuid
+  uuid = data.coolify_service.nexaduo.uuid
 
   env {
     key   = "MIDDLEWARE_IMAGE"
@@ -467,15 +389,15 @@ resource "coolify_service_envs" "nexaduo" {
 }
 
 output "coolify_chatwoot_service_uuid" {
-  value = coolify_service.chatwoot.uuid
+  value = data.coolify_service.chatwoot.uuid
 }
 
 output "coolify_nexaduo_service_uuid" {
-  value = coolify_service.nexaduo.uuid
+  value = data.coolify_service.nexaduo.uuid
 }
 
 output "coolify_dify_service_uuid" {
-  value = coolify_service.dify.uuid
+  value = data.coolify_service.dify.uuid
 }
 
 output "coolify_project_uuid" {
@@ -483,5 +405,5 @@ output "coolify_project_uuid" {
 }
 
 output "coolify_shared_service_uuid" {
-  value = coolify_service.shared.uuid
+  value = data.coolify_service.shared.uuid
 }
