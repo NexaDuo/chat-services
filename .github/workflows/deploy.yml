@@ -366,6 +366,19 @@ jobs:
         working-directory: infrastructure/terraform/envs/production/tenant
         run: terraform show -no-color tfplan.bin | head -c 100000
 
+      - name: Detect env changes
+        id: changes
+        working-directory: infrastructure/terraform/envs/production/tenant
+        run: |
+          # Did the plan actually change any service env? If not, skip the
+          # redeploy below so we don't needlessly restart healthy services
+          # (the churn breaks the routes/onboarding jobs that run right after).
+          if terraform show -json tfplan.bin | jq -e '[.resource_changes[]?.change.actions[]?] | any(. != "no-op")' >/dev/null 2>&1; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Terraform apply (skipped if dry_run)
         if: needs.resolve-env.outputs.is_dry_run == 'false'
         working-directory: infrastructure/terraform/envs/production/tenant
@@ -377,7 +390,7 @@ jobs:
           terraform apply -auto-approve tfplan.bin
 
       - name: Redeploy services to pick up env vars
-        if: needs.resolve-env.outputs.is_dry_run == 'false'
+        if: needs.resolve-env.outputs.is_dry_run == 'false' && steps.changes.outputs.changed == 'true'
         run: |
           env="${{ needs.resolve-env.outputs.target_environment }}"
           url="$(gcloud secrets versions access latest --secret="coolify_url_${env}" --project="${{ env.PROJECT_ID }}")"
