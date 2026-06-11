@@ -50,16 +50,15 @@ data "google_secret_manager_secret_version" "grafana_admin_password" {
   secret = "grafana_admin_password"
 }
 
+# Coolify connection secrets are per-environment to stop staging deploys
+# (triggered by PRs) from clobbering production's values mid-deploy. bootstrap
+# writes coolify_<name>_<env>; here we read the workspace-matching copy.
 data "google_secret_manager_secret_version" "coolify_api_token" {
-  secret = "coolify_api_token"
-}
-
-data "google_secret_manager_secret_version" "coolify_destination_uuid" {
-  secret = "coolify_destination_uuid"
+  secret = "coolify_api_token_${local.env}"
 }
 
 data "google_secret_manager_secret_version" "coolify_url" {
-  secret = "coolify_url"
+  secret = "coolify_url_${local.env}"
 }
 
 data "terraform_remote_state" "foundation" {
