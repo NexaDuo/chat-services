@@ -62,10 +62,39 @@ docker-compose.yml           # Base stack
 /onboarding                  # Playwright automation and smoke tests
 ```
 
+## Reproducibility is Non-Negotiable
+
+**Every fix lands in code so a from-scratch rebuild reproduces it.** Postgres now
+lives on a dedicated disk with a daily `pg_dump` to GCS (bootstrap section 3e /
+`scripts/vm-backup.sh`), so **tearing the environment down and re-bootstrapping is
+a safe, acceptable cost** — always prefer a clean, code-driven rebuild over
+accumulating manual drift.
+
+- **No fix exists until it is in IaC.** Config, schema/tenant seeds, runtime
+  tweaks — all corrections MUST go through versioned Terraform, the deploy
+  workflow, or the bootstrap/deploy scripts. A change that only lives on the VM
+  does not exist as far as the next deploy is concerned.
+- **Manual VM intervention is a stopgap, never the fix.** If you touch the VM by
+  hand to unblock, backfill that change into code (script/workflow) in the same
+  session. A green deploy that is only green because of an out-of-band manual
+  step is a red deploy waiting to happen. Real examples that bit us:
+  - Promtail config reached the host but a running promtail never reloaded it
+    (single-file bind-mount + `rm -rf`/`mv` inode swap) → the deploy went green
+    while the fix was inert. Fixed by a checksum-gated restart in bootstrap 3c.
+  - The `tenants` table was seeded by hand but the pipeline tunneled to a
+    `localhost:5432` where nothing listens (Postgres is docker-network-only) and
+    used a placeholder `*_database_url` secret → seed via `docker exec psql`
+    instead (see `sync` job / `scripts/sync-tenants.ts --print-sql`).
+- **Prefer rebuild over drift.** When a fix is hard to apply idempotently to the
+  running stack, it is legitimate to re-bootstrap from code — backups make the
+  data recoverable.
+
 ## Operational Non-Negotiables
 
 - **RAM:** **16 GB minimum** recommended for the shared stack.
-- **Backup:** daily `pg_dump` (Chatwoot + Dify DBs); `/dify-apps` backed up via Git.
+- **Backup:** daily `pg_dump` (all DBs) to GCS via `scripts/vm-backup.sh` (root
+  cron 03:00, installed by `bootstrap-coolify.sh` 3e); `/dify-apps` backed up via
+  Git. Postgres is on a **dedicated disk** (`attached_disk` inline on the VM).
 - **Observability:** Grafana + Prometheus for queue depths and **token usage per account_id**.
 - **Rate limiting:** Respect Meta tiers; throttle in Dify.
 
