@@ -114,6 +114,40 @@ function syncSecrets(projectId: string, tenants: TenantConfig[]) {
   }
 }
 
+// The sync runs against Postgres through an IAP SSH tunnel (CI) whose first
+// query can race the remote forward coming up, occasionally surfacing as a
+// transient `ECONNRESET`/`connection terminated`. Retry such failures rather
+// than failing the whole deploy (which would leave the tenants table unseeded
+// and flake the downstream tenant-resolution checks).
+const TRANSIENT_CODES = new Set([
+  'ECONNRESET', 'ECONNREFUSED', 'ETIMEDOUT', 'EPIPE', 'ENETUNREACH',
+  '57P01', '08006', '08003', '08001', // pg: admin shutdown / connection failures
+]);
+
+function isTransient(err: any): boolean {
+  if (!err) return false;
+  const code = err.code ?? err.errno;
+  if (code && TRANSIENT_CODES.has(String(code))) return true;
+  const msg = String(err.message || err).toLowerCase();
+  return /econnreset|connection terminated|connection reset|timeout|server closed the connection|terminating connection/.test(msg);
+}
+
+async function withRetry<T>(label: string, attempts: number, fn: () => Promise<T>): Promise<T> {
+  let lastErr: any;
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastErr = err;
+      if (attempt === attempts || !isTransient(err)) throw err;
+      const backoffMs = Math.min(1000 * 2 ** (attempt - 1), 8000);
+      logger.error(`Transient error on ${label} (attempt ${attempt}/${attempts}); retrying in ${backoffMs}ms`, err);
+      await new Promise((resolve) => setTimeout(resolve, backoffMs));
+    }
+  }
+  throw lastErr;
+}
+
 async function main() {
   const yamlPath = path.resolve(process.cwd(), 'tenants.yaml');
   if (!fs.existsSync(yamlPath)) {
@@ -141,10 +175,20 @@ async function main() {
     process.exit(1);
   }
 
-  const pool = new Pool({ connectionString });
-  
   try {
-    await syncDatabase(pool, targetTenants);
+    // Recreate the pool on each attempt: a reset connection can leave the pool
+    // unusable, and `SELECT 1` probes the tunnel before we start writing. The
+    // sync itself is idempotent (ON CONFLICT DO UPDATE), so re-running is safe.
+    await withRetry('database sync', 5, async () => {
+      const pool = new Pool({ connectionString, connectionTimeoutMillis: 10000 });
+      try {
+        await pool.query('SELECT 1');
+        await syncDatabase(pool, targetTenants);
+      } finally {
+        await pool.end();
+      }
+    });
+
     if (process.env.SKIP_GCP_SYNC === 'true') {
       logger.log('Skipping GCP Secrets sync as requested.');
     } else {
@@ -154,8 +198,6 @@ async function main() {
   } catch (error) {
     logger.error('Error during sync process:', error);
     process.exit(1);
-  } finally {
-    await pool.end();
   }
 }
 
