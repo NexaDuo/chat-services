@@ -57,6 +57,19 @@ def api(method, path, body=None):
     except urllib.error.HTTPError as e:
         return e.code, e.read().decode()
 
+def clean_envs(uuid):
+    # A compose service makes Coolify auto-register the `${VAR}` placeholder env
+    # keys. The tenant Terraform layer then CREATEs the real envs via the
+    # provider, which 409s on those pre-existing keys. Strip them so the
+    # provider starts from a clean slate. ONLY safe on freshly-created services
+    # (a reused/steady-state service holds real, provider-managed envs).
+    st, envs = api("GET", "/services/%s/envs" % uuid)
+    if st != 200 or not isinstance(envs, list):
+        return
+    for e in envs:
+        api("DELETE", "/services/%s/envs/%s" % (uuid, e["uuid"]))
+    sys.stderr.write("  cleaned %d auto-registered env(s) on %s\n" % (len(envs), uuid))
+
 # Server: this stack runs on a single Coolify server (localhost).
 st, servers = api("GET", "/servers")
 if st != 200 or not servers:
@@ -111,6 +124,7 @@ for stack, name_part, compose_file in STACKS:
         sys.stderr.write("FATAL: create service %s failed: %s %s\n" % (name, st, res)); sys.exit(1)
     out[stack] = res["uuid"]
     sys.stderr.write("created service %s -> %s\n" % (name, out[stack]))
+    clean_envs(out[stack])
 
 # tfvars-ready HCL on stdout.
 print('project_uuid = "%s"' % project_uuid)
