@@ -37,6 +37,9 @@ SELECT 'CREATE DATABASE self_healing'
 SELECT 'CREATE DATABASE middleware'
  WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'middleware')\gexec
 
+SELECT 'CREATE DATABASE grafana'
+ WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'grafana')\gexec
+
 -- ---------- chatwoot ---------------------------------------------------------
 \connect chatwoot
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
@@ -105,4 +108,8 @@ CREATE INDEX IF NOT EXISTS idx_insights_service_created ON insights(service_name
 
 -- ---------- evolution --------------------------------------------------------
 \connect evolution
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
+-- ---------- grafana -----------------------------------------------------------
+\connect grafana
 CREATE EXTENSION IF NOT EXISTS pgcrypto;

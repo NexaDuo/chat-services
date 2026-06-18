@@ -162,6 +162,8 @@ gcloud compute ssh "$SSH_USER@$VM_NAME" \
   --tunnel-through-iap \
   --command '
     sudo usermod -aG docker ubuntu
+    sudo sysctl vm.overcommit_memory=1
+    echo "vm.overcommit_memory = 1" | sudo tee -a /etc/sysctl.conf
     sudo chgrp -R docker /data/coolify
     sudo chmod -R g+rX /data/coolify
     echo "Waiting for Coolify to generate SSH key..."
