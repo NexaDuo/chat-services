@@ -89,9 +89,9 @@ jobs:
           [[ "${code}" =~ ^[234] ]] || { echo "::error::Chatwoot did not become ready in time."; exit 1; }
 
           echo "Waiting for Dify API (127.0.0.1:5001)..."
-          for i in $(seq 1 60); do
+          for i in $(seq 1 120); do
             code=$(curl -sS -o /dev/null -w "%{http_code}" --max-time 5 http://127.0.0.1:5001/console/api/setup 2>/dev/null || echo "000")
-            echo "  attempt ${i}/60: 127.0.0.1:5001 -> ${code}"
+            echo "  attempt ${i}/120: 127.0.0.1:5001 -> ${code}"
             case "${code}" in 2*|3*|4*) echo "Dify API ready."; break ;; esac
             sleep 5
           done
