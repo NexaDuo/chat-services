@@ -59,7 +59,7 @@ fix_permissions() {
   SSH_USER=$(grep "ssh_user" "${TFVARS}" | cut -d'"' -f2)
 
   echo "=== Fixing directory permissions on VM ($VM_NAME) ==="
-  gcloud compute ssh "${SSH_USER}@${VM_NAME}" --project="${PROJECT_ID}" --zone="${ZONE}" --tunnel-through-iap \
+  gcloud compute ssh "${SSH_USER}@${VM_NAME}" --project="${PROJECT_ID}" --zone="${ZONE}" --tunnel-through-iap --quiet \
     --command "sudo chown -R 9999:9999 /data/coolify && sudo chmod -R 775 /data/coolify"
 }
 

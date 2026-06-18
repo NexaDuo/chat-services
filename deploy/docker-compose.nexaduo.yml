@@ -13,7 +13,7 @@ services:
       - 'evolution-instances:/evolution/instances'
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.evolution.rule=Host(`evolution.nexaduo.com`)"
+      - "traefik.http.routers.evolution.rule=Host(`${EVOLUTION_DOMAIN}`)"
       - "traefik.http.routers.evolution.entrypoints=http"
       - "traefik.http.services.evolution.loadbalancer.server.port=8080"
     networks:
@@ -31,7 +31,7 @@ services:
       HANDOFF_SHARED_SECRET: '${HANDOFF_SHARED_SECRET}'
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.middleware.rule=Host(`middleware.nexaduo.com`)"
+      - "traefik.http.routers.middleware.rule=Host(`${MIDDLEWARE_DOMAIN}`)"
       - "traefik.http.routers.middleware.entrypoints=http"
       - "traefik.http.services.middleware.loadbalancer.server.port=4000"
     networks:
@@ -69,12 +69,12 @@ services:
       GF_AUTH_GOOGLE_AUTH_URL: "https://accounts.google.com/o/oauth2/v2/auth"
       GF_AUTH_GOOGLE_TOKEN_URL: "https://oauth2.googleapis.com/token"
       GF_AUTH_GOOGLE_ALLOWED_DOMAINS: "nexaduo.com machado.cc"
-      GF_SERVER_ROOT_URL: "https://grafana.nexaduo.com"
+      GF_SERVER_ROOT_URL: ${GF_SERVER_ROOT_URL}
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: '${POSTGRES_PASSWORD}'
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.grafana.rule=Host(`grafana.nexaduo.com`)"
+      - "traefik.http.routers.grafana.rule=Host(`${GRAFANA_DOMAIN}`)"
       - "traefik.http.routers.grafana.entrypoints=http"
       - "traefik.http.services.grafana.loadbalancer.server.port=3000"
     volumes:
