@@ -1,3 +1,4 @@
+# Dify Service Stack - Dynamic Environment Configurations
 services:
   dify-init:
     image: alpine:3.19

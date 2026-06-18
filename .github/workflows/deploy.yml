@@ -316,6 +316,8 @@ jobs:
       url: ${{ needs.resolve-env.outputs.primary_url }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: google-github-actions/auth@v2
         with:
