@@ -12,6 +12,7 @@ This skill equips the agent to perform routine SRE inspections, run system diagn
 ## 🎯 Objectives
 * Verify stack health, container lifecycle, and network topology.
 * Analyze application, database, and observability logs to catch warning patterns early.
+* Prevent regression of historical issues resolved in the repository.
 * Automate the creation of issues and documentation when system anomalies or degradations are found.
 * Enforce SRE best practices (e.g., Redis overcommit settings, DB migrations sanity, Grafana backend persistence).
 
@@ -21,8 +22,12 @@ This skill equips the agent to perform routine SRE inspections, run system diagn
 
 Follow these steps when tasked with auditing the stack:
 
+### Step 0: Read Historical SRE & Troubleshooting Synthesis
+Before debugging or evaluating health check failures, review the historical issues list to check for regression patterns:
+* [past_issues_synthesis.md](file:///home/ubuntu-24/repos/NexaDuo/chat-services/docs/past_issues_synthesis.md)
+
 ### Step 1: Run the Central Health Check Script
-Always begin by executing the centralized diagnostic tool in the workspace:
+Execute the centralized diagnostic tool in the workspace:
 * [health-check-all.sh](file:///home/ubuntu-24/repos/NexaDuo/chat-services/scripts/health-check-all.sh)
 
 Run it from the workspace root:
