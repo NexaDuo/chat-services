@@ -110,6 +110,16 @@ accumulating manual drift.
   running stack, it is legitimate to re-bootstrap from code — backups make the
   data recoverable.
 
+## SRE Auditor Agent & Routine Audits
+
+To facilitate routine inspections and prevent infrastructure drift, this repository includes a workspace agent skill called **`sre-auditor`** located in [.agents/skills/sre-auditor/SKILL.md](file:///home/ubuntu-24/repos/NexaDuo/chat-services/.agents/skills/sre-auditor/SKILL.md).
+
+Whenever you need to run routine verification, ask the agent to **"run a routine SRE audit"** or **"inspect stack health"**. The agent will:
+1. Run [health-check-all.sh](file:///home/ubuntu-24/repos/NexaDuo/chat-services/scripts/health-check-all.sh) to diagnose application layers, network connectivity, and ports.
+2. Check container states and health statuses (`docker ps -a`).
+3. Scan logs for known pattern anomalies (e.g., Redis memory overcommit, database locks, Loki query status errors).
+4. File structured issues on GitHub (`gh issue create`) for tracked resolutions.
+
 ## Operational Non-Negotiables
 
 - **RAM:** **16 GB minimum** recommended for the shared stack.
