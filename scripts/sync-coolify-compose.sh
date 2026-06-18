@@ -19,10 +19,10 @@ declare -A SERVICES=(
 )
 
 # Upload PHP helper
-gcloud compute scp --tunnel-through-iap --project="${PROJECT_ID}" --zone="${ZONE}" scripts/fix_compose.php ubuntu@${VM_NAME}:/tmp/fix_compose.php
+gcloud compute scp --tunnel-through-iap --project="${PROJECT_ID}" --zone="${ZONE}" --quiet scripts/fix_compose.php ubuntu@${VM_NAME}:/tmp/fix_compose.php
 
 # Prepare for all services
-gcloud compute ssh ubuntu@${VM_NAME} --project="${PROJECT_ID}" --zone="${ZONE}" --tunnel-through-iap \
+gcloud compute ssh ubuntu@${VM_NAME} --project="${PROJECT_ID}" --zone="${ZONE}" --tunnel-through-iap --quiet \
   --command "sudo docker cp /tmp/fix_compose.php coolify:/var/www/html/fix_compose.php"
 
 for name in "${!SERVICES[@]}"; do
@@ -32,10 +32,10 @@ for name in "${!SERVICES[@]}"; do
   echo "=== Syncing ${name} (${uuid}) ==="
   
   # Upload compose file to VM
-  gcloud compute scp --tunnel-through-iap --project="${PROJECT_ID}" --zone="${ZONE}" "${file}" ubuntu@${VM_NAME}:/tmp/${name}.yml
+  gcloud compute scp --tunnel-through-iap --project="${PROJECT_ID}" --zone="${ZONE}" --quiet "${file}" ubuntu@${VM_NAME}:/tmp/${name}.yml
   
   # Copy to coolify container and run fix_compose
-  gcloud compute ssh ubuntu@${VM_NAME} --project="${PROJECT_ID}" --zone="${ZONE}" --tunnel-through-iap \
+  gcloud compute ssh ubuntu@${VM_NAME} --project="${PROJECT_ID}" --zone="${ZONE}" --tunnel-through-iap --quiet \
     --command "sudo docker cp /tmp/${name}.yml coolify:/tmp/${name}.yml && sudo docker exec coolify sh -c 'php fix_compose.php ${uuid} < /tmp/${name}.yml'"
   
   echo "Triggering Deploy via API..."

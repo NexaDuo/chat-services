@@ -490,6 +490,7 @@ jobs:
             --project="${{ env.PROJECT_ID }}" \
             --zone="${{ env.ZONE }}" \
             --tunnel-through-iap \
+            --quiet \
             --command='
               set -euo pipefail
               # Pick the postgres container that actually owns the middleware DB

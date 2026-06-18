@@ -37,6 +37,7 @@ gcloud compute ssh "${SSH_USER}@${VM_NAME}" \
   --project "${PROJECT_ID}" \
   --zone "${ZONE}" \
   --tunnel-through-iap \
+  --quiet \
   --command "BASE_DOMAIN='${BASE_DOMAIN}' DNS_SUFFIX='${DNS_SUFFIX}' SKIP_GRAFANA='${SKIP_GRAFANA}' bash -s" <<'REMOTE'
 set -euo pipefail
 
