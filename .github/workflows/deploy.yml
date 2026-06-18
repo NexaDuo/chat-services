@@ -433,7 +433,7 @@ jobs:
           PROJECT_ID: ${{ env.PROJECT_ID }}
           ZONE: ${{ env.ZONE }}
           VM_NAME: ${{ needs.resolve-env.outputs.vm_name }}
-          SKIP_GRAFANA: ${{ (inputs.skip_grafana || 'true') && 'true' || 'false' }}
+          SKIP_GRAFANA: ${{ inputs.skip_grafana == true && 'true' || 'false' }}
           DNS_SUFFIX: ${{ needs.resolve-env.outputs.target_environment != 'production' && '-stg' || '' }}
         run: |
           chmod +x scripts/refresh-coolify-routes.sh
