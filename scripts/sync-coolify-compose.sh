@@ -43,12 +43,37 @@ for svc in shared chatwoot dify nexaduo; do
   echo "Resolved service ${svc} -> ${uuid}"
 done
 
+# Robust SSH wrapper with retry logic
+gcloud_ssh() {
+  local attempt
+  for attempt in $(seq 1 3); do
+    if gcloud compute ssh --tunnel-through-iap --quiet "$@"; then
+      return 0
+    fi
+    echo "gcloud compute ssh failed (attempt ${attempt}/3). Retrying in 5s..." >&2
+    sleep 5
+  done
+  return 1
+}
+
+# Robust SCP wrapper with retry logic
+gcloud_scp() {
+  local attempt
+  for attempt in $(seq 1 3); do
+    if gcloud compute scp --tunnel-through-iap --quiet "$@"; then
+      return 0
+    fi
+    echo "gcloud compute scp failed (attempt ${attempt}/3). Retrying in 5s..." >&2
+    sleep 5
+  done
+  return 1
+}
+
 # Upload PHP helper
-gcloud compute scp --tunnel-through-iap --project="${PROJECT_ID}" --zone="${ZONE}" --quiet scripts/fix_compose.php ubuntu@${VM_NAME}:/tmp/fix_compose.php
+gcloud_scp --project="${PROJECT_ID}" --zone="${ZONE}" scripts/fix_compose.php ubuntu@${VM_NAME}:/tmp/fix_compose.php
 
 # Prepare for all services
-gcloud compute ssh ubuntu@${VM_NAME} --project="${PROJECT_ID}" --zone="${ZONE}" --tunnel-through-iap --quiet \
-  --command "sudo docker cp /tmp/fix_compose.php coolify:/var/www/html/fix_compose.php"
+gcloud_ssh ubuntu@${VM_NAME} --project="${PROJECT_ID}" --zone="${ZONE}" --command "sudo docker cp /tmp/fix_compose.php coolify:/var/www/html/fix_compose.php"
 
 for name in "${!SERVICES[@]}"; do
   uuid="${SERVICES[$name]}"
@@ -57,11 +82,10 @@ for name in "${!SERVICES[@]}"; do
   echo "=== Syncing ${name} (${uuid}) ==="
   
   # Upload compose file to VM
-  gcloud compute scp --tunnel-through-iap --project="${PROJECT_ID}" --zone="${ZONE}" --quiet "${file}" ubuntu@${VM_NAME}:/tmp/${name}.yml
+  gcloud_scp --project="${PROJECT_ID}" --zone="${ZONE}" "${file}" ubuntu@${VM_NAME}:/tmp/${name}.yml
   
   # Copy to coolify container and run fix_compose
-  gcloud compute ssh ubuntu@${VM_NAME} --project="${PROJECT_ID}" --zone="${ZONE}" --tunnel-through-iap --quiet \
-    --command "sudo docker cp /tmp/${name}.yml coolify:/tmp/${name}.yml && sudo docker exec coolify sh -c 'php fix_compose.php ${uuid} < /tmp/${name}.yml'"
+  gcloud_ssh ubuntu@${VM_NAME} --project="${PROJECT_ID}" --zone="${ZONE}" --command "sudo docker cp /tmp/${name}.yml coolify:/tmp/${name}.yml && sudo docker exec coolify sh -c 'php fix_compose.php ${uuid} < /tmp/${name}.yml'"
   
   echo "Triggering Deploy via API..."
   curl -sS -X POST -H "Authorization: Bearer ${TOKEN}" "${BASE}/api/v1/deploy?uuid=${uuid}" -o /dev/null
