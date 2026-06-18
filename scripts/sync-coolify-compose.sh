@@ -3,20 +3,45 @@
 
 set -euo pipefail
 
-PROJECT_ID="nexaduo-492818"
-ZONE="us-central1-b"
-VM_NAME="nexaduo-chat-services"
-URL="$(gcloud secrets versions access latest --secret=coolify_url --project="${PROJECT_ID}")"
-TOKEN="$(gcloud secrets versions access latest --secret=coolify_api_token --project="${PROJECT_ID}")"
+ENV="${1:-production}"
+PROJECT_ID="${GCP_PROJECT_ID:-nexaduo-492818}"
+ZONE="${GCP_ZONE:-us-central1-b}"
+
+if [[ "$ENV" == "production" ]]; then
+  VM_NAME="nexaduo-chat-services"
+else
+  VM_NAME="nexaduo-chat-services-staging"
+fi
+
+echo "Fetching connection details for ${ENV} environment..."
+URL="$(gcloud secrets versions access latest --secret="coolify_url_${ENV}" --project="${PROJECT_ID}")"
+TOKEN="$(gcloud secrets versions access latest --secret="coolify_api_token_${ENV}" --project="${PROJECT_ID}")"
 BASE="${URL%/api/v1}"
 
-# Mapping Service Names to Local Files and UUIDs
-declare -A SERVICES=(
-  ["shared"]="b19ay7as9n0lgwq1nxm39z5q"
-  ["chatwoot"]="eclpweb8dog0qmg0jbok4lpt"
-  ["dify"]="x13ip0okvgohmencusvy7oki"
-  ["nexaduo"]="dsgwuwrdnmue9nhdkeovb6tx"
-)
+# Fetch service UUIDs dynamically from Coolify API
+echo "Fetching services from Coolify API..."
+services_json=$(curl -sS -H "Authorization: Bearer ${TOKEN}" "${BASE}/api/v1/services")
+
+suffix=""
+if [[ "$ENV" != "production" ]]; then
+  suffix="-${ENV}"
+fi
+
+declare -A SERVICES
+SERVICES["shared"]=$(echo "$services_json" | jq -r ".[] | select(.name == \"nexaduo-shared${suffix}\") | .uuid")
+SERVICES["chatwoot"]=$(echo "$services_json" | jq -r ".[] | select(.name == \"nexaduo-chatwoot${suffix}\") | .uuid")
+SERVICES["dify"]=$(echo "$services_json" | jq -r ".[] | select(.name == \"nexaduo-dify${suffix}\") | .uuid")
+SERVICES["nexaduo"]=$(echo "$services_json" | jq -r ".[] | select(.name == \"nexaduo-app${suffix}\") | .uuid")
+
+# Ensure all UUIDs were resolved
+for svc in shared chatwoot dify nexaduo; do
+  uuid="${SERVICES[$svc]}"
+  if [[ -z "${uuid}" || "${uuid}" == "null" ]]; then
+    echo "ERROR: Could not resolve UUID for service: nexaduo-${svc}${suffix}" >&2
+    exit 1
+  fi
+  echo "Resolved service ${svc} -> ${uuid}"
+done
 
 # Upload PHP helper
 gcloud compute scp --tunnel-through-iap --project="${PROJECT_ID}" --zone="${ZONE}" --quiet scripts/fix_compose.php ubuntu@${VM_NAME}:/tmp/fix_compose.php

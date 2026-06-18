@@ -21,7 +21,7 @@ services:
         condition: service_started
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.dify-api.rule=Host(`dify.nexaduo.com`) && (PathPrefix(`/v1`) || PathPrefix(`/console/api`) || PathPrefix(`/files`))"
+      - "traefik.http.routers.dify-api.rule=Host(`${DIFY_DOMAIN}`) && (PathPrefix(`/v1`) || PathPrefix(`/console/api`) || PathPrefix(`/files`))"
       - "traefik.http.routers.dify-api.entrypoints=http"
       - "traefik.http.routers.dify-api.priority=20"
       - "traefik.http.services.dify-api.loadbalancer.server.port=5001"
@@ -48,11 +48,11 @@ services:
       ENABLE_SOCIAL_OAUTH_LOGIN: "true"
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
-      CONSOLE_API_URL: https://dify.nexaduo.com
-      CONSOLE_WEB_URL: https://dify.nexaduo.com
-      SERVICE_API_URL: https://dify.nexaduo.com
-      APP_API_URL: https://dify.nexaduo.com
-      APP_WEB_URL: https://dify.nexaduo.com
+      CONSOLE_API_URL: ${DIFY_CONSOLE_API_URL}
+      CONSOLE_WEB_URL: ${DIFY_CONSOLE_API_URL}
+      SERVICE_API_URL: ${DIFY_CONSOLE_API_URL}
+      APP_API_URL: ${DIFY_APP_API_URL}
+      APP_WEB_URL: ${DIFY_APP_API_URL}
       CONSOLE_OAUTH_REGISTRATION_ENABLED: "true"
       DIFY_LOG_LEVEL: INFO
       TRUSTED_PROXIES: "*"
@@ -82,11 +82,11 @@ services:
     image: langgenius/dify-web:1.13.3
     restart: unless-stopped
     environment:
-      CONSOLE_API_URL: https://dify.nexaduo.com
-      APP_API_URL: https://dify.nexaduo.com
+      CONSOLE_API_URL: ${DIFY_CONSOLE_API_URL}
+      APP_API_URL: ${DIFY_APP_API_URL}
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.dify.rule=Host(`dify.nexaduo.com`)"
+      - "traefik.http.routers.dify.rule=Host(`${DIFY_DOMAIN}`)"
       - "traefik.http.routers.dify.entrypoints=http"
       - "traefik.http.routers.dify.priority=10"
       - "traefik.http.services.dify.loadbalancer.server.port=3000"

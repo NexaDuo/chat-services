@@ -133,6 +133,10 @@ resource "coolify_service_envs" "chatwoot" {
     key   = "GOOGLE_OAUTH_CALLBACK_URL"
     value = "${local.chatwoot_frontend_url}/omniauth/google_oauth2/callback"
   }
+  env {
+    key   = "CHATWOOT_DOMAIN"
+    value = "chat${local.dns_suffix}.${var.base_domain}"
+  }
 }
 
 # ---------------------------------------------------------------------------
@@ -261,6 +265,10 @@ resource "coolify_service_envs" "dify" {
     value      = data.google_secret_manager_secret_version.google_oauth_client_secret.secret_data
     is_literal = true
   }
+  env {
+    key   = "DIFY_DOMAIN"
+    value = "dify${local.dns_suffix}.${var.base_domain}"
+  }
 }
 
 # ---------------------------------------------------------------------------
@@ -385,6 +393,18 @@ resource "coolify_service_envs" "nexaduo" {
   env {
     key   = "GF_SERVER_ROOT_URL"
     value = "https://grafana${local.dns_suffix}.${var.base_domain}"
+  }
+  env {
+    key   = "EVOLUTION_DOMAIN"
+    value = "evolution${local.dns_suffix}.${var.base_domain}"
+  }
+  env {
+    key   = "MIDDLEWARE_DOMAIN"
+    value = "middleware${local.dns_suffix}.${var.base_domain}"
+  }
+  env {
+    key   = "GRAFANA_DOMAIN"
+    value = "grafana${local.dns_suffix}.${var.base_domain}"
   }
 }
 

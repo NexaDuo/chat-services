@@ -389,21 +389,22 @@ jobs:
           # managed, applied in-place via PATCH from the plan computed above.
           terraform apply -auto-approve tfplan.bin
 
-      - name: Redeploy services to pick up env vars
-        if: needs.resolve-env.outputs.is_dry_run == 'false' && steps.changes.outputs.changed == 'true'
+      - name: Check if compose templates changed
+        id: compose-changes
         run: |
-          env="${{ needs.resolve-env.outputs.target_environment }}"
-          url="$(gcloud secrets versions access latest --secret="coolify_url_${env}" --project="${{ env.PROJECT_ID }}")"
-          token="$(gcloud secrets versions access latest --secret="coolify_api_token_${env}" --project="${{ env.PROJECT_ID }}")"
-          base="${url%/api/v1}"
-          
-          echo "=== Re-deploying tenant services ==="
-          for svc in shared chatwoot dify nexaduo; do
-            uuid="$(cd infrastructure/terraform/envs/production/tenant && terraform output -raw "coolify_${svc}_service_uuid" 2>/dev/null || true)"
-            [[ -z "${uuid}" ]] && continue
-            echo "  deploying ${svc} (${uuid})..."
-            curl -sS -o /dev/null -X POST -H "Authorization: Bearer ${token}" "${base}/api/v1/deploy?uuid=${uuid}"
-          done
+          # Fetch origin/main for comparison if needed
+          git fetch origin main --depth=1 || true
+          if git diff --name-only origin/main...HEAD 2>/dev/null | grep -q "^deploy/"; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Sync compose templates and redeploy services
+        if: needs.resolve-env.outputs.is_dry_run == 'false' && (steps.changes.outputs.changed == 'true' || steps.compose-changes.outputs.changed == 'true')
+        run: |
+          chmod +x scripts/sync-coolify-compose.sh
+          ./scripts/sync-coolify-compose.sh "${{ needs.resolve-env.outputs.target_environment }}"
 
   # -----------------------------------------------------------------------
   # routes: refresh the Coolify proxy (Traefik) - fast, no terraform

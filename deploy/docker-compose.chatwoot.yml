@@ -32,7 +32,7 @@ services:
       RAILS_ENV: production
       INSTALLATION_ENV: docker
       SECRET_KEY_BASE: ${CHATWOOT_SECRET_KEY_BASE}
-      FRONTEND_URL: https://chat.nexaduo.com
+      FRONTEND_URL: ${CHATWOOT_FRONTEND_URL}
       POSTGRES_HOST: postgres
       POSTGRES_USERNAME: postgres
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
@@ -42,11 +42,11 @@ services:
       FORCE_SSL: "false"
       GOOGLE_CLIENT_ID: ${GOOGLE_OAUTH_CLIENT_ID}
       GOOGLE_CLIENT_SECRET: ${GOOGLE_OAUTH_CLIENT_SECRET}
-      GOOGLE_OAUTH_CALLBACK_URL: https://chat.nexaduo.com/omniauth/google_oauth2/callback
+      GOOGLE_OAUTH_CALLBACK_URL: ${GOOGLE_OAUTH_CALLBACK_URL}
       OMNIAUTH_PROVIDERS: google_oauth2
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.chatwoot.rule=Host(`chat.nexaduo.com`)"
+      - "traefik.http.routers.chatwoot.rule=Host(`${CHATWOOT_DOMAIN}`)"
       - "traefik.http.routers.chatwoot.entrypoints=http"
       - "traefik.http.services.chatwoot.loadbalancer.server.port=3000"
     volumes:
