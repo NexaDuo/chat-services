@@ -69,25 +69,55 @@ gcloud_scp() {
   return 1
 }
 
-# Upload PHP helper
-gcloud_scp --project="${PROJECT_ID}" --zone="${ZONE}" scripts/fix_compose.php ubuntu@${VM_NAME}:/tmp/fix_compose.php
+# Upload all files in one SCP call
+echo "Uploading compose files and PHP helper to VM..."
+gcloud_scp \
+  --project="${PROJECT_ID}" \
+  --zone="${ZONE}" \
+  scripts/fix_compose.php \
+  deploy/docker-compose.shared.yml \
+  deploy/docker-compose.chatwoot.yml \
+  deploy/docker-compose.dify.yml \
+  deploy/docker-compose.nexaduo.yml \
+  ubuntu@${VM_NAME}:/tmp/
 
-# Prepare for all services
-gcloud_ssh ubuntu@${VM_NAME} --project="${PROJECT_ID}" --zone="${ZONE}" --command "sudo docker cp /tmp/fix_compose.php coolify:/var/www/html/fix_compose.php"
+# Construct single remote execution command
+remote_cmd=$(cat <<EOF
+set -euo pipefail
+echo "=== Copying PHP helper to Coolify ==="
+sudo docker cp /tmp/fix_compose.php coolify:/var/www/html/fix_compose.php
 
-for name in "${!SERVICES[@]}"; do
-  uuid="${SERVICES[$name]}"
-  file="deploy/docker-compose.${name}.yml"
-  
-  echo "=== Syncing ${name} (${uuid}) ==="
-  
-  # Upload compose file to VM
-  gcloud_scp --project="${PROJECT_ID}" --zone="${ZONE}" "${file}" ubuntu@${VM_NAME}:/tmp/${name}.yml
-  
-  # Copy to coolify container and run fix_compose
-  gcloud_ssh ubuntu@${VM_NAME} --project="${PROJECT_ID}" --zone="${ZONE}" --command "sudo docker cp /tmp/${name}.yml coolify:/tmp/${name}.yml && sudo docker exec coolify sh -c 'php fix_compose.php ${uuid} < /tmp/${name}.yml'"
-  
-  echo "Triggering Deploy via API..."
+echo "=== Syncing shared ==="
+sudo docker cp /tmp/docker-compose.shared.yml coolify:/tmp/shared.yml
+sudo docker exec coolify sh -c 'php fix_compose.php ${SERVICES["shared"]} < /tmp/shared.yml'
+
+echo "=== Syncing chatwoot ==="
+sudo docker cp /tmp/docker-compose.chatwoot.yml coolify:/tmp/chatwoot.yml
+sudo docker exec coolify sh -c 'php fix_compose.php ${SERVICES["chatwoot"]} < /tmp/chatwoot.yml'
+
+echo "=== Syncing dify ==="
+sudo docker cp /tmp/docker-compose.dify.yml coolify:/tmp/dify.yml
+sudo docker exec coolify sh -c 'php fix_compose.php ${SERVICES["dify"]} < /tmp/dify.yml'
+
+echo "=== Syncing nexaduo ==="
+sudo docker cp /tmp/docker-compose.nexaduo.yml coolify:/tmp/nexaduo.yml
+sudo docker exec coolify sh -c 'php fix_compose.php ${SERVICES["nexaduo"]} < /tmp/nexaduo.yml'
+EOF
+)
+
+# Execute remote command in a single SSH call
+echo "Executing sync commands on VM..."
+gcloud_ssh \
+  ubuntu@${VM_NAME} \
+  --project="${PROJECT_ID}" \
+  --zone="${ZONE}" \
+  --command "${remote_cmd}"
+
+# Trigger deploys via Coolify API
+echo "Triggering deploys via Coolify API..."
+for svc in shared chatwoot dify nexaduo; do
+  uuid="${SERVICES[$svc]}"
+  echo "  deploying ${svc} (${uuid})..."
   curl -sS -X POST -H "Authorization: Bearer ${TOKEN}" "${BASE}/api/v1/deploy?uuid=${uuid}" -o /dev/null
 done
 
