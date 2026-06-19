@@ -60,6 +60,9 @@ services:
   grafana:
     image: grafana/grafana:11.3.0
     restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
     environment:
       GF_SECURITY_ADMIN_PASSWORD: '${GRAFANA_PASSWORD}'
       GF_AUTH_GOOGLE_ENABLED: "true"
@@ -72,6 +75,11 @@ services:
       GF_SERVER_ROOT_URL: ${GF_SERVER_ROOT_URL}
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: '${POSTGRES_PASSWORD}'
+      GF_DATABASE_TYPE: postgres
+      GF_DATABASE_HOST: postgres:5432
+      GF_DATABASE_NAME: grafana
+      GF_DATABASE_USER: postgres
+      GF_DATABASE_PASSWORD: '${POSTGRES_PASSWORD}'
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.grafana.rule=Host(`${GRAFANA_DOMAIN}`)"
