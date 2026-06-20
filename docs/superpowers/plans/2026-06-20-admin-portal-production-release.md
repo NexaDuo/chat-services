@@ -59,7 +59,7 @@ Publish the feature branch to trigger the staging deployment pipeline.
 **Files:**
 - Modify: `.github/workflows/deploy.yml`
 
-- [ ] **Step 2.1: Push the local branch to GitHub**
+- [x] **Step 2.1: Push the local branch to GitHub**
   Push `feat/admin-portal` to the origin remote repository.
   *Run:*
   ```bash
@@ -67,7 +67,7 @@ Publish the feature branch to trigger the staging deployment pipeline.
   ```
   *Expected Output:* Branch pushed to `origin/feat/admin-portal`.
 
-- [ ] **Step 2.2: Open a Pull Request targeting main**
+- [x] **Step 2.2: Open a Pull Request targeting main**
   Instruct the user or use GitHub CLI to open a Pull Request targeting `main`.
   *Run:*
   ```bash

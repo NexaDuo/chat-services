@@ -1,6 +1,5 @@
 import { test, expect } from '@playwright/test';
 import Fastify, { FastifyInstance } from 'fastify';
-import axios from '../../middleware/node_modules/axios/index.js';
 import { registerAdminRoutes } from '../../middleware/src/handlers/admin.js';
 import dotenv from 'dotenv';
 import path from 'path';
@@ -102,9 +101,8 @@ const mockDb = {
 
 // Mock Axios calls for the local test server
 const mockAxiosRequests: any[] = [];
-test.beforeAll(async () => {
-  // Overwrite axios methods
-  axios.post = async (url: string, data?: any, config?: any) => {
+const mockAxios = {
+  post: async (url: string, data?: any, config?: any) => {
     mockAxiosRequests.push({ method: 'POST', url, data, headers: config?.headers });
     if (url.includes('/platform/api/v1/accounts')) {
       if (url.includes('/account_users')) {
@@ -119,16 +117,21 @@ test.beforeAll(async () => {
       return { data: { status: 'SUCCESS' } };
     }
     return { data: {} };
-  };
-
-  axios.get = async (url: string, config?: any) => {
+  },
+  get: async (url: string, config?: any) => {
     mockAxiosRequests.push({ method: 'GET', url, headers: config?.headers });
     if (url.includes('/instance/connectionState')) {
       return { data: { instance: { state: 'open' } } };
     }
     return { data: {} };
-  };
+  },
+  delete: async (url: string, config?: any) => {
+    mockAxiosRequests.push({ method: 'DELETE', url, headers: config?.headers });
+    return { data: { status: 'success' } };
+  }
+};
 
+test.beforeAll(async () => {
   server = Fastify({
     logger: false
   });
@@ -149,7 +152,7 @@ test.beforeAll(async () => {
     }
   };
   
-  await registerAdminRoutes(server, mockConfig as any, mockDb as any);
+  await registerAdminRoutes(server, mockConfig as any, mockDb as any, mockAxios);
   await server.listen({ port: 4000, host: '127.0.0.1' });
 });
 

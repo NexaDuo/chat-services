@@ -3,7 +3,7 @@ import fs from "fs/promises";
 import path from "path";
 import { fileURLToPath } from "url";
 import pg from "pg";
-import axios from "axios";
+import defaultAxios from "axios";
 import { AppConfig } from "../config.js";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -14,7 +14,9 @@ export async function registerAdminRoutes(
   app: FastifyInstance,
   config: AppConfig,
   pool: pg.Pool,
+  customHttpClient?: any,
 ): Promise<void> {
+  const axios = (customHttpClient || defaultAxios) as typeof defaultAxios;
   const checkAuth = (request: FastifyRequest, reply: FastifyReply): boolean => {
     const authHeader = request.headers.authorization;
     if (!authHeader || !authHeader.startsWith("Basic ")) {
