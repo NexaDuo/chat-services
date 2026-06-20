@@ -2,11 +2,48 @@ import { test, expect } from '@playwright/test';
 import Fastify, { FastifyInstance } from 'fastify';
 import axios from '../../middleware/node_modules/axios/index.js';
 import { registerAdminRoutes } from '../../middleware/src/handlers/admin.js';
+import dotenv from 'dotenv';
+import path from 'path';
+import fs from 'fs';
+import yaml from 'yaml';
+import { fileURLToPath } from 'url';
 
-const MIDDLEWARE_URL = 'http://127.0.0.1:4000';
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// Load .env from project root
+dotenv.config({ path: path.resolve(__dirname, '../../.env') });
+
+const liveMiddlewareUrl = process.env.MIDDLEWARE_URL;
+const testMiddlewareUrl = 'http://127.0.0.1:4000';
+
+const targetMiddlewareUrl = liveMiddlewareUrl || testMiddlewareUrl;
+const targetPassword = liveMiddlewareUrl
+  ? (process.env.ADMIN_PASSWORD || process.env.HANDOFF_SHARED_SECRET || 'test-admin-password')
+  : 'test-admin-password';
+
+// Load tenants.yaml to find a valid tenant slug for live testing
+let liveTenantSlug = 'nexaduo'; // fallback default
+try {
+  const yamlPath = path.resolve(__dirname, '../../tenants.yaml');
+  if (fs.existsSync(yamlPath)) {
+    const fileContents = fs.readFileSync(yamlPath, 'utf8');
+    const config = yaml.parse(fileContents);
+    const env = process.env.ENVIRONMENT || 'production';
+    const envTenants = config.tenants.filter((t: any) => (t.environment || 'production') === env);
+    if (envTenants.length > 0) {
+      liveTenantSlug = envTenants[0].slug;
+    }
+  }
+} catch (e) {
+  // Ignore
+}
+
+const targetTenantSlug = liveMiddlewareUrl ? liveTenantSlug : 'nexaduo';
+
 let server: FastifyInstance;
 
-// Mock database pool
+// Mock database pool for the test Fastify server
 const mockDb = {
   queries: [] as { text: string; values: any[] }[],
   query: async (text: string, values?: any[]) => {
@@ -63,7 +100,7 @@ const mockDb = {
   }
 };
 
-// Mock Axios calls
+// Mock Axios calls for the local test server
 const mockAxiosRequests: any[] = [];
 test.beforeAll(async () => {
   // Overwrite axios methods
@@ -122,13 +159,13 @@ test.afterAll(async () => {
 
 test.describe('Omnichannel Admin Portal Authentication', () => {
   test('should return 401 when accessing /admin without authorization headers', async ({ request }) => {
-    const response = await request.get(`${MIDDLEWARE_URL}/admin`);
+    const response = await request.get(`${targetMiddlewareUrl}/admin`);
     expect(response.status()).toBe(401);
   });
 
   test('should return 200 when accessing /admin with correct credentials', async ({ request }) => {
-    const credentials = Buffer.from('admin:test-admin-password').toString('base64');
-    const response = await request.get(`${MIDDLEWARE_URL}/admin`, {
+    const credentials = Buffer.from(`admin:${targetPassword}`).toString('base64');
+    const response = await request.get(`${targetMiddlewareUrl}/admin`, {
       headers: { authorization: `Basic ${credentials}` }
     });
     expect(response.status()).toBe(200);
@@ -138,51 +175,75 @@ test.describe('Omnichannel Admin Portal Authentication', () => {
 });
 
 test.describe('Admin Portal API Endpoints', () => {
-  const credentials = Buffer.from('admin:test-admin-password').toString('base64');
-  const authHeader = { authorization: `Basic ${credentials}` };
-
   test('GET /admin/api/tenants - should list physical tenants', async ({ request }) => {
-    const response = await request.get(`${MIDDLEWARE_URL}/admin/api/tenants`, {
+    const credentials = Buffer.from(`admin:${targetPassword}`).toString('base64');
+    const authHeader = { authorization: `Basic ${credentials}` };
+    const response = await request.get(`${targetMiddlewareUrl}/admin/api/tenants`, {
       headers: authHeader
     });
     expect(response.status()).toBe(200);
     const list = await response.json();
-    expect(list).toEqual([
-      {
-        slug: 'nexaduo',
-        name: 'NexaDuo Main',
-        chatwootUrl: 'https://chat.nexaduo.com',
-        difyUrl: 'https://dify.nexaduo.com'
-      },
-      {
-        slug: 'acme-dedicated',
-        name: 'Acme Dedicated',
-        chatwootUrl: 'https://chat.acme.com',
-        difyUrl: 'https://dify.acme.com'
+    expect(Array.isArray(list)).toBeTruthy();
+
+    if (!liveMiddlewareUrl) {
+      expect(list).toEqual([
+        {
+          slug: 'nexaduo',
+          name: 'NexaDuo Main',
+          chatwootUrl: 'https://chat.nexaduo.com',
+          difyUrl: 'https://dify.nexaduo.com'
+        },
+        {
+          slug: 'acme-dedicated',
+          name: 'Acme Dedicated',
+          chatwootUrl: 'https://chat.acme.com',
+          difyUrl: 'https://dify.acme.com'
+        }
+      ]);
+    } else {
+      if (list.length > 0) {
+        expect(list[0]).toHaveProperty('slug');
+        expect(list[0]).toHaveProperty('name');
+        expect(list[0]).toHaveProperty('chatwootUrl');
+        expect(list[0]).toHaveProperty('difyUrl');
       }
-    ]);
+    }
   });
 
   test('GET /admin/api/tenants/:tenantSlug/accounts - should list client accounts', async ({ request }) => {
-    const response = await request.get(`${MIDDLEWARE_URL}/admin/api/tenants/nexaduo/accounts`, {
+    const credentials = Buffer.from(`admin:${targetPassword}`).toString('base64');
+    const authHeader = { authorization: `Basic ${credentials}` };
+    const response = await request.get(`${targetMiddlewareUrl}/admin/api/tenants/${targetTenantSlug}/accounts`, {
       headers: authHeader
     });
     expect(response.status()).toBe(200);
     const accounts = await response.json();
-    expect(accounts).toEqual([
-      {
-        slug: 'miau-duda',
-        subdomain: 'duda',
-        name: 'Miau Duda',
-        chatwootAccountId: '12',
-        status: 'active',
-        difyAppType: 'chatflow'
+    expect(Array.isArray(accounts)).toBeTruthy();
+
+    if (!liveMiddlewareUrl) {
+      expect(accounts).toEqual([
+        {
+          slug: 'miau-duda',
+          subdomain: 'duda',
+          name: 'Miau Duda',
+          chatwootAccountId: '12',
+          status: 'active',
+          difyAppType: 'chatflow'
+        }
+      ]);
+    } else {
+      if (accounts.length > 0) {
+        expect(accounts[0]).toHaveProperty('slug');
+        expect(accounts[0]).toHaveProperty('subdomain');
+        expect(accounts[0]).toHaveProperty('name');
+        expect(accounts[0]).toHaveProperty('chatwootAccountId');
+        expect(accounts[0]).toHaveProperty('status');
       }
-    ]);
+    }
   });
 
   test('POST /admin/api/tenants/:tenantSlug/provision - should orchestrate account creation and return 201', async ({ request }) => {
-    // Clear request lists before testing
+    // This test performs structural mutation mocks and MUST run against the local test server
     mockAxiosRequests.length = 0;
     mockDb.queries.length = 0;
 
@@ -195,7 +256,10 @@ test.describe('Admin Portal API Endpoints', () => {
       difyAppType: 'agent'
     };
 
-    const response = await request.post(`${MIDDLEWARE_URL}/admin/api/tenants/nexaduo/provision`, {
+    const credentials = Buffer.from('admin:test-admin-password').toString('base64');
+    const authHeader = { authorization: `Basic ${credentials}` };
+
+    const response = await request.post(`${testMiddlewareUrl}/admin/api/tenants/nexaduo/provision`, {
       headers: authHeader,
       data: payload
     });
@@ -246,7 +310,11 @@ test.describe('Admin Portal API Endpoints', () => {
   });
 
   test('GET /admin/api/instances/:name/status - should return connectionState', async ({ request }) => {
-    const response = await request.get(`${MIDDLEWARE_URL}/admin/api/instances/client-slug-instagram/status`, {
+    // This status test checks local mocked state and runs against the test server
+    const credentials = Buffer.from('admin:test-admin-password').toString('base64');
+    const authHeader = { authorization: `Basic ${credentials}` };
+
+    const response = await request.get(`${testMiddlewareUrl}/admin/api/instances/client-slug-instagram/status`, {
       headers: authHeader
     });
     expect(response.status()).toBe(200);
@@ -260,16 +328,16 @@ test.describe('Admin Portal API Endpoints', () => {
 
 test.describe('Omnichannel Admin Portal Browser UI rendering', () => {
   test('should render landing page on /admin', async ({ page }) => {
-    const credentials = Buffer.from('admin:test-admin-password').toString('base64');
+    const credentials = Buffer.from(`admin:${targetPassword}`).toString('base64');
     await page.setExtraHTTPHeaders({ authorization: `Basic ${credentials}` });
-    await page.goto(`${MIDDLEWARE_URL}/admin`);
+    await page.goto(`${targetMiddlewareUrl}/admin`);
     await expect(page.locator('h1')).toContainText('Selecione o Tenant de Destino');
   });
 
   test('should render dashboard page on /admin/:tenantSlug', async ({ page }) => {
-    const credentials = Buffer.from('admin:test-admin-password').toString('base64');
+    const credentials = Buffer.from(`admin:${targetPassword}`).toString('base64');
     await page.setExtraHTTPHeaders({ authorization: `Basic ${credentials}` });
-    await page.goto(`${MIDDLEWARE_URL}/admin/nexaduo`);
+    await page.goto(`${targetMiddlewareUrl}/admin/${targetTenantSlug}`);
     await expect(page.locator('#active-tenant-title')).toContainText('Ambiente');
   });
 });
