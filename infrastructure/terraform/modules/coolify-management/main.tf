@@ -42,9 +42,9 @@ resource "coolify_application" "cloudflared" {
   name         = "cloudflared-tunnel"
   project_uuid = coolify_project.main.uuid
   server_uuid  = data.coolify_server.main.uuid
-  
+
   # Configuração via Docker Compose
-  source_type = "docker_compose"
+  source_type        = "docker_compose"
   docker_compose_raw = <<-EOT
     services:
       cloudflared:

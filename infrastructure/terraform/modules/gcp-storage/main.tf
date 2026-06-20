@@ -26,7 +26,7 @@ resource "google_storage_bucket" "backup_bucket" {
   project       = var.project_id
   force_destroy = false
 
-  public_access_prevention = "enforced"
+  public_access_prevention    = "enforced"
   uniform_bucket_level_access = true
 
   versioning {

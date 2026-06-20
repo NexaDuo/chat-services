@@ -78,3 +78,8 @@ data "google_secret_manager_secret_version" "google_oauth_client_id" {
 data "google_secret_manager_secret_version" "google_oauth_client_secret" {
   secret = "google_oauth_client_secret"
 }
+
+data "google_secret_manager_secret_version" "admin_password" {
+  secret = "admin_password"
+}
+
