@@ -18,7 +18,7 @@ Verify the local code state, compile typescript services, and run integration te
 - Modify: `middleware/tsconfig.json`
 - Modify: `onboarding/tests/15-admin-portal.spec.ts`
 
-- [ ] **Step 1.1: Verify TypeScript Compilation and Build**
+- [x] **Step 1.1: Verify TypeScript Compilation and Build**
   Build the middleware adapter locally to verify copy scripts and TypeScript compilation.
   *Run:*
   ```bash
@@ -26,7 +26,7 @@ Verify the local code state, compile typescript services, and run integration te
   ```
   *Expected Output:* Successful compilation with `dist/public/index.html` created.
 
-- [ ] **Step 1.2: Execute Typecheck**
+- [x] **Step 1.2: Execute Typecheck**
   Ensure all files are type-safe.
   *Run:*
   ```bash
@@ -34,7 +34,7 @@ Verify the local code state, compile typescript services, and run integration te
   ```
   *Expected Output:* Command completes successfully with `exit code 0` and no type errors.
 
-- [ ] **Step 1.3: Run Playwright Admin Portal E2E tests**
+- [x] **Step 1.3: Run Playwright Admin Portal E2E tests**
   Execute the unit mock test suite locally.
   *Run:*
   ```bash
@@ -42,7 +42,7 @@ Verify the local code state, compile typescript services, and run integration te
   ```
   *Expected Output:* `8 passed` in terminal logs.
 
-- [ ] **Step 1.4: Commit any leftover workspace files**
+- [x] **Step 1.4: Commit any leftover workspace files**
   Commit all changes to ensure a clean branch state.
   *Run:*
   ```bash
