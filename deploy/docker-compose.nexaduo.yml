@@ -29,6 +29,10 @@ services:
       DIFY_BASE_URL: http://dify-api:5001/v1
       DATABASE_URL: 'postgresql://postgres:${POSTGRES_PASSWORD}@postgres:5432/middleware'
       HANDOFF_SHARED_SECRET: '${HANDOFF_SHARED_SECRET}'
+      ADMIN_PASSWORD: '${ADMIN_PASSWORD}'
+      CHATWOOT_PLATFORM_TOKEN: '${CHATWOOT_PLATFORM_TOKEN}'
+      EVOLUTION_AUTHENTICATION_API_KEY: '${EVOLUTION_API_KEY}'
+      EVOLUTION_BASE_URL: http://evolution-api:8080
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.middleware.rule=Host(`${MIDDLEWARE_DOMAIN}`)"
@@ -60,9 +64,6 @@ services:
   grafana:
     image: grafana/grafana:11.3.0
     restart: unless-stopped
-    depends_on:
-      postgres:
-        condition: service_healthy
     environment:
       GF_SECURITY_ADMIN_PASSWORD: '${GRAFANA_PASSWORD}'
       GF_AUTH_GOOGLE_ENABLED: "true"

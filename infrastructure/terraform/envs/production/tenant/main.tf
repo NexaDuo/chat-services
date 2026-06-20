@@ -347,6 +347,11 @@ resource "coolify_service_envs" "nexaduo" {
     value = "atendimento-humano"
   }
   env {
+    key        = "ADMIN_PASSWORD"
+    value      = data.google_secret_manager_secret_version.admin_password.secret_data
+    is_literal = true
+  }
+  env {
     key        = "DATABASE_URL"
     value      = "postgresql://postgres:${data.google_secret_manager_secret_version.postgres_password.secret_data}@postgres:5432/middleware"
     is_literal = true

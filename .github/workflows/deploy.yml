@@ -360,9 +360,21 @@ jobs:
             *)        echo "args=" >> "$GITHUB_OUTPUT" ;;
           esac
 
+      - name: Resolve deploy image variables
+        id: images
+        run: |
+          if [[ "${{ needs.build-images.result }}" != "success" ]]; then
+            echo "build-images job was not successful, using default tfvars values."
+            echo "args=" >> "$GITHUB_OUTPUT"
+          else
+            MIDDLEWARE_VAL="us-central1-docker.pkg.dev/nexaduo-492818/nexaduo/middleware:deploy-${{ github.run_id }}"
+            SELF_HEALING_VAL="us-central1-docker.pkg.dev/nexaduo-492818/nexaduo/self-healing-agent:deploy-${{ github.run_id }}"
+            echo "args=-var=middleware_image=${MIDDLEWARE_VAL} -var=self_healing_image=${SELF_HEALING_VAL}" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Terraform plan
         working-directory: infrastructure/terraform/envs/production/tenant
-        run: terraform plan -var-file=../terraform.tfvars ${{ steps.targets.outputs.args }} -out=tfplan.bin
+        run: terraform plan -var-file=../terraform.tfvars ${{ steps.images.outputs.args }} ${{ steps.targets.outputs.args }} -out=tfplan.bin
 
       - name: Show plan (redacted)
         working-directory: infrastructure/terraform/envs/production/tenant
@@ -632,6 +644,7 @@ jobs:
         working-directory: onboarding
         run: |
           npm ci
+          npm ci --prefix ..
           npx playwright install --with-deps chromium
 
       # Functional validation suite (gates the deploy). Environment-aware via
@@ -655,7 +668,9 @@ jobs:
             01-infra.spec.ts \
             03-smoke.spec.ts \
             04-oauth.spec.ts \
-            07-hybrid-tenants.spec.ts
+            07-hybrid-tenants.spec.ts \
+            15-admin-portal.spec.ts
+
 
       # Console/network error scan across the app frontends. Reported but not
       # blocking, since SPAs routinely emit benign console noise.

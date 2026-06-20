@@ -30,7 +30,9 @@ volumes/
 data/
 onboarding/*.png
 onboarding/test-results/
+onboarding/playwright-report/
 test-results/
+playwright-report/
 
 # Logs
 *.log
