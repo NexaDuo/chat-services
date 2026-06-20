@@ -6,6 +6,7 @@ const EnvSchema = z.object({
     .enum(["trace", "debug", "info", "warn", "error", "fatal"])
     .default("info"),
 
+  CHATWOOT_PLATFORM_TOKEN: z.string().optional(),
   CHATWOOT_BASE_URL: z.string().url(),
   CHATWOOT_API_TOKEN: z.string().default(""),
   CHATWOOT_WEBHOOK_TOKEN: z.string().optional(),
@@ -18,6 +19,9 @@ const EnvSchema = z.object({
     .min(16, "HANDOFF_SHARED_SECRET must be at least 16 chars"),
   HANDOFF_LABEL: z.string().default("atendimento-humano"),
 
+  ADMIN_PASSWORD: z.string().optional(),
+  EVOLUTION_AUTHENTICATION_API_KEY: z.string().optional(),
+  EVOLUTION_BASE_URL: z.string().url().default("http://evolution-api:8080"),
   DATABASE_URL: z.string().url().min(1, "DATABASE_URL is required"),
 });
 
@@ -25,9 +29,15 @@ export type AppConfig = {
   port: number;
   logLevel: z.infer<typeof EnvSchema>["LOG_LEVEL"];
   databaseUrl: string;
+  adminPassword?: string;
+  evolution: {
+    apiKey?: string;
+    baseUrl: string;
+  };
   chatwoot: {
     baseUrl: string;
     apiToken: string;
+    platformToken?: string;
     webhookToken?: string;
   };
   dify: {
@@ -56,11 +66,18 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     port: data.PORT,
     logLevel: data.LOG_LEVEL,
     databaseUrl: data.DATABASE_URL,
+    adminPassword: data.ADMIN_PASSWORD,
+    evolution: {
+      apiKey: data.EVOLUTION_AUTHENTICATION_API_KEY,
+      baseUrl: data.EVOLUTION_BASE_URL.replace(/\/+$/, ""),
+    },
     chatwoot: {
       baseUrl: data.CHATWOOT_BASE_URL.replace(/\/+$/, ""),
       apiToken: data.CHATWOOT_API_TOKEN,
+      platformToken: data.CHATWOOT_PLATFORM_TOKEN,
       webhookToken: data.CHATWOOT_WEBHOOK_TOKEN,
     },
+
     dify: {
       baseUrl: data.DIFY_BASE_URL.replace(/\/+$/, ""),
       requestTimeoutMs: data.DIFY_REQUEST_TIMEOUT_MS,

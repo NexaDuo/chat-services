@@ -655,7 +655,9 @@ jobs:
             01-infra.spec.ts \
             03-smoke.spec.ts \
             04-oauth.spec.ts \
-            07-hybrid-tenants.spec.ts
+            07-hybrid-tenants.spec.ts \
+            15-admin-portal.spec.ts
+
 
       # Console/network error scan across the app frontends. Reported but not
       # blocking, since SPAs routinely emit benign console noise.

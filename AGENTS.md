@@ -145,3 +145,8 @@ Whenever you need to run routine verification, ask the agent to **"run a routine
 2. **App Layer:** Scripted `scp` of `.env`/`compose` + `ssh docker compose up -d`.
 3. **Routing:** Scripted generation of Traefik dynamic configs.
 4. **Validation:** Playwright tests with production URLs.
+
+## Terminology Constraints
+
+- **NexaDuo Name:** NexaDuo is the name of only one of the tenants in this multi-tenant stack, not the stack itself. Do not use "NexaDuo" as a generic name for the platform or the admin dashboard. Reference the platform or system generically as "Multitenant Chat Services" or "Omnichannel Stack".
+

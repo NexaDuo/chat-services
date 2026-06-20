@@ -1,0 +1,903 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Omnichannel Admin Portal</title>
+  <!-- Google Fonts: Inter -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg-dark: #090d16;
+      --panel-bg: rgba(17, 24, 39, 0.7);
+      --border-color: rgba(255, 255, 255, 0.08);
+      --accent-glow: rgba(99, 102, 241, 0.15);
+      --accent-color: #6366f1;
+      --accent-hover: #4f46e5;
+      --text-main: #f3f4f6;
+      --text-muted: #9ca3af;
+      --success: #10b981;
+      --success-glow: rgba(16, 185, 129, 0.15);
+      --error: #ef4444;
+      --error-glow: rgba(239, 68, 68, 0.15);
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background-color: var(--bg-dark);
+      color: var(--text-main);
+      font-family: 'Inter', sans-serif;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow-x: hidden;
+    }
+
+    /* Background decorative blobs */
+    .glow-blob-1 {
+      position: absolute;
+      top: -10%;
+      left: -10%;
+      width: 50vw;
+      height: 50vw;
+      background: radial-gradient(circle, rgba(99, 102, 241, 0.08) 0%, rgba(0, 0, 0, 0) 70%);
+      pointer-events: none;
+      z-index: -1;
+    }
+
+    .glow-blob-2 {
+      position: absolute;
+      bottom: -10%;
+      right: -10%;
+      width: 50vw;
+      height: 50vw;
+      background: radial-gradient(circle, rgba(16, 185, 129, 0.05) 0%, rgba(0, 0, 0, 0) 70%);
+      pointer-events: none;
+      z-index: -1;
+    }
+
+    header {
+      backdrop-filter: blur(12px);
+      background: rgba(9, 13, 22, 0.8);
+      border-bottom: 1px solid var(--border-color);
+      padding: 1.25rem 2rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      position: sticky;
+      top: 0;
+      z-index: 50;
+    }
+
+    .logo-container {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+
+    .logo-icon {
+      width: 1.75rem;
+      height: 1.75rem;
+      background: linear-gradient(135deg, #6366f1 0%, #10b981 100%);
+      border-radius: 6px;
+      box-shadow: 0 0 15px rgba(99, 102, 241, 0.4);
+    }
+
+    .logo-text {
+      font-weight: 700;
+      font-size: 1.25rem;
+      letter-spacing: -0.025em;
+      background: linear-gradient(to right, #ffffff, #d1d5db);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .main-container {
+      flex: 1;
+      max-width: 1400px;
+      width: 100%;
+      margin: 0 auto;
+      padding: 2.5rem 2rem;
+    }
+
+    /* Views */
+    .view {
+      display: none;
+    }
+
+    .view.active {
+      display: block;
+    }
+
+    /* Landing View: Tenant Selection */
+    .landing-header {
+      text-align: center;
+      margin-bottom: 3.5rem;
+    }
+
+    .landing-header h1 {
+      font-size: 2.25rem;
+      font-weight: 700;
+      margin-bottom: 0.75rem;
+      letter-spacing: -0.025em;
+    }
+
+    .landing-header p {
+      color: var(--text-muted);
+      font-size: 1.1rem;
+    }
+
+    .tenant-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+      gap: 1.5rem;
+      max-width: 1000px;
+      margin: 0 auto;
+    }
+
+    .tenant-card {
+      background: var(--panel-bg);
+      border: 1px solid var(--border-color);
+      border-radius: 12px;
+      padding: 2rem;
+      cursor: pointer;
+      transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+      backdrop-filter: blur(10px);
+      box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .tenant-card::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 3px;
+      background: linear-gradient(90deg, #6366f1 0%, #10b981 100%);
+      opacity: 0;
+      transition: opacity 0.3s ease;
+    }
+
+    .tenant-card:hover {
+      transform: translateY(-4px);
+      border-color: rgba(99, 102, 241, 0.4);
+      box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.3), 0 0 20px rgba(99, 102, 241, 0.1);
+    }
+
+    .tenant-card:hover::before {
+      opacity: 1;
+    }
+
+    .tenant-card h2 {
+      font-size: 1.5rem;
+      font-weight: 600;
+    }
+
+    .tenant-meta {
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+      font-size: 0.875rem;
+      color: var(--text-muted);
+    }
+
+    .tenant-meta span {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    /* Dashboard View */
+    .dashboard-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 2.5rem;
+      border-bottom: 1px solid var(--border-color);
+      padding-bottom: 1.5rem;
+    }
+
+    .btn-back {
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid var(--border-color);
+      color: var(--text-main);
+      padding: 0.5rem 1rem;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 0.875rem;
+      font-weight: 500;
+      transition: all 0.2s ease;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .btn-back:hover {
+      background: rgba(255, 255, 255, 0.1);
+      border-color: rgba(255, 255, 255, 0.2);
+    }
+
+    .dashboard-layout {
+      display: grid;
+      grid-template-columns: 420px 1fr;
+      gap: 2.5rem;
+      align-items: start;
+    }
+
+    @media (max-width: 1024px) {
+      .dashboard-layout {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    /* Panels */
+    .panel {
+      background: var(--panel-bg);
+      border: 1px solid var(--border-color);
+      border-radius: 12px;
+      padding: 2rem;
+      backdrop-filter: blur(10px);
+      box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.3);
+    }
+
+    .panel-title {
+      font-size: 1.25rem;
+      font-weight: 600;
+      margin-bottom: 1.5rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    /* Forms */
+    .form-group {
+      margin-bottom: 1.25rem;
+    }
+
+    .form-group label {
+      display: block;
+      font-size: 0.875rem;
+      font-weight: 500;
+      margin-bottom: 0.5rem;
+      color: var(--text-muted);
+    }
+
+    .form-control {
+      width: 100%;
+      background: rgba(10, 15, 26, 0.8);
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      padding: 0.75rem 1rem;
+      color: var(--text-main);
+      font-family: inherit;
+      font-size: 0.95rem;
+      transition: all 0.2s ease;
+    }
+
+    .form-control:focus {
+      outline: none;
+      border-color: var(--accent-color);
+      box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.2);
+    }
+
+    /* Buttons */
+    .btn-submit {
+      width: 100%;
+      background: var(--accent-color);
+      color: #ffffff;
+      border: none;
+      padding: 0.875rem;
+      border-radius: 8px;
+      font-weight: 600;
+      font-size: 1rem;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      box-shadow: 0 4px 6px -1px rgba(99, 102, 241, 0.2);
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .btn-submit:hover {
+      background: var(--accent-hover);
+      box-shadow: 0 10px 15px -3px rgba(99, 102, 241, 0.3);
+    }
+
+    .btn-submit:disabled {
+      background: rgba(255, 255, 255, 0.05);
+      color: var(--text-muted);
+      cursor: not-allowed;
+      box-shadow: none;
+    }
+
+    /* Channel Cards */
+    .channel-card-static {
+      background: rgba(228, 64, 95, 0.08);
+      border: 1px solid rgba(228, 64, 95, 0.3);
+      border-radius: 8px;
+      padding: 1rem;
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      margin-bottom: 1.5rem;
+    }
+
+    .channel-logo {
+      width: 2.25rem;
+      height: 2.25rem;
+      border-radius: 8px;
+      background: linear-gradient(45deg, #f09433 0%, #e6683c 25%, #dc2743 50%, #cc2366 75%, #bc1888 100%);
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      font-weight: 700;
+      font-size: 1.25rem;
+    }
+
+    /* Accounts Table */
+    .table-container {
+      overflow-x: auto;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      text-align: left;
+    }
+
+    th {
+      font-size: 0.875rem;
+      font-weight: 600;
+      color: var(--text-muted);
+      border-bottom: 1px solid var(--border-color);
+      padding: 1rem;
+    }
+
+    td {
+      padding: 1.25rem 1rem;
+      border-bottom: 1px solid var(--border-color);
+      font-size: 0.95rem;
+    }
+
+    tr:last-child td {
+      border-bottom: none;
+    }
+
+    /* Badges */
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 0.25rem 0.75rem;
+      border-radius: 9999px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .badge-success {
+      background: var(--success-glow);
+      color: var(--success);
+      border: 1px solid rgba(16, 185, 129, 0.2);
+    }
+
+    .badge-error {
+      background: var(--error-glow);
+      color: var(--error);
+      border: 1px solid rgba(239, 68, 68, 0.2);
+    }
+
+    /* Actions */
+    .btn-action-connect {
+      background: transparent;
+      border: 1px solid var(--accent-color);
+      color: var(--accent-color);
+      padding: 0.35rem 0.75rem;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 0.8rem;
+      font-weight: 600;
+      transition: all 0.2s ease;
+    }
+
+    .btn-action-connect:hover {
+      background: var(--accent-color);
+      color: #ffffff;
+    }
+
+    /* Modals */
+    .modal-backdrop {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(0, 0, 0, 0.6);
+      backdrop-filter: blur(8px);
+      z-index: 100;
+      display: none;
+      justify-content: center;
+      align-items: center;
+    }
+
+    .modal-backdrop.active {
+      display: flex;
+    }
+
+    .modal {
+      background: #0f172a;
+      border: 1px solid var(--border-color);
+      border-radius: 12px;
+      width: 500px;
+      max-width: 90%;
+      padding: 2.25rem;
+      box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+      position: relative;
+      animation: modalSlide 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    @keyframes modalSlide {
+      from { transform: translateY(20px); opacity: 0; }
+      to { transform: translateY(0); opacity: 1; }
+    }
+
+    .modal-title {
+      font-size: 1.5rem;
+      font-weight: 600;
+      margin-bottom: 1.25rem;
+    }
+
+    .modal-close {
+      position: absolute;
+      top: 1.25rem;
+      right: 1.25rem;
+      background: transparent;
+      border: none;
+      color: var(--text-muted);
+      cursor: pointer;
+      font-size: 1.25rem;
+    }
+
+    .modal-content {
+      font-size: 0.95rem;
+      line-height: 1.6;
+      color: var(--text-muted);
+      margin-bottom: 2rem;
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+    }
+
+    .modal-content strong {
+      color: var(--text-main);
+    }
+
+    .instruction-step {
+      background: rgba(255, 255, 255, 0.02);
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      padding: 1rem;
+    }
+
+    /* Toast notification */
+    .toast-container {
+      position: fixed;
+      bottom: 2rem;
+      right: 2rem;
+      z-index: 1000;
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+    }
+
+    .toast {
+      background: #1e293b;
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      padding: 1rem 1.5rem;
+      box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.3);
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      min-width: 300px;
+      animation: toastSlide 0.3s ease;
+    }
+
+    @keyframes toastSlide {
+      from { transform: translateX(50px); opacity: 0; }
+      to { transform: translateX(0); opacity: 1; }
+    }
+
+    .toast-success {
+      border-left: 4px solid var(--success);
+    }
+
+    .toast-error {
+      border-left: 4px solid var(--error);
+    }
+  </style>
+</head>
+<body>
+  <div class="glow-blob-1"></div>
+  <div class="glow-blob-2"></div>
+
+  <header>
+    <div class="logo-container">
+      <div class="logo-icon"></div>
+      <div class="logo-text">Omnichannel Admin Portal</div>
+    </div>
+  </header>
+
+  <main class="main-container">
+    <!-- View 1: Tenant List Landing Page -->
+    <section id="view-landing" class="view active">
+      <div class="landing-header">
+        <h1>Selecione o Tenant de Destino</h1>
+        <p>Escolha um dos ambientes cadastrados para gerenciar e provisionar contas.</p>
+      </div>
+      <div id="tenant-list" class="tenant-grid">
+        <!-- Dyn list -->
+      </div>
+    </section>
+
+    <!-- View 2: Dashboard View -->
+    <section id="view-dashboard" class="view">
+      <div class="dashboard-header">
+        <div>
+          <button class="btn-back" onclick="navigateHome()">
+            ← Voltar para seleção
+          </button>
+        </div>
+        <div>
+          <h2 id="active-tenant-title">Ambiente</h2>
+        </div>
+      </div>
+
+      <div class="dashboard-layout">
+        <!-- Col 1: Form -->
+        <div class="panel">
+          <h3 class="panel-title">Provisionar Cliente</h3>
+          
+          <div class="channel-card-static">
+            <div class="channel-logo">I</div>
+            <div>
+              <strong style="display:block;">Instagram Direct Messages</strong>
+              <span style="font-size:0.8rem; color:var(--text-muted);">Integração via Evolution API</span>
+            </div>
+          </div>
+
+          <form id="provision-form" onsubmit="handleProvision(event)">
+            <div class="form-group">
+              <label for="input-name">Nome da Conta (Razão / Nome Fantasia)</label>
+              <input type="text" id="input-name" class="form-control" placeholder="ex: Miau Duda" required>
+            </div>
+            
+            <div class="form-group">
+              <label for="input-admin-name">Nome do Administrador</label>
+              <input type="text" id="input-admin-name" class="form-control" placeholder="ex: Duda" required>
+            </div>
+
+            <div class="form-group">
+              <label for="input-email">E-mail do Administrador</label>
+              <input type="email" id="input-email" class="form-control" placeholder="ex: admin@miaududa.com" required>
+            </div>
+
+            <div class="form-group">
+              <label for="input-subdomain">Slug / Subdomínio de Atendimento</label>
+              <input type="text" id="input-subdomain" class="form-control" placeholder="ex: duda" required>
+            </div>
+
+            <div class="form-group">
+              <label for="input-dify-key">Dify Service API Key</label>
+              <input type="password" id="input-dify-key" class="form-control" placeholder="ex: app-XXXXXXXXXXXXXXXX" required>
+            </div>
+
+            <div class="form-group">
+              <label for="input-dify-type">Tipo de Aplicativo Dify</label>
+              <select id="input-dify-type" class="form-control" required>
+                <option value="chatflow">Chatflow (Default)</option>
+                <option value="agent">Agent (Streaming / SSE)</option>
+              </select>
+            </div>
+
+            <button type="submit" id="btn-submit-form" class="btn-submit">
+              Provisionar Conta
+            </button>
+          </form>
+        </div>
+
+        <!-- Col 2: Listing -->
+        <div class="panel" style="flex:1;">
+          <h3 class="panel-title">Contas Ativas</h3>
+          <div class="table-container">
+            <table>
+              <thead>
+                <tr>
+                  <th>Nome do Cliente</th>
+                  <th>Subdomínio</th>
+                  <th>Chatwoot ID</th>
+                  <th>Status Instagram</th>
+                  <th>Ações</th>
+                </tr>
+              </thead>
+              <tbody id="accounts-table-body">
+                <!-- Dyn content -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- Modal -->
+  <div id="connect-modal" class="modal-backdrop">
+    <div class="modal">
+      <button class="modal-close" onclick="closeModal()">&times;</button>
+      <h3 class="modal-title">Conectar Instagram Direct</h3>
+      <div class="modal-content">
+        <div class="instruction-step">
+          <strong>Passo 1: Pré-requisitos do Facebook</strong>
+          <p>Garanta que a conta profissional do Instagram esteja vinculada à Página do Facebook que você gerencia.</p>
+        </div>
+        <div class="instruction-step">
+          <strong>Passo 2: Acessar a Evolution API</strong>
+          <p>Abra o painel do gerenciador da Evolution API em:</p>
+          <a id="link-evo-manager" href="#" target="_blank" style="color:var(--accent-color); font-weight:600; text-decoration:none;">Evolution Dashboard Manager</a>
+        </div>
+        <div class="instruction-step">
+          <strong>Passo 3: Fazer Login</strong>
+          <p>Localize a instância <strong id="modal-instance-name">duda-instagram</strong> no gerenciador e clique em conectar para autenticar com as credenciais da Meta.</p>
+        </div>
+      </div>
+      <button class="btn-submit" onclick="checkConnectionStatusForModal()">
+        Checar Status da Conexão
+      </button>
+    </div>
+  </div>
+
+  <div id="toast-container" class="toast-container"></div>
+
+  <script>
+    let activeTenant = null;
+    let accountsList = [];
+
+    // Simple Router based on window path
+    window.addEventListener('DOMContentLoaded', () => {
+      resolveRoute();
+    });
+
+    async function resolveRoute() {
+      const path = window.location.pathname;
+      const match = path.match(/^\/admin\/([^\/]+)/);
+      if (match) {
+        const tenantSlug = match[1];
+        await loadTenantDashboard(tenantSlug);
+      } else {
+        await loadLandingPage();
+      }
+    }
+
+    function showToast(message, type = 'success') {
+      const container = document.getElementById('toast-container');
+      const toast = document.createElement('div');
+      toast.className = `toast toast-${type}`;
+      toast.textContent = message;
+      container.appendChild(toast);
+      setTimeout(() => {
+        toast.remove();
+      }, 5000);
+    }
+
+    async function loadLandingPage() {
+      document.getElementById('view-dashboard').classList.remove('active');
+      document.getElementById('view-landing').classList.add('active');
+      
+      const listContainer = document.getElementById('tenant-list');
+      listContainer.innerHTML = '<div style="grid-column:1/-1; text-align:center;">Carregando ambientes...</div>';
+
+      try {
+        const response = await fetch('/admin/api/tenants');
+        if (!response.ok) throw new Error('Falha ao buscar tenants');
+        const tenants = await response.json();
+        
+        if (tenants.length === 0) {
+          listContainer.innerHTML = '<div style="grid-column:1/-1; text-align:center; color:var(--text-muted);">Nenhum tenant ativo encontrado.</div>';
+          return;
+        }
+
+        listContainer.innerHTML = '';
+        tenants.forEach(tenant => {
+          const card = document.createElement('div');
+          card.className = 'tenant-card';
+          card.innerHTML = `
+            <h2>${tenant.name}</h2>
+            <div class="tenant-meta">
+              <span><strong>Slug:</strong> ${tenant.slug}</span>
+              <span><strong>Chatwoot:</strong> ${tenant.chatwootUrl}</span>
+              <span><strong>Dify:</strong> ${tenant.difyUrl}</span>
+            </div>
+          `;
+          card.onclick = () => {
+            window.history.pushState({}, '', `/admin/${tenant.slug}`);
+            resolveRoute();
+          };
+          listContainer.appendChild(card);
+        });
+      } catch (err) {
+        showToast('Erro ao carregar lista de tenants.', 'error');
+        listContainer.innerHTML = `<div style="grid-column:1/-1; text-align:center; color:var(--error);">Erro: ${err.message}</div>`;
+      }
+    }
+
+    async function loadTenantDashboard(slug) {
+      document.getElementById('view-landing').classList.remove('active');
+      document.getElementById('view-dashboard').classList.add('active');
+      
+      activeTenant = slug;
+      document.getElementById('active-tenant-title').textContent = `Carregando ${slug}...`;
+
+      try {
+        const tenantsResp = await fetch('/admin/api/tenants');
+        const tenants = await tenantsResp.json();
+        const tenantInfo = tenants.find(t => t.slug === slug);
+        
+        if (!tenantInfo) {
+          showToast('Tenant não encontrado.', 'error');
+          navigateHome();
+          return;
+        }
+
+        document.getElementById('active-tenant-title').textContent = `Ambiente: ${tenantInfo.name}`;
+        await refreshAccountsTable();
+      } catch (err) {
+        showToast('Erro ao inicializar dashboard.', 'error');
+        navigateHome();
+      }
+    }
+
+    function navigateHome() {
+      window.history.pushState({}, '', '/admin');
+      resolveRoute();
+    }
+
+    async function refreshAccountsTable() {
+      const tbody = document.getElementById('accounts-table-body');
+      tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; color:var(--text-muted);">Carregando contas...</td></tr>';
+
+      try {
+        const response = await fetch(`/admin/api/tenants/${activeTenant}/accounts`);
+        if (!response.ok) throw new Error('Falha ao carregar contas');
+        accountsList = await response.json();
+
+        if (accountsList.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; color:var(--text-muted);">Nenhum cliente cadastrado.</td></tr>';
+          return;
+        }
+
+        tbody.innerHTML = '';
+        accountsList.forEach(account => {
+          const tr = document.createElement('tr');
+          tr.innerHTML = `
+            <td><strong>${account.name}</strong></td>
+            <td><code>${account.subdomain}</code></td>
+            <td>${account.chatwootAccountId}</td>
+            <td>
+              <span id="badge-${account.subdomain}" class="badge badge-error">Verificando...</span>
+            </td>
+            <td>
+              <button class="btn-action-connect" onclick="openConnectModal('${account.subdomain}')">
+                Conectar
+              </button>
+            </td>
+          `;
+          tbody.appendChild(tr);
+          
+          // Poll connection status immediately
+          updateInstagramStatus(account.subdomain);
+        });
+      } catch (err) {
+        showToast(err.message, 'error');
+        tbody.innerHTML = `<tr><td colspan="5" style="text-align:center; color:var(--error);">Erro: ${err.message}</td></tr>`;
+      }
+    }
+
+    async function updateInstagramStatus(subdomain) {
+      const badge = document.getElementById(`badge-${subdomain}`);
+      if (!badge) return;
+
+      const instanceName = `${subdomain}-instagram`;
+      try {
+        const response = await fetch(`/admin/api/instances/${instanceName}/status`);
+        const statusData = await response.json();
+        
+        if (statusData.connectionState === 'open' || statusData.connectionState === 'connected') {
+          badge.className = 'badge badge-success';
+          badge.textContent = 'Conectado';
+        } else {
+          badge.className = 'badge badge-error';
+          badge.textContent = 'Desconectado';
+        }
+      } catch {
+        badge.className = 'badge badge-error';
+        badge.textContent = 'Erro';
+      }
+    }
+
+    let activeModalSubdomain = null;
+    function openConnectModal(subdomain) {
+      activeModalSubdomain = subdomain;
+      document.getElementById('modal-instance-name').textContent = `${subdomain}-instagram`;
+      document.getElementById('link-evo-manager').href = `/evolution/manager`; // Reuses relative path on the proxy
+      document.getElementById('connect-modal').classList.add('active');
+    }
+
+    function closeModal() {
+      document.getElementById('connect-modal').classList.remove('active');
+      activeModalSubdomain = null;
+    }
+
+    async function checkConnectionStatusForModal() {
+      if (!activeModalSubdomain) return;
+      await updateInstagramStatus(activeModalSubdomain);
+      showToast('Status da conexão atualizado com sucesso.');
+      closeModal();
+    }
+
+    async function handleProvision(event) {
+      event.preventDefault();
+      
+      const btn = document.getElementById('btn-submit-form');
+      const prevText = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = 'Provisionando...';
+
+      const payload = {
+        name: document.getElementById('input-name').value,
+        adminName: document.getElementById('input-admin-name').value,
+        email: document.getElementById('input-email').value,
+        subdomain: document.getElementById('input-subdomain').value,
+        difyApiKey: document.getElementById('input-dify-key').value,
+        difyAppType: document.getElementById('input-dify-type').value
+      };
+
+      try {
+        const response = await fetch(`/admin/api/tenants/${activeTenant}/provision`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(payload)
+        });
+
+        const result = await response.json();
+        if (!response.ok) {
+          throw new Error(result.error || 'Erro interno ao provisionar');
+        }
+
+        showToast('Cliente provisionado com sucesso!');
+        document.getElementById('provision-form').reset();
+        await refreshAccountsTable();
+      } catch (err) {
+        showToast(err.message, 'error');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = prevText;
+      }
+    }
+  </script>
+</body>
+</html>
