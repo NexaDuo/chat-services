@@ -213,6 +213,10 @@ resource "coolify_service_envs" "dify" {
     value = "dify${local.dns_suffix}.${var.base_domain}"
   }
   env {
+    key   = "SESSION_COOKIE_SECURE"
+    value = "true"
+  }
+  env {
     key   = "HOSTNAME"
     value = "0.0.0.0"
   }
