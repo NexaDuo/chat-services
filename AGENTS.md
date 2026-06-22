@@ -159,6 +159,7 @@ Whenever you need to run routine verification, ask the agent to **"run a routine
   4. Validação E2E/Fumaça em Produção.
 - **Monitoramento Ativo de Workflows:** O agente não deve considerar a tarefa concluída apenas ao abrir o PR ou fazer o push. Ele deve monitorar a execução dos workflows do GitHub Actions (via logs, comandos `gh run watch` ou checagens no Git) até que o deploy em staging e produção seja concluído com sucesso.
 - **Validação com URLs Reais:** A validação final em staging e produção deve ser feita executando os testes automatizados (como os testes do Playwright) apontando para as URLs de produção/staging correspondentes, e nunca apenas localmente.
+- **Testes de Regressão no Playwright:** Sempre que um bug for corrigido (como falhas de autenticação, sessões expiradas ou roteamento), adicione um teste ou asserção correspondente no Playwright para evitar regressões futuras (ex: monitorar chamadas de rede como `/console/api/refresh-token` para capturar erros inesperados após a autenticação).
 
 ## Lições Aprendidas: Migrações de Banco de Dados em Ambientes Existentes
 
