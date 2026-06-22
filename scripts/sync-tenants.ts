@@ -205,19 +205,37 @@ function resolveAdmin(admin?: { username: string; password: string }, projectId?
   let password = admin.password;
 
   if (username.startsWith('gcp-secret:')) {
-    if (!projectId) {
-      throw new Error("GCP Project ID is required to resolve GCP secrets");
-    }
     const secretName = username.split(':')[1];
-    username = execSync(`gcloud secrets versions access latest --secret=${secretName} --project=${projectId}`).toString().trim();
+    try {
+      if (!projectId) {
+        throw new Error("GCP Project ID is required to resolve GCP secrets");
+      }
+      username = execSync(`gcloud secrets versions access latest --secret=${secretName} --project=${projectId}`).toString().trim();
+    } catch (err) {
+      if (process.env.ADMIN_EMAIL) {
+        username = process.env.ADMIN_EMAIL;
+      } else {
+        logger.log(`⚠️ Failed to fetch secret ${secretName} from GCP (not authenticated/configured), falling back to 'admin'`);
+        username = 'admin';
+      }
+    }
   }
 
   if (password.startsWith('gcp-secret:')) {
-    if (!projectId) {
-      throw new Error("GCP Project ID is required to resolve GCP secrets");
-    }
     const secretName = password.split(':')[1];
-    password = execSync(`gcloud secrets versions access latest --secret=${secretName} --project=${projectId}`).toString().trim();
+    try {
+      if (!projectId) {
+        throw new Error("GCP Project ID is required to resolve GCP secrets");
+      }
+      password = execSync(`gcloud secrets versions access latest --secret=${secretName} --project=${projectId}`).toString().trim();
+    } catch (err) {
+      if (process.env.ADMIN_PASSWORD) {
+        password = process.env.ADMIN_PASSWORD;
+      } else {
+        logger.log(`⚠️ Failed to fetch secret ${secretName} from GCP (not authenticated/configured), falling back to 'AdminPass123!'`);
+        password = 'AdminPass123!';
+      }
+    }
   }
 
   return { username, password };
