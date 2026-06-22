@@ -575,6 +575,63 @@
     .tab-content.active {
       display: block;
     }
+
+    /* Glassmorphism Login Card */
+    .login-card {
+      background: rgba(17, 24, 39, 0.45);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 16px;
+      box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+      padding: 3rem 2.5rem;
+      width: 100%;
+      max-width: 440px;
+      position: relative;
+      overflow: hidden;
+      transition: all 0.3s ease;
+    }
+    .login-card::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 4px;
+      background: linear-gradient(90deg, #6366f1 0%, #10b981 100%);
+    }
+    .btn-login-gradient {
+      width: 100%;
+      background: linear-gradient(135deg, #6366f1 0%, #10b981 100%) !important;
+      border: none;
+      color: #fff;
+      padding: 0.875rem;
+      border-radius: 8px;
+      font-weight: 600;
+      font-size: 1rem;
+      cursor: pointer;
+      letter-spacing: 0.025em;
+      transition: all 0.3s ease;
+      box-shadow: 0 4px 15px rgba(99, 102, 241, 0.3);
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    .btn-login-gradient:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 8px 25px rgba(99, 102, 241, 0.5), 0 0 15px rgba(16, 185, 129, 0.3);
+    }
+    .btn-login-gradient:active {
+      transform: translateY(0);
+    }
+    .btn-login-gradient:disabled {
+      background: rgba(255, 255, 255, 0.05) !important;
+      color: var(--text-muted);
+      cursor: not-allowed;
+      box-shadow: none;
+      transform: none;
+    }
   </style>
 </head>
 <body>
@@ -586,11 +643,37 @@
       <div class="logo-icon"></div>
       <div class="logo-text">Omnichannel Admin Portal</div>
     </div>
+    <div id="header-user-info" style="display: none; align-items: center; gap: 1rem;">
+      <span id="header-user-display" style="font-size: 0.875rem; color: var(--text-main); font-weight: 500;"></span>
+      <button onclick="handleLogout()" class="btn-back" style="padding: 0.35rem 0.75rem; font-size: 0.8rem; display: flex; align-items: center; gap: 0.25rem;">
+        Sair
+      </button>
+    </div>
   </header>
 
   <main class="main-container">
+    <!-- View 0: Login View -->
+    <section id="view-login" class="view">
+      <div style="display:flex; justify-content:center; align-items:center; min-height:60vh;">
+        <div class="login-card">
+          <h3 class="panel-title" style="justify-content: center; margin-bottom: 2rem;">Omnichannel Portal</h3>
+          <form id="login-form" onsubmit="handleLogin(event)">
+            <div class="form-group" style="text-align: left;">
+              <label for="login-username">Usuário</label>
+              <input type="text" id="login-username" class="form-control" placeholder="Usuário" required>
+            </div>
+            <div class="form-group" style="text-align: left; margin-bottom: 2rem;">
+              <label for="login-password">Senha</label>
+              <input type="password" id="login-password" class="form-control" placeholder="Senha" required>
+            </div>
+            <button type="submit" id="btn-login-submit" class="btn-login-gradient">Entrar</button>
+          </form>
+        </div>
+      </div>
+    </section>
+
     <!-- View 1: Tenant List Landing Page -->
-    <section id="view-landing" class="view active">
+    <section id="view-landing" class="view">
       <div class="landing-header">
         <h1>Selecione o Tenant de Destino</h1>
         <p>Escolha um dos ambientes cadastrados para gerenciar e provisionar contas.</p>
@@ -838,11 +921,58 @@
     let accountsList = [];
     let discoveryData = null;
     let activeTab = 'manage';
+    let currentUser = null;
 
     // Simple Router based on window path
     window.addEventListener('DOMContentLoaded', () => {
-      resolveRoute();
+      checkAuthStatus();
     });
+
+    async function checkAuthStatus() {
+      try {
+        const res = await fetch('/admin/api/auth-status');
+        if (!res.ok) {
+          throw new Error('Unauthenticated');
+        }
+        const data = await res.json();
+        if (data.authenticated) {
+          currentUser = data.user;
+          
+          // Show user info
+          const userInfo = document.getElementById('header-user-info');
+          const userDisplay = document.getElementById('header-user-display');
+          if (userInfo && userDisplay) {
+            userInfo.style.display = 'flex';
+            userDisplay.textContent = `Olá, ${currentUser.username}`;
+          }
+          
+          // Hide login view
+          document.getElementById('view-login').classList.remove('active');
+          
+          // Resolve route
+          await resolveRoute();
+        } else {
+          showLoginView();
+        }
+      } catch (err) {
+        showLoginView();
+      }
+    }
+
+    function showLoginView() {
+      // Hide all other views
+      document.getElementById('view-landing').classList.remove('active');
+      document.getElementById('view-dashboard').classList.remove('active');
+      
+      // Hide header info
+      const userInfo = document.getElementById('header-user-info');
+      if (userInfo) {
+        userInfo.style.display = 'none';
+      }
+      
+      // Show login view
+      document.getElementById('view-login').classList.add('active');
+    }
 
     async function resolveRoute() {
       const path = window.location.pathname;
@@ -852,6 +982,72 @@
         await loadTenantDashboard(tenantSlug);
       } else {
         await loadLandingPage();
+      }
+    }
+
+    async function handleLogin(event) {
+      event.preventDefault();
+      
+      const btn = document.getElementById('btn-login-submit');
+      const prevText = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = 'Entrando...';
+
+      const usernameInput = document.getElementById('login-username');
+      const passwordInput = document.getElementById('login-password');
+      
+      const payload = {
+        username: usernameInput.value,
+        password: passwordInput.value
+      };
+
+      try {
+        const response = await fetch('/admin/api/login', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(payload)
+        });
+
+        const result = await response.json();
+        if (!response.ok) {
+          throw new Error(result.error || 'Erro ao realizar login');
+        }
+
+        showToast('Login realizado com sucesso!');
+        usernameInput.value = '';
+        passwordInput.value = '';
+        
+        await checkAuthStatus();
+      } catch (err) {
+        showToast(err.message, 'error');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = prevText;
+      }
+    }
+
+    async function handleLogout() {
+      try {
+        const response = await fetch('/admin/api/logout', {
+          method: 'POST'
+        });
+        
+        if (!response.ok) {
+          throw new Error('Falha ao deslogar');
+        }
+        
+        showToast('Logout realizado com sucesso.');
+        currentUser = null;
+        activeTenant = null;
+        
+        // PushState to /admin to clean URL from tenant slug
+        window.history.pushState({}, '', '/admin');
+        
+        showLoginView();
+      } catch (err) {
+        showToast(err.message, 'error');
       }
     }
 
