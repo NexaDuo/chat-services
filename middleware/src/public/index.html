@@ -936,7 +936,7 @@
         }
         const data = await res.json();
         if (data.authenticated) {
-          currentUser = data.user;
+          currentUser = data;
           
           // Show user info
           const userInfo = document.getElementById('header-user-info');

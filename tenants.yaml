@@ -3,8 +3,8 @@ global:
   gcp_project_id: "nexaduo-492818"
   base_domain: "nexaduo.com"
   admin:
-    username: "admin"
-    password: "secure-password-123"
+    username: "gcp-secret:admin_email"
+    password: "gcp-secret:admin_password"
 
 tenants:
   - slug: nexaduo

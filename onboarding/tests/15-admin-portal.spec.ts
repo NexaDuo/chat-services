@@ -6,6 +6,7 @@ import path from 'path';
 import fs from 'fs';
 import yaml from 'yaml';
 import pg from 'pg';
+import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -18,6 +19,7 @@ const liveMiddlewareUrl = process.env.MIDDLEWARE_URL;
 const testMiddlewareUrl = 'http://127.0.0.1:4000';
 
 const targetMiddlewareUrl = liveMiddlewareUrl || testMiddlewareUrl;
+const targetUsername = process.env.ADMIN_EMAIL || 'admin';
 const targetPassword = liveMiddlewareUrl
   ? (process.env.ADMIN_PASSWORD || process.env.HANDOFF_SHARED_SECRET || 'test-admin-password')
   : 'test-admin-password';
@@ -49,6 +51,27 @@ const mockDb = {
   query: async (text: string, values?: any[]) => {
     mockDb.queries.push({ text, values: values || [] });
     
+    if (text.includes("FROM users WHERE username =")) {
+      const hash = crypto.createHash('sha256').update(targetPassword).digest('hex');
+      return {
+        rows: [
+          { id: 1, password_hash: hash, role: 'admin' }
+        ]
+      };
+    }
+    
+    if (text.includes("JOIN users u ON s.user_id = u.id")) {
+      return {
+        rows: [
+          { username: targetUsername, role: 'admin' }
+        ]
+      };
+    }
+
+    if (text.includes("INSERT INTO sessions") || text.includes("DELETE FROM sessions")) {
+      return { rows: [] };
+    }
+
     // GET /admin/api/tenants
     if (text.includes("DISTINCT ON (slug)")) {
       return {
@@ -238,27 +261,62 @@ test.afterAll(async () => {
   await server.close();
 });
 
+async function getSessionCookie(request: any): Promise<string> {
+  const response = await request.post(`${targetMiddlewareUrl}/admin/api/login`, {
+    data: {
+      username: targetUsername,
+      password: targetPassword
+    }
+  });
+  expect(response.status()).toBe(200);
+  const headers = response.headers();
+  const setCookie = headers['set-cookie'] || '';
+  const match = setCookie.match(/admin_session=([^;]+)/);
+  if (!match) {
+    throw new Error('Failed to retrieve admin_session cookie from Set-Cookie header');
+  }
+  return match[1];
+}
+
 test.describe('Omnichannel Admin Portal Authentication', () => {
-  test('should return 401 when accessing /admin without authorization headers', async ({ request }) => {
-    const response = await request.get(`${targetMiddlewareUrl}/admin`);
+  test('should return 302 redirect when accessing /admin without session cookie', async ({ request }) => {
+    const response = await request.get(`${targetMiddlewareUrl}/admin`, {
+      maxRedirects: 0
+    });
+    expect(response.status()).toBe(302);
+    expect(response.headers().location).toBe('/admin/login');
+  });
+
+  test('should return 401 when accessing API route without session cookie', async ({ request }) => {
+    const response = await request.get(`${targetMiddlewareUrl}/admin/api/tenants`);
     expect(response.status()).toBe(401);
   });
 
-  test('should return 200 when accessing /admin with correct credentials', async ({ request }) => {
-    const credentials = Buffer.from(`admin:${targetPassword}`).toString('base64');
+  test('should return 200 when accessing /admin with correct session cookie', async ({ request }) => {
+    const token = await getSessionCookie(request);
     const response = await request.get(`${targetMiddlewareUrl}/admin`, {
-      headers: { authorization: `Basic ${credentials}` }
+      headers: { cookie: `admin_session=${token}` }
     });
     expect(response.status()).toBe(200);
     const body = await response.text();
     expect(body).toContain('Omnichannel Admin Portal');
   });
+
+  test('should return 401 on login with invalid credentials', async ({ request }) => {
+    const response = await request.post(`${targetMiddlewareUrl}/admin/api/login`, {
+      data: {
+        username: 'wrong-user',
+        password: 'wrong-password'
+      }
+    });
+    expect(response.status()).toBe(401);
+  });
 });
 
 test.describe('Admin Portal API Endpoints', () => {
   test('GET /admin/api/tenants - should list physical tenants', async ({ request }) => {
-    const credentials = Buffer.from(`admin:${targetPassword}`).toString('base64');
-    const authHeader = { authorization: `Basic ${credentials}` };
+    const token = await getSessionCookie(request);
+    const authHeader = { cookie: `admin_session=${token}` };
     const response = await request.get(`${targetMiddlewareUrl}/admin/api/tenants`, {
       headers: authHeader
     });
@@ -292,8 +350,8 @@ test.describe('Admin Portal API Endpoints', () => {
   });
 
   test('GET /admin/api/tenants/:tenantSlug/accounts - should list client accounts', async ({ request }) => {
-    const credentials = Buffer.from(`admin:${targetPassword}`).toString('base64');
-    const authHeader = { authorization: `Basic ${credentials}` };
+    const token = await getSessionCookie(request);
+    const authHeader = { cookie: `admin_session=${token}` };
     const response = await request.get(`${targetMiddlewareUrl}/admin/api/tenants/${targetTenantSlug}/accounts`, {
       headers: authHeader
     });
@@ -337,8 +395,8 @@ test.describe('Admin Portal API Endpoints', () => {
       difyAppType: 'agent'
     };
 
-    const credentials = Buffer.from('admin:test-admin-password').toString('base64');
-    const authHeader = { authorization: `Basic ${credentials}` };
+    const token = await getSessionCookie(request);
+    const authHeader = { cookie: `admin_session=${token}` };
 
     const response = await request.post(`${testMiddlewareUrl}/admin/api/tenants/nexaduo/provision`, {
       headers: authHeader,
@@ -392,8 +450,8 @@ test.describe('Admin Portal API Endpoints', () => {
 
   test('GET /admin/api/instances/:name/status - should return connectionState', async ({ request }) => {
     // This status test checks local mocked state and runs against the test server
-    const credentials = Buffer.from('admin:test-admin-password').toString('base64');
-    const authHeader = { authorization: `Basic ${credentials}` };
+    const token = await getSessionCookie(request);
+    const authHeader = { cookie: `admin_session=${token}` };
 
     const response = await request.get(`${testMiddlewareUrl}/admin/api/instances/client-slug-instagram/status`, {
       headers: authHeader
@@ -407,8 +465,8 @@ test.describe('Admin Portal API Endpoints', () => {
   });
 
   test('GET /admin/api/tenants/:tenantSlug/discovery - should return unmapped and mapped entities', async ({ request }) => {
-    const credentials = Buffer.from('admin:test-admin-password').toString('base64');
-    const authHeader = { authorization: `Basic ${credentials}` };
+    const token = await getSessionCookie(request);
+    const authHeader = { cookie: `admin_session=${token}` };
     const response = await request.get(`${testMiddlewareUrl}/admin/api/tenants/nexaduo/discovery`, {
       headers: authHeader
     });
@@ -447,8 +505,8 @@ test.describe('Admin Portal API Endpoints', () => {
       difyAppType: 'chatflow'
     };
 
-    const credentials = Buffer.from('admin:test-admin-password').toString('base64');
-    const authHeader = { authorization: `Basic ${credentials}` };
+    const token = await getSessionCookie(request);
+    const authHeader = { cookie: `admin_session=${token}` };
 
     const response = await request.post(`${testMiddlewareUrl}/admin/api/tenants/nexaduo/import`, {
       headers: authHeader,
@@ -491,16 +549,26 @@ test.describe('Admin Portal API Endpoints', () => {
 });
 
 test.describe('Omnichannel Admin Portal Browser UI rendering', () => {
-  test('should render landing page on /admin', async ({ page }) => {
-    const credentials = Buffer.from(`admin:${targetPassword}`).toString('base64');
-    await page.setExtraHTTPHeaders({ authorization: `Basic ${credentials}` });
+  test('should render landing page on /admin', async ({ page, context, request }) => {
+    const token = await getSessionCookie(request);
+    await context.addCookies([{
+      name: 'admin_session',
+      value: token,
+      domain: new URL(targetMiddlewareUrl).hostname,
+      path: '/'
+    }]);
     await page.goto(`${targetMiddlewareUrl}/admin`);
     await expect(page.locator('h1')).toContainText('Selecione o Tenant de Destino');
   });
 
-  test('should render dashboard page on /admin/:tenantSlug', async ({ page }) => {
-    const credentials = Buffer.from(`admin:${targetPassword}`).toString('base64');
-    await page.setExtraHTTPHeaders({ authorization: `Basic ${credentials}` });
+  test('should render dashboard page on /admin/:tenantSlug', async ({ page, context, request }) => {
+    const token = await getSessionCookie(request);
+    await context.addCookies([{
+      name: 'admin_session',
+      value: token,
+      domain: new URL(targetMiddlewareUrl).hostname,
+      path: '/'
+    }]);
     await page.goto(`${targetMiddlewareUrl}/admin/${targetTenantSlug}`);
     await expect(page.locator('#active-tenant-title')).toContainText('Ambiente');
   });

@@ -199,6 +199,30 @@ async function withRetry<T>(label: string, attempts: number, fn: () => Promise<T
   throw lastErr;
 }
 
+function resolveAdmin(admin?: { username: string; password: string }, projectId?: string): { username: string; password: string } | undefined {
+  if (!admin) return undefined;
+  let username = admin.username;
+  let password = admin.password;
+
+  if (username.startsWith('gcp-secret:')) {
+    if (!projectId) {
+      throw new Error("GCP Project ID is required to resolve GCP secrets");
+    }
+    const secretName = username.split(':')[1];
+    username = execSync(`gcloud secrets versions access latest --secret=${secretName} --project=${projectId}`).toString().trim();
+  }
+
+  if (password.startsWith('gcp-secret:')) {
+    if (!projectId) {
+      throw new Error("GCP Project ID is required to resolve GCP secrets");
+    }
+    const secretName = password.split(':')[1];
+    password = execSync(`gcloud secrets versions access latest --secret=${secretName} --project=${projectId}`).toString().trim();
+  }
+
+  return { username, password };
+}
+
 async function main() {
   const yamlPath = path.resolve(process.cwd(), 'tenants.yaml');
   if (!fs.existsSync(yamlPath)) {
@@ -208,6 +232,17 @@ async function main() {
   
   const fileContent = fs.readFileSync(yamlPath, 'utf8');
   const config = yaml.parse(fileContent) as TenantsYaml;
+
+  // Resolve admin credentials if they use GCP Secret Manager
+  let resolvedAdmin: { username: string; password: string } | undefined = undefined;
+  if (config.global.admin) {
+    try {
+      resolvedAdmin = resolveAdmin(config.global.admin, config.global.gcp_project_id);
+    } catch (err: any) {
+      logger.error('Failed to resolve admin credentials from GCP Secret Manager:', err);
+      process.exit(1);
+    }
+  }
 
   const args = process.argv.slice(2);
   const printSqlOnly = args.includes('--print-sql');
@@ -224,7 +259,7 @@ async function main() {
       process.stderr.write(`No tenants for environment ${targetEnv}; nothing to seed.\n`);
       return;
     }
-    process.stdout.write(buildSeedSql(targetTenants, config.global.admin));
+    process.stdout.write(buildSeedSql(targetTenants, resolvedAdmin));
     return;
   }
 
@@ -262,8 +297,8 @@ async function main() {
         }
       });
 
-      if (config.global.admin) {
-        const { username, password } = config.global.admin;
+      if (resolvedAdmin) {
+        const { username, password } = resolvedAdmin;
         const pwdHash = crypto.createHash('sha256').update(password).digest('hex');
         await withRetry('admin user sync', 5, async () => {
           const pool = new Pool({ connectionString, connectionTimeoutMillis: 10000 });
