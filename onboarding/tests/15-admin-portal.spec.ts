@@ -5,6 +5,7 @@ import dotenv from 'dotenv';
 import path from 'path';
 import fs from 'fs';
 import yaml from 'yaml';
+import pg from 'pg';
 import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -95,6 +96,39 @@ const mockDb = {
       };
     }
 
+    // Mapped tenants query for discovery
+    if (text.includes("FROM tenants WHERE chatwoot_url = $1")) {
+      return {
+        rows: [
+          {
+            subdomain: 'duda',
+            chatwoot_account_id: '12',
+            dify_api_key: 'app-dify-api-key-1'
+          }
+        ]
+      };
+    }
+    
+    // Dify database query
+    if (text.includes("FROM apps") || text.includes("FROM app")) {
+      return {
+        rows: [
+          {
+            id: 'dify-app-1',
+            name: 'Acme AI Assistant',
+            mode: 'agent-chat',
+            api_key: 'app-dify-api-key-1'
+          },
+          {
+            id: 'dify-app-2',
+            name: 'Unmapped Dify Bot',
+            mode: 'chat',
+            api_key: 'app-dify-api-key-2'
+          }
+        ]
+      };
+    }
+
     return { rows: [] };
   }
 };
@@ -123,6 +157,23 @@ const mockAxios = {
     if (url.includes('/instance/connectionState')) {
       return { data: { instance: { state: 'open' } } };
     }
+    if (url.includes('/platform/api/v1/accounts')) {
+      return {
+        data: [
+          { id: 1, name: "Admin Principal" },
+          { id: 12, name: "Miau Duda" },
+          { id: 99, name: "Some Unmapped Account" }
+        ]
+      };
+    }
+    if (url.includes('/instance/fetchInstances')) {
+      return {
+        data: [
+          { name: "duda-instagram", status: "connected" },
+          { name: "orphan-instagram", status: "disconnected" }
+        ]
+      };
+    }
     return { data: {} };
   },
   delete: async (url: string, config?: any) => {
@@ -132,12 +183,39 @@ const mockAxios = {
 };
 
 test.beforeAll(async () => {
+  pg.Pool = class MockPool {
+    constructor() {}
+    async query(text: string, values?: any[]) {
+      if (text.includes("FROM apps") || text.includes("FROM app")) {
+        return {
+          rows: [
+            {
+              id: 'dify-app-1',
+              name: 'Acme AI Assistant',
+              mode: 'agent-chat',
+              api_key: 'app-dify-api-key-1'
+            },
+            {
+              id: 'dify-app-2',
+              name: 'Unmapped Dify Bot',
+              mode: 'chat',
+              api_key: 'app-dify-api-key-2'
+            }
+          ]
+        };
+      }
+      return { rows: [] };
+    }
+    async end() {}
+  } as any;
+
   server = Fastify({
     logger: false
   });
   
   const mockConfig = {
     adminPassword: 'test-admin-password',
+    databaseUrl: 'postgresql://postgres:pass@localhost:5432/middleware',
     handoff: {
       sharedSecret: 'test-secret'
     },
@@ -325,6 +403,89 @@ test.describe('Admin Portal API Endpoints', () => {
     expect(body).toEqual({
       instanceName: 'client-slug-instagram',
       connectionState: 'open'
+    });
+  });
+
+  test('GET /admin/api/tenants/:tenantSlug/discovery - should return unmapped and mapped entities', async ({ request }) => {
+    const credentials = Buffer.from('admin:test-admin-password').toString('base64');
+    const authHeader = { authorization: `Basic ${credentials}` };
+    const response = await request.get(`${testMiddlewareUrl}/admin/api/tenants/nexaduo/discovery`, {
+      headers: authHeader
+    });
+    expect(response.status()).toBe(200);
+    const body = await response.json();
+    expect(body).toHaveProperty('chatwootAccounts');
+    expect(body).toHaveProperty('evolutionInstances');
+    expect(body).toHaveProperty('difyApps');
+    
+    // Check Chatwoot accounts mapping
+    const cw = body.chatwootAccounts;
+    expect(cw).toContainEqual({ id: '1', name: 'Admin Principal', mapped: false });
+    expect(cw).toContainEqual({ id: '12', name: 'Miau Duda', mapped: true });
+    expect(cw).toContainEqual({ id: '99', name: 'Some Unmapped Account', mapped: false });
+
+    // Check Evolution instances mapping
+    const evo = body.evolutionInstances;
+    expect(evo).toContainEqual({ instanceName: 'duda-instagram', status: 'connected', mapped: true });
+    expect(evo).toContainEqual({ instanceName: 'orphan-instagram', status: 'disconnected', mapped: false });
+
+    // Check Dify apps mapping
+    const dify = body.difyApps;
+    expect(dify).toContainEqual({ id: 'dify-app-1', name: 'Acme AI Assistant', mode: 'agent-chat', apiKey: 'app-dify-api-key-1', mapped: true });
+    expect(dify).toContainEqual({ id: 'dify-app-2', name: 'Unmapped Dify Bot', mode: 'chat', apiKey: 'app-dify-api-key-2', mapped: false });
+  });
+
+  test('POST /admin/api/tenants/:tenantSlug/import - should import existing Chatwoot account mapping and return 201', async ({ request }) => {
+    mockAxiosRequests.length = 0;
+    mockDb.queries.length = 0;
+
+    const payload = {
+      chatwootAccountId: '99',
+      name: 'Some Unmapped Account',
+      subdomain: 'unmapped-slug',
+      difyApiKey: 'app-dify-api-key-2',
+      difyAppType: 'chatflow'
+    };
+
+    const credentials = Buffer.from('admin:test-admin-password').toString('base64');
+    const authHeader = { authorization: `Basic ${credentials}` };
+
+    const response = await request.post(`${testMiddlewareUrl}/admin/api/tenants/nexaduo/import`, {
+      headers: authHeader,
+      data: payload
+    });
+
+    expect(response.status()).toBe(201);
+    const body = await response.json();
+    expect(body).toEqual({
+      status: 'success',
+      accountId: '99',
+      instanceName: 'unmapped-slug-instagram',
+      message: 'Account imported and synchronized successfully.'
+    });
+
+    // Verify DB insert query
+    const insertQuery = mockDb.queries.find(q => q.text.includes('INSERT INTO tenants'));
+    expect(insertQuery).toBeDefined();
+    expect(insertQuery.values).toEqual([
+      'unmapped-slug',
+      'unmapped-slug',
+      'Some Unmapped Account',
+      '99',
+      'https://chat.nexaduo.com',
+      'https://dify.nexaduo.com',
+      'app-dify-api-key-2',
+      'chatflow'
+    ]);
+
+    // Verify Evolution API calls for setup
+    const createInstancePost = mockAxiosRequests.find(r => r.url.includes('/instance/create') && r.method === 'POST');
+    expect(createInstancePost).toBeDefined();
+    expect(createInstancePost.data).toEqual({
+      instanceName: 'unmapped-slug-instagram',
+      token: '',
+      integration: 'instagram',
+      qrcode: false
     });
   });
 });

@@ -528,6 +528,53 @@
     .toast-error {
       border-left: 4px solid var(--error);
     }
+
+    /* Tabs styling */
+    .tabs-container {
+      display: flex;
+      gap: 1rem;
+      margin-bottom: 2rem;
+      border-bottom: 1px solid var(--border-color);
+      padding-bottom: 0.5rem;
+    }
+
+    .tab-btn {
+      background: transparent;
+      border: none;
+      color: var(--text-muted);
+      font-size: 1rem;
+      font-weight: 600;
+      padding: 0.5rem 1rem;
+      cursor: pointer;
+      position: relative;
+      transition: all 0.2s ease;
+    }
+
+    .tab-btn:hover {
+      color: var(--text-main);
+    }
+
+    .tab-btn.active {
+      color: var(--accent-color);
+    }
+
+    .tab-btn.active::after {
+      content: '';
+      position: absolute;
+      bottom: -0.5rem;
+      left: 0;
+      width: 100%;
+      height: 2px;
+      background: var(--accent-color);
+    }
+
+    .tab-content {
+      display: none;
+    }
+
+    .tab-content.active {
+      display: block;
+    }
   </style>
 </head>
 <body>
@@ -566,77 +613,150 @@
         </div>
       </div>
 
-      <div class="dashboard-layout">
-        <!-- Col 1: Form -->
-        <div class="panel">
-          <h3 class="panel-title">Provisionar Cliente</h3>
-          
-          <div class="channel-card-static">
-            <div class="channel-logo">I</div>
-            <div>
-              <strong style="display:block;">Instagram Direct Messages</strong>
-              <span style="font-size:0.8rem; color:var(--text-muted);">Integração via Evolution API</span>
+      <div class="tabs-container">
+        <button id="tab-btn-manage" class="tab-btn active" onclick="switchTab('manage')">Gerenciar & Provisionar</button>
+        <button id="tab-btn-sync" class="tab-btn" onclick="switchTab('sync')">Sincronizar & Importar</button>
+      </div>
+
+      <!-- Tab 1: Manage & Provision -->
+      <div id="dashboard-tab-manage" class="tab-content active">
+        <div class="dashboard-layout">
+          <!-- Col 1: Form -->
+          <div class="panel">
+            <h3 class="panel-title">Provisionar Cliente</h3>
+            
+            <div class="channel-card-static">
+              <div class="channel-logo">I</div>
+              <div>
+                <strong style="display:block;">Instagram Direct Messages</strong>
+                <span style="font-size:0.8rem; color:var(--text-muted);">Integração via Evolution API</span>
+              </div>
+            </div>
+
+            <form id="provision-form" onsubmit="handleProvision(event)">
+              <div class="form-group">
+                <label for="input-name">Nome da Conta (Razão / Nome Fantasia)</label>
+                <input type="text" id="input-name" class="form-control" placeholder="ex: Miau Duda" required>
+              </div>
+              
+              <div class="form-group">
+                <label for="input-admin-name">Nome do Administrador</label>
+                <input type="text" id="input-admin-name" class="form-control" placeholder="ex: Duda" required>
+              </div>
+
+              <div class="form-group">
+                <label for="input-email">E-mail do Administrador</label>
+                <input type="email" id="input-email" class="form-control" placeholder="ex: admin@miaududa.com" required>
+              </div>
+
+              <div class="form-group">
+                <label for="input-subdomain">Slug / Subdomínio de Atendimento</label>
+                <input type="text" id="input-subdomain" class="form-control" placeholder="ex: duda" required>
+              </div>
+
+              <div class="form-group">
+                <label for="input-dify-key">Dify Service API Key</label>
+                <input type="password" id="input-dify-key" class="form-control" placeholder="ex: app-XXXXXXXXXXXXXXXX" required>
+              </div>
+
+              <div class="form-group">
+                <label for="input-dify-type">Tipo de Aplicativo Dify</label>
+                <select id="input-dify-type" class="form-control" required>
+                  <option value="chatflow">Chatflow (Default)</option>
+                  <option value="agent">Agent (Streaming / SSE)</option>
+                </select>
+              </div>
+
+              <button type="submit" id="btn-submit-form" class="btn-submit">
+                Provisionar Conta
+              </button>
+            </form>
+          </div>
+
+          <!-- Col 2: Listing -->
+          <div class="panel" style="flex:1;">
+            <h3 class="panel-title">Contas Ativas</h3>
+            <div class="table-container">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Nome do Cliente</th>
+                    <th>Subdomínio</th>
+                    <th>Chatwoot ID</th>
+                    <th>Status Instagram</th>
+                    <th>Ações</th>
+                  </tr>
+                </thead>
+                <tbody id="accounts-table-body">
+                  <!-- Dyn content -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Tab 2: Sync & Import -->
+      <div id="dashboard-tab-sync" class="tab-content">
+        <div class="sync-grid" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 2rem;">
+          <!-- Chatwoot Accounts Panel -->
+          <div class="panel">
+            <h3 class="panel-title">Contas Chatwoot</h3>
+            <p style="color:var(--text-muted); font-size:0.85rem; margin-bottom:1rem;">Lista de contas no servidor Chatwoot.</p>
+            <div class="table-container">
+              <table>
+                <thead>
+                  <tr>
+                    <th>ID</th>
+                    <th>Nome</th>
+                    <th>Ações</th>
+                  </tr>
+                </thead>
+                <tbody id="sync-cw-table-body">
+                  <!-- Dyn -->
+                </tbody>
+              </table>
             </div>
           </div>
 
-          <form id="provision-form" onsubmit="handleProvision(event)">
-            <div class="form-group">
-              <label for="input-name">Nome da Conta (Razão / Nome Fantasia)</label>
-              <input type="text" id="input-name" class="form-control" placeholder="ex: Miau Duda" required>
+          <!-- Dify Apps Panel -->
+          <div class="panel">
+            <h3 class="panel-title">Projetos Dify</h3>
+            <p style="color:var(--text-muted); font-size:0.85rem; margin-bottom:1rem;">Aplicativos criados no Dify.</p>
+            <div class="table-container">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Nome</th>
+                    <th>Modo</th>
+                    <th>Status</th>
+                  </tr>
+                </thead>
+                <tbody id="sync-dify-table-body">
+                  <!-- Dyn -->
+                </tbody>
+              </table>
             </div>
-            
-            <div class="form-group">
-              <label for="input-admin-name">Nome do Administrador</label>
-              <input type="text" id="input-admin-name" class="form-control" placeholder="ex: Duda" required>
+          </div>
+
+          <!-- Evolution Instances Panel -->
+          <div class="panel">
+            <h3 class="panel-title">Evolution API</h3>
+            <p style="color:var(--text-muted); font-size:0.85rem; margin-bottom:1rem;">Instâncias WhatsApp/Instagram.</p>
+            <div class="table-container">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Instância</th>
+                    <th>Conexão</th>
+                    <th>Status</th>
+                  </tr>
+                </thead>
+                <tbody id="sync-evo-table-body">
+                  <!-- Dyn -->
+                </tbody>
+              </table>
             </div>
-
-            <div class="form-group">
-              <label for="input-email">E-mail do Administrador</label>
-              <input type="email" id="input-email" class="form-control" placeholder="ex: admin@miaududa.com" required>
-            </div>
-
-            <div class="form-group">
-              <label for="input-subdomain">Slug / Subdomínio de Atendimento</label>
-              <input type="text" id="input-subdomain" class="form-control" placeholder="ex: duda" required>
-            </div>
-
-            <div class="form-group">
-              <label for="input-dify-key">Dify Service API Key</label>
-              <input type="password" id="input-dify-key" class="form-control" placeholder="ex: app-XXXXXXXXXXXXXXXX" required>
-            </div>
-
-            <div class="form-group">
-              <label for="input-dify-type">Tipo de Aplicativo Dify</label>
-              <select id="input-dify-type" class="form-control" required>
-                <option value="chatflow">Chatflow (Default)</option>
-                <option value="agent">Agent (Streaming / SSE)</option>
-              </select>
-            </div>
-
-            <button type="submit" id="btn-submit-form" class="btn-submit">
-              Provisionar Conta
-            </button>
-          </form>
-        </div>
-
-        <!-- Col 2: Listing -->
-        <div class="panel" style="flex:1;">
-          <h3 class="panel-title">Contas Ativas</h3>
-          <div class="table-container">
-            <table>
-              <thead>
-                <tr>
-                  <th>Nome do Cliente</th>
-                  <th>Subdomínio</th>
-                  <th>Chatwoot ID</th>
-                  <th>Status Instagram</th>
-                  <th>Ações</th>
-                </tr>
-              </thead>
-              <tbody id="accounts-table-body">
-                <!-- Dyn content -->
-              </tbody>
-            </table>
           </div>
         </div>
       </div>
@@ -669,11 +789,55 @@
     </div>
   </div>
 
+  <!-- Import Modal -->
+  <div id="import-modal" class="modal-backdrop">
+    <div class="modal" style="width: 550px;">
+      <button class="modal-close" onclick="closeImportModal()">&times;</button>
+      <h3 class="modal-title">Sincronizar Conta Chatwoot</h3>
+      <form id="import-form" onsubmit="handleImport(event)">
+        <div class="form-group">
+          <label>ID da Conta Chatwoot</label>
+          <input type="text" id="import-cw-id" class="form-control" readonly>
+        </div>
+        <div class="form-group">
+          <label>Nome da Conta</label>
+          <input type="text" id="import-name" class="form-control" required>
+        </div>
+        <div class="form-group">
+          <label>Subdomínio / Slug de Atendimento</label>
+          <input type="text" id="import-subdomain" class="form-control" required>
+        </div>
+        <div class="form-group">
+          <label>Vincular Projeto Dify Existente</label>
+          <select id="import-dify-select" class="form-control" onchange="onImportDifySelectChange()">
+            <!-- Dyn -->
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Dify Service API Key</label>
+          <input type="password" id="import-dify-key" class="form-control" placeholder="ex: app-XXXXXXXXXXXXXXXX" required>
+        </div>
+        <div class="form-group">
+          <label>Tipo de Aplicativo Dify</label>
+          <select id="import-dify-type" class="form-control" required>
+            <option value="chatflow">Chatflow (Default)</option>
+            <option value="agent">Agent (Streaming / SSE)</option>
+          </select>
+        </div>
+        <button type="submit" id="btn-submit-import" class="btn-submit">
+          Importar & Sincronizar
+        </button>
+      </form>
+    </div>
+  </div>
+
   <div id="toast-container" class="toast-container"></div>
 
   <script>
     let activeTenant = null;
     let accountsList = [];
+    let discoveryData = null;
+    let activeTab = 'manage';
 
     // Simple Router based on window path
     window.addEventListener('DOMContentLoaded', () => {
@@ -762,6 +926,7 @@
         }
 
         document.getElementById('active-tenant-title').textContent = `Ambiente: ${tenantInfo.name}`;
+        switchTab('manage');
         await refreshAccountsTable();
       } catch (err) {
         showToast('Erro ao inicializar dashboard.', 'error');
@@ -770,8 +935,24 @@
     }
 
     function navigateHome() {
+      switchTab('manage');
       window.history.pushState({}, '', '/admin');
       resolveRoute();
+    }
+
+    function switchTab(tab) {
+      activeTab = tab;
+      document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+      document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
+      
+      if (tab === 'manage') {
+        document.getElementById('tab-btn-manage').classList.add('active');
+        document.getElementById('dashboard-tab-manage').classList.add('active');
+      } else if (tab === 'sync') {
+        document.getElementById('tab-btn-sync').classList.add('active');
+        document.getElementById('dashboard-tab-sync').classList.add('active');
+        loadDiscoveryData();
+      }
     }
 
     async function refreshAccountsTable() {
@@ -890,6 +1071,205 @@
 
         showToast('Cliente provisionado com sucesso!');
         document.getElementById('provision-form').reset();
+        await refreshAccountsTable();
+      } catch (err) {
+        showToast(err.message, 'error');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = prevText;
+      }
+    }
+
+    function slugify(text) {
+      return text
+        .toString()
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/[^\w\s-]/g, '')
+        .replace(/[\s_]+/g, '-')
+        .replace(/^-+|-+$/g, '');
+    }
+
+    async function loadDiscoveryData() {
+      const cwTbody = document.getElementById('sync-cw-table-body');
+      const difyTbody = document.getElementById('sync-dify-table-body');
+      const evoTbody = document.getElementById('sync-evo-table-body');
+      
+      cwTbody.innerHTML = '<tr><td colspan="3" style="text-align:center; color:var(--text-muted);">Carregando contas...</td></tr>';
+      difyTbody.innerHTML = '<tr><td colspan="3" style="text-align:center; color:var(--text-muted);">Carregando projetos...</td></tr>';
+      evoTbody.innerHTML = '<tr><td colspan="3" style="text-align:center; color:var(--text-muted);">Carregando instâncias...</td></tr>';
+      
+      try {
+        const response = await fetch(`/admin/api/tenants/${activeTenant}/discovery`);
+        if (!response.ok) throw new Error('Falha ao carregar dados de sincronização');
+        discoveryData = await response.json();
+        
+        cwTbody.innerHTML = '';
+        if (discoveryData.chatwootAccounts.length === 0) {
+          cwTbody.innerHTML = '<tr><td colspan="3" style="text-align:center; color:var(--text-muted);">Nenhuma conta encontrada.</td></tr>';
+        } else {
+          discoveryData.chatwootAccounts.forEach(acc => {
+            const tr = document.createElement('tr');
+            let actionBtn = '';
+            if (acc.id !== '1' && !acc.mapped) {
+              actionBtn = `<button class="btn-action-connect" onclick="openImportModal('${acc.id}', '${acc.name.replace(/'/g, "\\'")}')">Importar</button>`;
+            } else if (acc.id === '1') {
+              actionBtn = '<span style="font-size:0.8rem; color:var(--text-muted);">Admin Principal</span>';
+            } else {
+              actionBtn = '<span style="font-size:0.8rem; color:var(--success);">Sincronizada</span>';
+            }
+            
+            tr.innerHTML = `
+              <td><code>${acc.id}</code></td>
+              <td><strong>${acc.name}</strong></td>
+              <td>${actionBtn}</td>
+            `;
+            cwTbody.appendChild(tr);
+          });
+        }
+        
+        difyTbody.innerHTML = '';
+        if (discoveryData.difyApps.length === 0) {
+          difyTbody.innerHTML = '<tr><td colspan="3" style="text-align:center; color:var(--text-muted);">Nenhum projeto encontrado.</td></tr>';
+        } else {
+          discoveryData.difyApps.forEach(app => {
+            const tr = document.createElement('tr');
+            const statusBadge = app.mapped 
+              ? '<span class="badge badge-success">Mapeado</span>'
+              : '<span class="badge badge-error">Não Mapeado</span>';
+            
+            tr.innerHTML = `
+              <td><strong>${app.name}</strong></td>
+              <td><code>${app.mode}</code></td>
+              <td>${statusBadge}</td>
+            `;
+            difyTbody.appendChild(tr);
+          });
+        }
+        
+        evoTbody.innerHTML = '';
+        if (discoveryData.evolutionInstances.length === 0) {
+          evoTbody.innerHTML = '<tr><td colspan="3" style="text-align:center; color:var(--text-muted);">Nenhuma instância encontrada.</td></tr>';
+        } else {
+          discoveryData.evolutionInstances.forEach(inst => {
+            const tr = document.createElement('tr');
+            const statusBadge = inst.mapped
+              ? '<span class="badge badge-success">Mapeada</span>'
+              : '<span class="badge badge-error">Órfã</span>';
+            const connBadge = inst.status === 'open' || inst.status === 'connected'
+              ? '<span class="badge badge-success">Conectada</span>'
+              : '<span class="badge badge-error">Desconectada</span>';
+            
+            tr.innerHTML = `
+              <td><strong>${inst.instanceName}</strong></td>
+              <td>${connBadge}</td>
+              <td>${statusBadge}</td>
+            `;
+            evoTbody.appendChild(tr);
+          });
+        }
+      } catch (err) {
+        showToast(err.message, 'error');
+        cwTbody.innerHTML = `<tr><td colspan="3" style="text-align:center; color:var(--error);">Erro: ${err.message}</td></tr>`;
+        difyTbody.innerHTML = `<tr><td colspan="3" style="text-align:center; color:var(--error);">Erro: ${err.message}</td></tr>`;
+        evoTbody.innerHTML = `<tr><td colspan="3" style="text-align:center; color:var(--error);">Erro: ${err.message}</td></tr>`;
+      }
+    }
+
+    function openImportModal(id, name) {
+      document.getElementById('import-cw-id').value = id;
+      document.getElementById('import-name').value = name;
+      document.getElementById('import-subdomain').value = slugify(name);
+      
+      const select = document.getElementById('import-dify-select');
+      select.innerHTML = '<option value="manual">-- Inserir Manualmente --</option>';
+      
+      if (discoveryData && discoveryData.difyApps) {
+        const unmappedApps = discoveryData.difyApps.filter(app => !app.mapped && app.apiKey);
+        unmappedApps.forEach(app => {
+          const opt = document.createElement('option');
+          opt.value = app.id;
+          opt.textContent = `${app.name} (${app.mode})`;
+          opt.dataset.key = app.apiKey;
+          opt.dataset.mode = app.mode;
+          select.appendChild(opt);
+        });
+      }
+      
+      document.getElementById('import-dify-key').value = '';
+      document.getElementById('import-dify-type').value = 'chatflow';
+      document.getElementById('import-dify-key').readOnly = false;
+      document.getElementById('import-dify-type').disabled = false;
+      
+      document.getElementById('import-modal').classList.add('active');
+    }
+
+    function closeImportModal() {
+      document.getElementById('import-modal').classList.remove('active');
+    }
+
+    function onImportDifySelectChange() {
+      const select = document.getElementById('import-dify-select');
+      const selectedOption = select.options[select.selectedIndex];
+      
+      const keyInput = document.getElementById('import-dify-key');
+      const typeSelect = document.getElementById('import-dify-type');
+      
+      if (selectedOption.value === 'manual') {
+        keyInput.value = '';
+        typeSelect.value = 'chatflow';
+        keyInput.readOnly = false;
+        typeSelect.disabled = false;
+      } else {
+        const apiKey = selectedOption.dataset.key;
+        const mode = selectedOption.dataset.mode;
+        
+        keyInput.value = apiKey;
+        keyInput.readOnly = true;
+        
+        if (mode && (mode.includes('agent') || mode === 'agent-chat')) {
+          typeSelect.value = 'agent';
+        } else {
+          typeSelect.value = 'chatflow';
+        }
+        typeSelect.disabled = true;
+      }
+    }
+
+    async function handleImport(event) {
+      event.preventDefault();
+      
+      const btn = document.getElementById('btn-submit-import');
+      const prevText = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = 'Importando...';
+
+      const payload = {
+        chatwootAccountId: document.getElementById('import-cw-id').value,
+        name: document.getElementById('import-name').value,
+        subdomain: document.getElementById('import-subdomain').value,
+        difyApiKey: document.getElementById('import-dify-key').value,
+        difyAppType: document.getElementById('import-dify-type').value
+      };
+
+      try {
+        const response = await fetch(`/admin/api/tenants/${activeTenant}/import`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(payload)
+        });
+
+        const result = await response.json();
+        if (!response.ok) {
+          throw new Error(result.error || 'Erro interno ao importar');
+        }
+
+        showToast('Conta Chatwoot sincronizada com sucesso!');
+        closeImportModal();
+        switchTab('manage');
         await refreshAccountsTable();
       } catch (err) {
         showToast(err.message, 'error');
