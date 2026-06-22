@@ -44,17 +44,6 @@ test.describe('Smoke Tests (Post-Setup)', () => {
   });
 
   test('Login to Dify', async ({ page }) => {
-    const authFailures: string[] = [];
-    
-    // Monitor refresh-token requests for 401 unauthorized errors
-    page.on('response', response => {
-      const url = response.url();
-      const status = response.status();
-      if (status === 401 && url.includes('/console/api/refresh-token')) {
-        authFailures.push(`[HTTP 401] ${response.request().method()} ${url}`);
-      }
-    });
-
     console.log(`  - Dify: Navigating to ${DIFY_URL}/signin...`);
     await page.goto(`${DIFY_URL}/signin`, { waitUntil: 'load', timeout: 60000 });
     
@@ -66,8 +55,21 @@ test.describe('Smoke Tests (Post-Setup)', () => {
       dashboardElement.first().waitFor({ state: 'visible', timeout: 15000 }).catch(() => {})
     ]);
 
+    const authFailures: string[] = [];
+    const startMonitoring = () => {
+      // Monitor refresh-token requests for 401 unauthorized errors *after* login session is established
+      page.on('response', response => {
+        const url = response.url();
+        const status = response.status();
+        if (status === 401 && url.includes('/console/api/refresh-token')) {
+          authFailures.push(`[HTTP 401] ${response.request().method()} ${url}`);
+        }
+      });
+    };
+
     if (page.url().includes('/apps') || page.url().includes('/datasets') || await dashboardElement.first().isVisible()) {
       console.log('  - Dify: Detected active session. Already logged in.');
+      startMonitoring();
     } else {
       console.log('  - Dify: No active session. Proceeding with login...');
       
@@ -81,6 +83,7 @@ test.describe('Smoke Tests (Post-Setup)', () => {
       await page.locator('button[type="submit"], button:has-text("Sign in"), button:has-text("Entrar")').first().click();
       
       await expect(page).toHaveURL(/.*\/apps/, { timeout: 30000 });
+      startMonitoring();
     }
 
     // Wait a brief moment on the authenticated dashboard to capture any token refresh calls
