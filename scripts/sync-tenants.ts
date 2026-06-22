@@ -4,6 +4,7 @@ import yaml from 'yaml';
 import { Pool } from 'pg';
 import { execSync } from 'child_process';
 import dotenv from 'dotenv';
+import crypto from 'crypto';
 
 dotenv.config();
 
@@ -56,6 +57,10 @@ interface TenantsYaml {
   global: {
     gcp_project_id: string;
     base_domain: string;
+    admin?: {
+      username: string;
+      password: string;
+    };
   };
   tenants: TenantConfig[];
 }
@@ -103,7 +108,7 @@ function sqlLiteral(value: string | null): string {
  * `docker exec` on the VM, because Postgres is only reachable on the internal
  * docker network (`postgres:5432`) and is not published on the VM host.
  */
-function buildSeedSql(tenants: TenantConfig[]): string {
+function buildSeedSql(tenants: TenantConfig[], admin?: { username: string; password: string }): string {
   const rows = tenants.map((tenant) => {
     const values = [
       tenant.slug,
@@ -127,6 +132,15 @@ SET subdomain = EXCLUDED.subdomain,
     dify_url = EXCLUDED.dify_url,
     updated_at = CURRENT_TIMESTAMP;`;
   });
+
+  if (admin) {
+    const pwdHash = crypto.createHash('sha256').update(admin.password).digest('hex');
+    rows.push(`INSERT INTO users (username, password_hash, role)
+VALUES ('${admin.username}', '${pwdHash}', 'admin')
+ON CONFLICT (username)
+DO UPDATE SET password_hash = EXCLUDED.password_hash, updated_at = CURRENT_TIMESTAMP;`);
+  }
+
   return `BEGIN;\n${rows.join('\n')}\nCOMMIT;\n`;
 }
 
@@ -210,7 +224,7 @@ async function main() {
       process.stderr.write(`No tenants for environment ${targetEnv}; nothing to seed.\n`);
       return;
     }
-    process.stdout.write(buildSeedSql(targetTenants));
+    process.stdout.write(buildSeedSql(targetTenants, config.global.admin));
     return;
   }
 
@@ -247,6 +261,26 @@ async function main() {
           await pool.end();
         }
       });
+
+      if (config.global.admin) {
+        const { username, password } = config.global.admin;
+        const pwdHash = crypto.createHash('sha256').update(password).digest('hex');
+        await withRetry('admin user sync', 5, async () => {
+          const pool = new Pool({ connectionString, connectionTimeoutMillis: 10000 });
+          try {
+            await pool.query(
+              `INSERT INTO users (username, password_hash, role)
+               VALUES ($1, $2, 'admin')
+               ON CONFLICT (username)
+               DO UPDATE SET password_hash = EXCLUDED.password_hash, updated_at = CURRENT_TIMESTAMP`,
+              [username, pwdHash]
+            );
+            logger.log(`✅ Synced Admin User in DB: ${username}`);
+          } finally {
+            await pool.end();
+          }
+        });
+      }
     }
 
     if (process.env.SKIP_GCP_SYNC === 'true') {
