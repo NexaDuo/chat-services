@@ -56,6 +56,10 @@ services:
       APP_WEB_URL: ${DIFY_APP_API_URL}
       CONSOLE_OAUTH_REGISTRATION_ENABLED: "true"
       DIFY_LOG_LEVEL: INFO
+      COOKIE_DOMAIN: ${COOKIE_DOMAIN:-}
+      SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-false}
+      DIFY_API_ENABLE_METRICS: ${DIFY_API_ENABLE_METRICS:-false}
+      INNER_API_METRICS_ENABLED: ${INNER_API_METRICS_ENABLED:-false}
       TRUSTED_PROXIES: "*"
       SERVER_WORKER_AMOUNT: "1"
     volumes:
@@ -85,6 +89,7 @@ services:
     environment:
       CONSOLE_API_URL: ${DIFY_CONSOLE_API_URL}
       APP_API_URL: ${DIFY_APP_API_URL}
+      NEXT_PUBLIC_COOKIE_DOMAIN: ${NEXT_PUBLIC_COOKIE_DOMAIN:-}
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.dify.rule=Host(`${DIFY_DOMAIN}`)"
