@@ -42,4 +42,6 @@ COPY --chown=app:app package.json ./
 USER app
 EXPOSE 4000
 ENTRYPOINT ["dumb-init", "--"]
-CMD ["node", "dist/index.js"]
+# Preload OTel SDK before the app (ESM --import). Tracing is a safe no-op when
+# OTEL_SDK_DISABLED=true or the collector is unreachable.
+CMD ["node", "--import", "./dist/telemetry.js", "dist/index.js"]

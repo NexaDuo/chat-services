@@ -1,0 +1,31 @@
+apiVersion: 1
+
+datasources:
+  - name: Tempo
+    type: tempo
+    uid: tempo
+    access: proxy
+    url: http://tempo:3200
+    isDefault: false
+    jsonData:
+      # Trace → Logs: jump from a span to the Loki logs for that trace_id.
+      tracesToLogsV2:
+        datasourceUid: loki
+        spanStartTimeShift: '-1h'
+        spanEndTimeShift: '1h'
+        filterByTraceID: true
+        filterBySpanID: false
+        # Match the JSON log body emitted by the Node apps (telemetry-contract).
+        customQuery: true
+        query: '{service="${__span.tags["service.name"]}"} | json | trace_id="${__trace.traceId}"'
+      # Trace → Metrics: optional RED-style links via the Prometheus datasource.
+      tracesToMetrics:
+        datasourceUid: prometheus
+        spanStartTimeShift: '-1h'
+        spanEndTimeShift: '1h'
+      # Service graph / node graph backed by Prometheus span metrics (optional;
+      # no-op until span metrics exist).
+      serviceMap:
+        datasourceUid: prometheus
+      nodeGraph:
+        enabled: true

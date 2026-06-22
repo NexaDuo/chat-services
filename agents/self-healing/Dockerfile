@@ -21,4 +21,6 @@ USER node
 HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
   CMD pgrep node || exit 1
 
-CMD ["node", "dist/index.js"]
+# Preload OTel SDK before the app (CommonJS --require). Tracing is a safe no-op
+# when OTEL_SDK_DISABLED=true or the collector is unreachable.
+CMD ["node", "--require", "./dist/telemetry.js", "dist/index.js"]

@@ -1,15 +1,32 @@
 receivers:
   otlp:
     protocols:
+      grpc:
+        endpoint: "0.0.0.0:4317"
       http:
         endpoint: "0.0.0.0:4318"
 
+processors:
+  # Batch traces before export to Tempo to reduce request overhead and memory
+  # churn on the 16GB VM. Defaults are conservative.
+  batch:
+    timeout: 5s
+    send_batch_size: 512
+    send_batch_max_size: 1024
+
 exporters:
+  # Dify (and any OTLP-metrics source) → Prometheus scrape endpoint on :8889.
   prometheus:
     endpoint: "0.0.0.0:8889"
     namespace: dify
     send_timestamps: true
-  logging:
+  # Node-app traces (middleware, self-healing-agent) → Tempo via OTLP/gRPC.
+  otlp/tempo:
+    endpoint: "tempo:4317"
+    tls:
+      insecure: true
+  # Low-noise debug exporter; kept for troubleshooting only.
+  debug:
     verbosity: basic
 
 service:
@@ -19,4 +36,5 @@ service:
       exporters: [prometheus]
     traces:
       receivers: [otlp]
-      exporters: [logging]
+      processors: [batch]
+      exporters: [otlp/tempo]

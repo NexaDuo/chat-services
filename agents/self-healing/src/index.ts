@@ -3,12 +3,25 @@ import { Pool } from 'pg';
 import pino from 'pino';
 import crypto from 'crypto';
 import { z } from 'zod';
+import { trace, isSpanContextValid } from '@opentelemetry/api';
 import { Database } from './db.js';
 import { LLMAnalysis, LokiQueryResult } from './types.js';
 
 const logger = pino({
   level: process.env.LOG_LEVEL || 'info',
   base: { service: 'self-healing-agent' },
+  // ISO 8601 timestamps so the `time` field matches the telemetry contract
+  // (and the middleware's output) for consistent Promtail parsing.
+  timestamp: () => `,"time":"${new Date().toISOString()}"`,
+  // Inject the active OTel span context as trace_id/span_id so logs link to
+  // traces in Grafana (matches the Loki derived field). No-op without a span.
+  mixin() {
+    const span = trace.getActiveSpan();
+    if (!span) return {};
+    const ctx = span.spanContext();
+    if (!ctx || !isSpanContextValid(ctx)) return {};
+    return { trace_id: ctx.traceId, span_id: ctx.spanId };
+  },
 });
 
 const LOKI_URL = process.env.LOKI_URL || 'http://loki:3100';

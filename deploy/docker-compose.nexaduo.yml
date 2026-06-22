@@ -111,12 +111,34 @@ services:
       MIDDLEWARE_URL: http://middleware:4000
     networks:
       - chat-network
+  otel-collector:
+    # Single OTLP collector on chat-network: Node apps push traces here
+    # (otel-collector:4318), Dify pushes OTLP metrics; metrics → Prometheus
+    # scrape (:8889), traces → Tempo (:4317).
+    image: otel/opentelemetry-collector-contrib:0.111.0
+    restart: unless-stopped
+    command: ["--config=/etc/otelcol-contrib/config.yaml"]
+    volumes:
+      - /opt/nexaduo/observability/otel-collector/config.yaml:/etc/otelcol-contrib/config.yaml:ro
+    networks:
+      - chat-network
+  tempo:
+    image: grafana/tempo:2.6.1
+    restart: unless-stopped
+    user: "0"
+    command: ["-config.file=/etc/tempo/tempo.yaml"]
+    volumes:
+      - /opt/nexaduo/observability/tempo/tempo.yaml:/etc/tempo/tempo.yaml:ro
+      - tempo-data:/var/tempo
+    networks:
+      - chat-network
 volumes:
   evolution-instances:
   loki-data:
   grafana-data:
   prometheus-data:
   promtail-data:
+  tempo-data:
 networks:
   chat-network:
     external: true

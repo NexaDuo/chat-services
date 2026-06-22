@@ -1,0 +1,151 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "datasource": { "type": "datasource", "uid": "-- Dashboard --" },
+      "gridPos": { "h": 6, "w": 24, "x": 0, "y": 0 },
+      "id": 10,
+      "options": {
+        "mode": "markdown",
+        "content": "## Correlação Logs ↔ Traces ↔ Metrics\n\n**Fluxo para operadores (Grafana 11.3):**\n\n1. **Logs → Trace:** No dashboard *NexaDuo — Logs Final*, abra um log no painel *Live Log Stream*, expanda os detalhes (Log details). O campo derivado `trace_id` (configurado no datasource Loki) exibe um link **➜ Tempo** que abre o trace correspondente.\n2. **Trace → Logs:** Dentro de um trace no Tempo, cada span tem a ação **Logs for this span** (configurada via `tracesToLogsV2` no datasource Tempo, correlacionando por `trace_id`). Isso volta ao Loki já filtrado por aquele trace.\n3. **Trace → Metrics:** Latência/erros por serviço aparecem em *NexaDuo — Chat Services* (Prometheus). Para latência por span é necessário o **metrics-generator** do Tempo (span metrics); se não estiver habilitado, use a busca TraceQL + a tabela de *traces lentos* abaixo.\n\n**Campos canônicos do contrato:** `service`, `level`, `trace_id`, `span_id`, `account_id`, `conversation_id`. `trace_id` é o pivô entre os três sinais.\n\n> Datasources usados: Loki (`loki`), Tempo (`tempo`), Prometheus (`prometheus`)."
+      },
+      "title": "Como correlacionar Logs, Traces e Metrics",
+      "type": "text"
+    },
+    {
+      "datasource": { "type": "tempo", "uid": "tempo" },
+      "gridPos": { "h": 14, "w": 24, "x": 0, "y": 6 },
+      "id": 1,
+      "title": "Busca de Traces (TraceQL)",
+      "type": "table",
+      "options": {
+        "showHeader": true
+      },
+      "targets": [
+        {
+          "datasource": { "type": "tempo", "uid": "tempo" },
+          "queryType": "traceql",
+          "query": "{ resource.service.name =~ \"$service\" && duration > $min_duration && status = $status }",
+          "limit": 50,
+          "tableType": "traces",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": { "type": "tempo", "uid": "tempo" },
+      "gridPos": { "h": 12, "w": 24, "x": 0, "y": 20 },
+      "id": 2,
+      "title": "Traces Lentos Recentes (duração > $min_duration)",
+      "type": "table",
+      "options": {
+        "showHeader": true,
+        "sortBy": [{ "displayName": "Duration", "desc": true }]
+      },
+      "targets": [
+        {
+          "datasource": { "type": "tempo", "uid": "tempo" },
+          "queryType": "traceql",
+          "query": "{ resource.service.name =~ \"$service\" && duration > $min_duration } | select(status, span.http.method, span.http.route)",
+          "limit": 30,
+          "tableType": "traces",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": { "type": "tempo", "uid": "tempo" },
+      "gridPos": { "h": 9, "w": 24, "x": 0, "y": 32 },
+      "id": 3,
+      "title": "Latência de Serviço por Span (requer metrics-generator do Tempo)",
+      "description": "Histograma de duração de spans agregado por serviço. Só retorna dados se o metrics-generator (span metrics) estiver habilitado no Tempo. Caso contrário use os painéis de busca acima.",
+      "type": "timeseries",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "axisCenteredZero": false, "axisColorMode": "text", "axisLabel": "", "axisPlacement": "auto", "barAlignment": 0, "drawStyle": "line", "fillOpacity": 10, "gradientMode": "none", "hideFrom": { "legend": false, "tooltip": false, "viz": false }, "lineInterpolation": "linear", "lineWidth": 1, "pointSize": 5, "scaleDistribution": { "type": "linear" }, "showPoints": "auto", "spanNulls": false, "stacking": { "group": "A", "mode": "none" }, "thresholdsStyle": { "mode": "off" } },
+          "mappings": [],
+          "unit": "s",
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "tempo", "uid": "tempo" },
+          "queryType": "traceql",
+          "query": "{ resource.service.name =~ \"$service\" } | quantile_over_time(duration, .95) by (resource.service.name)",
+          "refId": "A"
+        }
+      ]
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": ["nexaduo", "traces", "tempo"],
+  "templating": {
+    "list": [
+      {
+        "current": { "selected": true, "text": "All", "value": ".*" },
+        "hide": 0,
+        "label": "Serviço",
+        "name": "service",
+        "options": [
+          { "selected": true, "text": "All", "value": ".*" },
+          { "selected": false, "text": "middleware", "value": "middleware" },
+          { "selected": false, "text": "self-healing-agent", "value": "self-healing-agent" }
+        ],
+        "query": ".*,middleware,self-healing-agent",
+        "skipUrlSync": false,
+        "type": "custom"
+      },
+      {
+        "current": { "selected": true, "text": "100ms", "value": "100ms" },
+        "hide": 0,
+        "label": "Duração mínima",
+        "name": "min_duration",
+        "options": [
+          { "selected": false, "text": "0ms", "value": "0ms" },
+          { "selected": true, "text": "100ms", "value": "100ms" },
+          { "selected": false, "text": "500ms", "value": "500ms" },
+          { "selected": false, "text": "1s", "value": "1s" },
+          { "selected": false, "text": "3s", "value": "3s" }
+        ],
+        "query": "0ms,100ms,500ms,1s,3s",
+        "skipUrlSync": false,
+        "type": "custom"
+      },
+      {
+        "current": { "selected": true, "text": "error", "value": "error" },
+        "hide": 0,
+        "label": "Status",
+        "name": "status",
+        "options": [
+          { "selected": false, "text": "unset", "value": "unset" },
+          { "selected": false, "text": "ok", "value": "ok" },
+          { "selected": true, "text": "error", "value": "error" }
+        ],
+        "query": "unset,ok,error",
+        "skipUrlSync": false,
+        "type": "custom"
+      }
+    ]
+  },
+  "time": { "from": "now-6h", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "NexaDuo — Traces Overview",
+  "uid": "stack-traces-overview",
+  "version": 1
+}
