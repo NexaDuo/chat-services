@@ -150,3 +150,14 @@ Whenever you need to run routine verification, ask the agent to **"run a routine
 
 - **NexaDuo Name:** NexaDuo is the name of only one of the tenants in this multi-tenant stack, not the stack itself. Do not use "NexaDuo" as a generic name for the platform or the admin dashboard. Reference the platform or system generically as "Multitenant Chat Services" or "Omnichannel Stack".
 
+## Diretrizes de Release, Deploy e Acompanhamento de Workflows
+
+- **Fases Obrigatórias no Plano:** Todo plano de implementação deve obrigatoriamente conter etapas claras para:
+  1. Deploy em Staging.
+  2. Validação E2E/Fumaça em Staging.
+  3. Deploy em Produção.
+  4. Validação E2E/Fumaça em Produção.
+- **Monitoramento Ativo de Workflows:** O agente não deve considerar a tarefa concluída apenas ao abrir o PR ou fazer o push. Ele deve monitorar a execução dos workflows do GitHub Actions (via logs, comandos `gh run watch` ou checagens no Git) até que o deploy em staging e produção seja concluído com sucesso.
+- **Validação com URLs Reais:** A validação final em staging e produção deve ser feita executando os testes automatizados (como os testes do Playwright) apontando para as URLs de produção/staging correspondentes, e nunca apenas localmente.
+
+
