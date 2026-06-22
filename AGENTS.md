@@ -160,4 +160,15 @@ Whenever you need to run routine verification, ask the agent to **"run a routine
 - **Monitoramento Ativo de Workflows:** O agente não deve considerar a tarefa concluída apenas ao abrir o PR ou fazer o push. Ele deve monitorar a execução dos workflows do GitHub Actions (via logs, comandos `gh run watch` ou checagens no Git) até que o deploy em staging e produção seja concluído com sucesso.
 - **Validação com URLs Reais:** A validação final em staging e produção deve ser feita executando os testes automatizados (como os testes do Playwright) apontando para as URLs de produção/staging correspondentes, e nunca apenas localmente.
 
+## Lições Aprendidas: Migrações de Banco de Dados em Ambientes Existentes
+
+- **Atualização de Esquema (Schema Changes):** Arquivos de bootstrap como `01-init.sql` só rodam na primeira inicialização do container (quando o volume do Postgres está vazio). Para ambientes existentes em staging/produção, as migrações de esquema (como novas tabelas, colunas ou índices) devem ser aplicadas manualmente no container de banco de dados do respectivo host para evitar que o deploy quebre por falta de tabelas no banco de dados.
+- **Como Executar Migrações Manuais na VM:**
+  1. Conecte-se na VM via SSH (ex: `gcloud compute ssh`).
+  2. Encontre o container ativo do Postgres:
+     `sudo docker ps --filter name=^/postgres-`
+  3. Execute os comandos SQL necessários no banco de dados desejado:
+     `sudo docker exec -i <container-name> psql -U postgres -d middleware < migration.sql`
+
+
 
