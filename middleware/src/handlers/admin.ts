@@ -4,6 +4,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import pg from "pg";
 import defaultAxios from "axios";
+import crypto from "crypto";
 import { AppConfig } from "../config.js";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -17,33 +18,65 @@ export async function registerAdminRoutes(
   customHttpClient?: any,
 ): Promise<void> {
   const axios = (customHttpClient || defaultAxios) as typeof defaultAxios;
-  const checkAuth = (request: FastifyRequest, reply: FastifyReply): boolean => {
-    const authHeader = request.headers.authorization;
-    if (!authHeader || !authHeader.startsWith("Basic ")) {
-      void reply.code(401).header("WWW-Authenticate", 'Basic realm="Admin Portal"').send({ error: "unauthorized" });
+  const checkAuth = async (request: FastifyRequest, reply: FastifyReply): Promise<boolean> => {
+    const cookieHeader = request.headers.cookie || "";
+    const match = cookieHeader.match(/admin_session=([^;]+)/);
+    const token = match ? match[1] : null;
+
+    if (!token) {
+      if (request.url.startsWith("/admin/api/")) {
+        void reply.code(401).send({ error: "unauthorized" });
+      } else {
+        void reply.redirect("/admin/login");
+      }
       return false;
     }
 
     try {
-      const credentials = Buffer.from(authHeader.split(" ")[1], "base64").toString("ascii");
-      const [username, password] = credentials.split(":");
-      const expectedPassword = config.adminPassword || config.handoff.sharedSecret;
+      const result = await pool.query(
+        `SELECT s.id, u.username, u.role
+         FROM sessions s
+         JOIN users u ON s.user_id = u.id
+         WHERE s.token = $1 AND s.expires_at > CURRENT_TIMESTAMP
+         LIMIT 1`,
+        [token]
+      );
 
-      if (username !== "admin" || password !== expectedPassword) {
-        void reply.code(401).header("WWW-Authenticate", 'Basic realm="Admin Portal"').send({ error: "unauthorized" });
+      if (result.rows.length === 0) {
+        if (request.url.startsWith("/admin/api/")) {
+          void reply.code(401).send({ error: "unauthorized" });
+        } else {
+          void reply.redirect("/admin/login");
+        }
         return false;
       }
-    } catch {
-      void reply.code(401).header("WWW-Authenticate", 'Basic realm="Admin Portal"').send({ error: "unauthorized" });
+      (request as any).user = {
+        username: result.rows[0].username,
+        role: result.rows[0].role
+      };
+    } catch (err) {
+      app.log.error({ err }, "Database session check failed");
+      void reply.code(500).send({ error: "internal_server_error" });
       return false;
     }
 
     return true;
   };
 
+  // GET /admin/login
+  app.get("/admin/login", async (_request, reply) => {
+    try {
+      const html = await fs.readFile(htmlPath, "utf-8");
+      return reply.code(200).type("text/html").send(html);
+    } catch (err) {
+      app.log.error({ err, htmlPath }, "Failed to read index.html");
+      return reply.code(500).send({ error: "internal_server_error" });
+    }
+  });
+
   // GET /admin
   app.get("/admin", async (request, reply) => {
-    if (!checkAuth(request, reply)) return;
+    if (!(await checkAuth(request, reply))) return;
     try {
       const html = await fs.readFile(htmlPath, "utf-8");
       return reply.code(200).type("text/html").send(html);
@@ -55,7 +88,7 @@ export async function registerAdminRoutes(
 
   // GET /admin/:tenantSlug
   app.get("/admin/:tenantSlug", async (request, reply) => {
-    if (!checkAuth(request, reply)) return;
+    if (!(await checkAuth(request, reply))) return;
     try {
       const html = await fs.readFile(htmlPath, "utf-8");
       return reply.code(200).type("text/html").send(html);
@@ -65,9 +98,109 @@ export async function registerAdminRoutes(
     }
   });
 
+  // GET /admin/api/auth-status
+  app.get("/admin/api/auth-status", async (request, reply) => {
+    const cookieHeader = request.headers.cookie || "";
+    const match = cookieHeader.match(/admin_session=([^;]+)/);
+    const token = match ? match[1] : null;
+
+    if (!token) {
+      return reply.code(200).send({ authenticated: false });
+    }
+
+    try {
+      const result = await pool.query(
+        `SELECT u.username, u.role
+         FROM sessions s
+         JOIN users u ON s.user_id = u.id
+         WHERE s.token = $1 AND s.expires_at > CURRENT_TIMESTAMP
+         LIMIT 1`,
+        [token]
+      );
+
+      if (result.rows.length === 0) {
+        return reply.code(200).send({ authenticated: false });
+      }
+
+      return reply.code(200).send({
+        authenticated: true,
+        username: result.rows[0].username,
+        role: result.rows[0].role
+      });
+    } catch (err) {
+      app.log.error({ err }, "Database session check failed during auth-status");
+      return reply.code(200).send({ authenticated: false });
+    }
+  });
+
+  // POST /admin/api/login
+  app.post("/admin/api/login", async (request, reply) => {
+    const { username, password } = request.body as { username?: string; password?: string };
+    if (!username || !password) {
+      return reply.code(400).send({ error: "missing_fields" });
+    }
+
+    try {
+      const pwdHash = crypto.createHash("sha256").update(password).digest("hex");
+      const userRes = await pool.query(
+        "SELECT id, password_hash, role FROM users WHERE username = $1 LIMIT 1",
+        [username]
+      );
+
+      if (userRes.rows.length === 0 || userRes.rows[0].password_hash !== pwdHash) {
+        return reply.code(401).send({ error: "invalid_credentials" });
+      }
+
+      const user = userRes.rows[0];
+      const token = crypto.randomBytes(32).toString("hex");
+      const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
+
+      await pool.query(
+        "INSERT INTO sessions (user_id, token, expires_at) VALUES ($1, $2, $3)",
+        [user.id, token, expiresAt]
+      );
+
+      void reply.header(
+        "Set-Cookie",
+        `admin_session=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=86400`
+      );
+
+      return reply.code(200).send({
+        status: "success",
+        username,
+        role: user.role
+      });
+    } catch (err) {
+      app.log.error({ err }, "Login failed");
+      return reply.code(500).send({ error: "internal_server_error" });
+    }
+  });
+
+  // POST /admin/api/logout
+  app.post("/admin/api/logout", async (request, reply) => {
+    const cookieHeader = request.headers.cookie || "";
+    const match = cookieHeader.match(/admin_session=([^;]+)/);
+    const token = match ? match[1] : null;
+
+    if (token) {
+      try {
+        await pool.query("DELETE FROM sessions WHERE token = $1", [token]);
+      } catch (err) {
+        app.log.error({ err }, "Failed to delete session token from database during logout");
+      }
+    }
+
+    void reply.header(
+      "Set-Cookie",
+      "admin_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT"
+    );
+
+    return reply.code(200).send({ status: "success" });
+  });
+
   // GET /admin/api/tenants
   app.get("/admin/api/tenants", async (request, reply) => {
-    if (!checkAuth(request, reply)) return;
+    if (!(await checkAuth(request, reply))) return;
     try {
       const result = await pool.query(
         "SELECT DISTINCT ON (slug) slug, name, chatwoot_url, dify_url FROM tenants WHERE status = 'active' AND chatwoot_account_id = '1'"
@@ -87,7 +220,7 @@ export async function registerAdminRoutes(
 
   // GET /admin/api/tenants/:tenantSlug/accounts
   app.get("/admin/api/tenants/:tenantSlug/accounts", async (request, reply) => {
-    if (!checkAuth(request, reply)) return;
+    if (!(await checkAuth(request, reply))) return;
     const { tenantSlug } = request.params as { tenantSlug: string };
     try {
       const parentRes = await pool.query(
@@ -120,7 +253,7 @@ export async function registerAdminRoutes(
 
   // POST /admin/api/tenants/:tenantSlug/provision
   app.post("/admin/api/tenants/:tenantSlug/provision", async (request, reply) => {
-    if (!checkAuth(request, reply)) return;
+    if (!(await checkAuth(request, reply))) return;
 
     const { tenantSlug } = request.params as { tenantSlug: string };
     const { name, email, adminName, subdomain, difyApiKey, difyAppType } = request.body as {
@@ -253,7 +386,7 @@ export async function registerAdminRoutes(
 
   // GET /admin/api/tenants/:tenantSlug/discovery
   app.get("/admin/api/tenants/:tenantSlug/discovery", async (request, reply) => {
-    if (!checkAuth(request, reply)) return;
+    if (!(await checkAuth(request, reply))) return;
     const { tenantSlug } = request.params as { tenantSlug: string };
     try {
       // 1. Resolve parent URLs
@@ -351,7 +484,7 @@ export async function registerAdminRoutes(
 
   // POST /admin/api/tenants/:tenantSlug/import
   app.post("/admin/api/tenants/:tenantSlug/import", async (request, reply) => {
-    if (!checkAuth(request, reply)) return;
+    if (!(await checkAuth(request, reply))) return;
     const { tenantSlug } = request.params as { tenantSlug: string };
     const { chatwootAccountId, name, subdomain, difyApiKey, difyAppType } = request.body as {
       chatwootAccountId: string;
@@ -458,7 +591,7 @@ export async function registerAdminRoutes(
 
   // GET /admin/api/instances/:name/status
   app.get("/admin/api/instances/:name/status", async (request, reply) => {
-    if (!checkAuth(request, reply)) return;
+    if (!(await checkAuth(request, reply))) return;
     const { name } = request.params as { name: string };
     try {
       if (!config.evolution.apiKey) {
