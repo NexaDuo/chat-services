@@ -46,7 +46,7 @@ services:
     user: "0"
     command: -config.file=/etc/loki/loki.yaml
     volumes:
-      - /opt/nexaduo/observability/loki/loki.yaml:/etc/loki/loki.yaml:ro
+      - ${NEXADUO_CONF_PATH:-/opt/nexaduo}/observability/loki/loki.yaml:/etc/loki/loki.yaml:ro
       - loki-data:/var/loki
     networks:
       - chat-network
@@ -55,7 +55,7 @@ services:
     restart: unless-stopped
     command: -config.file=/etc/promtail/promtail.yaml
     volumes:
-      - /opt/nexaduo/observability/promtail/promtail.yaml:/etc/promtail/promtail.yaml:ro
+      - ${NEXADUO_CONF_PATH:-/opt/nexaduo}/observability/promtail/promtail.yaml:/etc/promtail/promtail.yaml:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - promtail-data:/var/promtail
       - /var/lib/docker/containers:/var/lib/docker/containers:ro
@@ -87,7 +87,7 @@ services:
       - "traefik.http.routers.grafana.entrypoints=http"
       - "traefik.http.services.grafana.loadbalancer.server.port=3000"
     volumes:
-      - /opt/nexaduo/observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ${NEXADUO_CONF_PATH:-/opt/nexaduo}/observability/grafana/provisioning:/etc/grafana/provisioning:ro
       - grafana-data:/var/lib/grafana
     networks:
       - chat-network
@@ -98,7 +98,7 @@ services:
       - --config.file=/etc/prometheus/prometheus.yml
       - --storage.tsdb.retention.time=30d
     volumes:
-      - /opt/nexaduo/observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ${NEXADUO_CONF_PATH:-/opt/nexaduo}/observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus-data:/prometheus
     networks:
       - chat-network
@@ -119,7 +119,7 @@ services:
     restart: unless-stopped
     command: ["--config=/etc/otelcol-contrib/config.yaml"]
     volumes:
-      - /opt/nexaduo/observability/otel-collector/config.yaml:/etc/otelcol-contrib/config.yaml:ro
+      - ${NEXADUO_CONF_PATH:-/opt/nexaduo}/observability/otel-collector/config.yaml:/etc/otelcol-contrib/config.yaml:ro
     networks:
       - chat-network
   tempo:
@@ -128,7 +128,7 @@ services:
     user: "0"
     command: ["-config.file=/etc/tempo/tempo.yaml"]
     volumes:
-      - /opt/nexaduo/observability/tempo/tempo.yaml:/etc/tempo/tempo.yaml:ro
+      - ${NEXADUO_CONF_PATH:-/opt/nexaduo}/observability/tempo/tempo.yaml:/etc/tempo/tempo.yaml:ro
       - tempo-data:/var/tempo
     networks:
       - chat-network
