@@ -29,7 +29,7 @@
       "type": "timeseries",
       "targets": [
         {
-          "expr": "sum by (service) (count_over_time({service=~\"$service\", level=~\"$level\"} |~ \"(?i)error|fatal|panic|exception\" [$__interval]))",
+          "expr": "sum by (service) (count_over_time({service=~\"$service\", level=~\"$level\"} |= \"$search\" |~ \"(?i)error|fatal|panic|exception\" [$__interval]))",
           "legendFormat": "{{service}}",
           "refId": "A"
         }
@@ -37,7 +37,76 @@
     },
     {
       "datasource": { "type": "loki", "uid": "loki" },
-      "gridPos": { "h": 18, "w": 24, "x": 0, "y": 6 },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "axisCenteredZero": false, "axisColorMode": "text", "axisLabel": "", "axisPlacement": "auto", "barAlignment": 0, "drawStyle": "line", "fillOpacity": 10, "gradientMode": "none", "hideFrom": { "legend": false, "tooltip": false, "viz": false }, "lineInterpolation": "linear", "lineWidth": 2, "pointSize": 5, "scaleDistribution": { "type": "linear" }, "showPoints": "auto", "spanNulls": false, "stacking": { "group": "A", "mode": "none" }, "thresholdsStyle": { "mode": "off" } },
+          "mappings": [],
+          "unit": "short",
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] }
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 6, "w": 12, "x": 0, "y": 6 },
+      "id": 4,
+      "options": {
+        "legend": { "displayMode": "table", "placement": "right", "showLegend": true, "calcs": ["lastNotNull", "max"] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "title": "Top-N: Taxa de Erros por Serviço (ERROR rate /s, 5m)",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "topk(10, sum by (service) (rate({service=~\"$service\"} | level=\"ERROR\" |= \"$search\" [5m])))",
+          "legendFormat": "{{service}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": { "type": "loki", "uid": "loki" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "custom": { "align": "auto", "cellOptions": { "type": "auto" }, "filterable": true, "inspect": false },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] }
+        },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "Count" }, "properties": [{ "id": "custom.width", "value": 90 }, { "id": "custom.cellOptions", "value": { "type": "gauge", "mode": "gradient" } }] }
+        ]
+      },
+      "gridPos": { "h": 6, "w": 12, "x": 12, "y": 6 },
+      "id": 5,
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "sortBy": [{ "displayName": "Count", "desc": true }]
+      },
+      "title": "Mensagens de Erro Mais Frequentes",
+      "type": "table",
+      "targets": [
+        {
+          "expr": "topk(15, sum by (msg) (count_over_time({service=~\"$service\", level=~\"$level\"} |= \"$search\" |~ \"(?i)error|fatal|panic|exception\" | json | line_format \"{{.msg}}\" [$__range])))",
+          "instant": true,
+          "format": "table",
+          "refId": "A"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": { "Time": true },
+            "indexByName": { "msg": 0, "Value": 1 },
+            "renameByName": { "msg": "Mensagem de Erro", "Value": "Count" }
+          }
+        }
+      ]
+    },
+    {
+      "datasource": { "type": "loki", "uid": "loki" },
+      "gridPos": { "h": 18, "w": 24, "x": 0, "y": 12 },
       "id": 3,
       "options": {
         "dedupStrategy": "none",
@@ -53,7 +122,7 @@
       "type": "logs",
       "targets": [
         {
-          "expr": "{service=~\"$service\", level=~\"$level\"}",
+          "expr": "{service=~\"$service\", level=~\"$level\"} |= \"$search\" $account_id",
           "refId": "A"
         }
       ]
@@ -97,6 +166,27 @@
         "skipUrlSync": false,
         "sort": 1,
         "type": "query"
+      },
+      {
+        "current": { "selected": true, "text": "", "value": "" },
+        "hide": 0,
+        "label": "Busca (texto livre)",
+        "name": "search",
+        "options": [{ "selected": true, "text": "", "value": "" }],
+        "query": "",
+        "skipUrlSync": false,
+        "type": "textbox"
+      },
+      {
+        "current": { "selected": true, "text": "", "value": "" },
+        "description": "Filtra por account_id (structured metadata). Deixe vazio para todos. Aceita LogQL de metadata, ex: | account_id=\"123\"",
+        "hide": 0,
+        "label": "Account ID (metadata)",
+        "name": "account_id",
+        "options": [{ "selected": true, "text": "", "value": "" }],
+        "query": "",
+        "skipUrlSync": false,
+        "type": "textbox"
       }
     ]
   },
@@ -105,5 +195,5 @@
   "timezone": "browser",
   "title": "NexaDuo — Logs Final",
   "uid": "stack-logs-final",
-  "version": 5
+  "version": 6
 }

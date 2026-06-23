@@ -171,13 +171,24 @@ Whenever you need to run routine verification, ask the agent to **"run a routine
 
 ## Lições Aprendidas: Migrações de Banco de Dados em Ambientes Existentes
 
-- **Atualização de Esquema (Schema Changes):** Arquivos de bootstrap como `01-init.sql` só rodam na primeira inicialização do container (quando o volume do Postgres está vazio). Para ambientes existentes em staging/produção, as migrações de esquema (como novas tabelas, colunas ou índices) devem ser aplicadas manualmente no container de banco de dados do respectivo host para evitar que o deploy quebre por falta de tabelas no banco de dados.
-- **Como Executar Migrações Manuais na VM:**
-  1. Conecte-se na VM via SSH (ex: `gcloud compute ssh`).
-  2. Encontre o container ativo do Postgres:
-     `sudo docker ps --filter name=^/postgres-`
-  3. Execute os comandos SQL necessários no banco de dados desejado:
-     `sudo docker exec -i <container-name> psql -U postgres -d middleware < migration.sql`
+- **Convergência de Esquema é Automática (em código):** `01-init.sql` só roda na
+  primeira inicialização do Postgres (volume vazio), então ambientes existentes
+  nunca recebiam tabelas/colunas novas adicionadas a ele depois — foi exatamente
+  o que quebrou o seed de `users`/`sessions` do admin portal. **Resolvido em
+  código:** o job `sync` do `deploy.yml` agora reaplica `infrastructure/postgres/01-init.sql`
+  no Postgres em execução em **todo deploy** (passo "Apply DB schema on VM"),
+  antes do seed. O script é totalmente idempotente (`CREATE DATABASE ... \gexec`,
+  `CREATE TABLE/INDEX/EXTENSION IF NOT EXISTS`), então qualquer ambiente converge
+  para o esquema versionado sem intervenção manual.
+- **Regra:** Para mudar o esquema do middleware/self_healing, **edite apenas
+  `01-init.sql`** (mantendo tudo idempotente). O deploy aplica a mudança em
+  novos e existentes ambientes automaticamente. Não há migração manual.
+- **Break-glass (apenas emergência, fora do deploy):** se precisar aplicar à mão,
+  use o mesmo caminho do pipeline e **depois** garanta que a mudança esteja em
+  `01-init.sql`:
+  1. `gcloud compute ssh <vm>` (via IAP).
+  2. `PG=$(sudo docker ps --filter name=^/postgres- --format "{{.Names}}" | head -1)`
+  3. `sudo docker exec -i "$PG" psql -U postgres -v ON_ERROR_STOP=1 < infrastructure/postgres/01-init.sql`
 
 
 

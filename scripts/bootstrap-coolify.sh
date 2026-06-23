@@ -206,24 +206,44 @@ gcloud compute ssh "$SSH_USER@$VM_NAME" \
     sudo rm -rf /opt/nexaduo/postgres/01-init.sql
     sudo mv /tmp/01-init.sql /opt/nexaduo/postgres/01-init.sql
 
-    # Promtail bind-mounts the single promtail.yaml *file*, so replacing the
-    # observability dir below swaps its inode and a running promtail keeps the
-    # old config (it only reads -config.file at startup). Restart it iff the
-    # config content actually changed, so config edits take effect without
-    # churning the container on no-op deploys.
+    # Observability configs are bind-mounted into their containers and read only
+    # at startup; replacing the observability dir below swaps its inode, so a
+    # running consumer keeps its old config. Capture the CONTENT hash of each
+    # incoming config now (path-independent: we keep only column 1 of sha256sum),
+    # persist it outside the swapped dir, and restart a running consumer iff its
+    # shipped config actually changed -- no churn on no-op deploys. Services not
+    # yet running (e.g. a brand-new tempo/otel-collector before the tenant deploy)
+    # are simply skipped and start fresh with the new config.
+    SUMS=/opt/nexaduo/.obs-checksums
+    sudo mkdir -p "$SUMS"
     NEW_PROMTAIL_SHA="$(sha256sum /tmp/observability/promtail/promtail.yaml 2>/dev/null | awk "{print \$1}")"
+    NEW_OTELCOL_SHA="$(sha256sum /tmp/observability/otel-collector/config.yaml 2>/dev/null | awk "{print \$1}")"
+    NEW_TEMPO_SHA="$(sha256sum /tmp/observability/tempo/tempo.yaml 2>/dev/null | awk "{print \$1}")"
+    NEW_LOKI_SHA="$(sha256sum /tmp/observability/loki/loki.yaml 2>/dev/null | awk "{print \$1}")"
+    NEW_PROM_SHA="$(sha256sum /tmp/observability/prometheus/prometheus.yml 2>/dev/null | awk "{print \$1}")"
+    NEW_GRAFANA_SHA="$(find /tmp/observability/grafana/provisioning -type f -exec sha256sum {} + 2>/dev/null | awk "{print \$1}" | sort | sha256sum | awk "{print \$1}")"
+
     sudo rm -rf /opt/nexaduo/observability
     sudo mv /tmp/observability /opt/nexaduo/observability
     rm -f /tmp/seed.tar.gz
 
-    PT="$(sudo docker ps --filter name=promtail --format "{{.Names}}" | head -1)"
-    if [ -n "$PT" ] && [ -n "$NEW_PROMTAIL_SHA" ]; then
-      CUR_PROMTAIL_SHA="$(sudo docker exec "$PT" sha256sum /etc/promtail/promtail.yaml 2>/dev/null | awk "{print \$1}")"
-      if [ "$NEW_PROMTAIL_SHA" != "$CUR_PROMTAIL_SHA" ]; then
-        echo "Promtail config changed; restarting $PT to reload."
-        sudo docker restart "$PT" >/dev/null || true
-      fi
-    fi
+    obs_restart_if_changed() {
+      svc="$1"; new="$2"; marker="$SUMS/$svc.sha"
+      [ -z "$new" ] && return 0
+      old="$(sudo cat "$marker" 2>/dev/null || true)"
+      printf "%s\n" "$new" | sudo tee "$marker" >/dev/null
+      [ "$new" = "$old" ] && return 0
+      c="$(sudo docker ps --filter name="$svc" --format "{{.Names}}" | head -1)"
+      [ -z "$c" ] && return 0
+      echo "Observability config for $c changed; restarting to reload."
+      sudo docker restart "$c" >/dev/null || true
+    }
+    obs_restart_if_changed promtail "$NEW_PROMTAIL_SHA"
+    obs_restart_if_changed otel-collector "$NEW_OTELCOL_SHA"
+    obs_restart_if_changed tempo "$NEW_TEMPO_SHA"
+    obs_restart_if_changed loki "$NEW_LOKI_SHA"
+    obs_restart_if_changed prometheus "$NEW_PROM_SHA"
+    obs_restart_if_changed grafana "$NEW_GRAFANA_SHA"
 
     echo "Seeded: $(sudo stat -c %F /opt/nexaduo/postgres/01-init.sql) 01-init.sql"
   '

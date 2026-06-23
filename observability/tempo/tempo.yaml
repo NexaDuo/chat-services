@@ -1,0 +1,35 @@
+# Minimal single-binary Grafana Tempo for the multi-tenant chat-services stack.
+# Lean footprint for a shared 16GB VM: local filesystem backend, modest retention.
+# Pinned image: grafana/tempo:2.6.1 (see deploy/docker-compose.nexaduo.yml).
+
+stream_over_http_enabled: true
+
+server:
+  http_listen_port: 3200
+  grpc_listen_port: 9095
+
+distributor:
+  receivers:
+    otlp:
+      protocols:
+        grpc:
+          endpoint: "0.0.0.0:4317"
+        http:
+          endpoint: "0.0.0.0:4318"
+
+ingester:
+  # Flush traces to the WAL/blocks promptly so memory stays bounded.
+  max_block_duration: 5m
+
+compactor:
+  compaction:
+    # Retention: 120h (5 days). Within the 72h–168h target for the VM.
+    block_retention: 120h
+
+storage:
+  trace:
+    backend: local
+    wal:
+      path: /var/tempo/wal
+    local:
+      path: /var/tempo/blocks

@@ -9,3 +9,11 @@ datasources:
     isDefault: false
     jsonData:
       maxLines: 1000
+      # Click a log line's trace_id → open the trace in Tempo.
+      # Matches the JSON log body emitted by the Node apps (telemetry-contract).
+      derivedFields:
+        - name: trace_id
+          matcherType: regex
+          matcherRegex: '"trace_id":"(\w+)"'
+          url: '${__value.raw}'
+          datasourceUid: tempo

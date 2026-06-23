@@ -495,6 +495,35 @@ jobs:
       # SQL script into `psql` inside the postgres container over IAP SSH —
       # no TCP tunnel, no DB password (local socket = trust), mirroring the
       # backup runner's `docker exec` approach.
+      # 01-init.sql only runs on first Postgres init (empty data dir); existing
+      # staging/prod volumes never pick up tables/columns added to it later
+      # (this is exactly what broke the admin-portal users/sessions seed). The
+      # script is written to be fully idempotent (CREATE DATABASE ... \gexec
+      # guard, CREATE TABLE/INDEX/EXTENSION IF NOT EXISTS), so re-applying it on
+      # every deploy converges ANY environment to the schema in code — no manual
+      # docker exec psql migration, ever. Runs before the seed so the
+      # tenant/admin INSERTs always find their tables.
+      - name: Apply DB schema on VM (idempotent convergence)
+        if: needs.resolve-env.outputs.is_dry_run == 'false'
+        run: |
+          gcloud compute ssh "${{ needs.resolve-env.outputs.vm_name }}" \
+            --project="${{ env.PROJECT_ID }}" \
+            --zone="${{ env.ZONE }}" \
+            --tunnel-through-iap \
+            --quiet \
+            --command='
+              set -euo pipefail
+              PG=""
+              for c in $(sudo docker ps --filter name=^/postgres- --format "{{.Names}}"); do
+                if sudo docker exec "$c" psql -U postgres -tAc "SELECT 1" >/dev/null 2>&1; then
+                  PG="$c"; break
+                fi
+              done
+              if [ -z "$PG" ]; then echo "ERROR: no running postgres container found" >&2; exit 1; fi
+              echo "Applying infrastructure/postgres/01-init.sql to $PG"
+              sudo docker exec -i "$PG" psql -U postgres -v ON_ERROR_STOP=1
+            ' < infrastructure/postgres/01-init.sql
+
       - name: Seed tenant table on VM
         if: needs.resolve-env.outputs.is_dry_run == 'false'
         run: |
