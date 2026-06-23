@@ -208,8 +208,8 @@ gcloud compute ssh "$SSH_USER@$VM_NAME" \
 
     # Observability configs are bind-mounted into their containers and read only
     # at startup; replacing the observability dir below swaps its inode, so a
-    # running consumer keeps its old config. Capture each incoming config's
-    # CONTENT hash now (path-independent: we keep only column 1 of sha256sum),
+    # running consumer keeps its old config. Capture the CONTENT hash of each
+    # incoming config now (path-independent: we keep only column 1 of sha256sum),
     # persist it outside the swapped dir, and restart a running consumer iff its
     # shipped config actually changed -- no churn on no-op deploys. Services not
     # yet running (e.g. a brand-new tempo/otel-collector before the tenant deploy)
