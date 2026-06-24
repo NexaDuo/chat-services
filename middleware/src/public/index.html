@@ -738,6 +738,13 @@
               </div>
 
               <div class="form-group">
+                <label for="input-dify-select">Vincular Projeto Dify Existente</label>
+                <select id="input-dify-select" class="form-control" onchange="onProvisionDifySelectChange()">
+                  <option value="manual">-- Inserir Manualmente --</option>
+                </select>
+              </div>
+
+              <div class="form-group">
                 <label for="input-dify-key">Dify Service API Key</label>
                 <input type="password" id="input-dify-key" class="form-control" placeholder="ex: app-XXXXXXXXXXXXXXXX" required>
               </div>
@@ -1124,6 +1131,9 @@
         document.getElementById('active-tenant-title').textContent = `Ambiente: ${tenantInfo.name}`;
         switchTab('manage');
         await refreshAccountsTable();
+        // Load discovery here (not only on the Sync tab) so the provision form's
+        // Dify project dropdown is populated as soon as the Manage tab is shown.
+        await loadDiscoveryData();
       } catch (err) {
         showToast('Erro ao inicializar dashboard.', 'error');
         navigateHome();
@@ -1267,7 +1277,12 @@
 
         showToast('Cliente provisionado com sucesso!');
         document.getElementById('provision-form').reset();
+        // form.reset() doesn't undo readOnly/disabled set via JS — restore them.
+        document.getElementById('input-dify-select').value = 'manual';
+        document.getElementById('input-dify-key').readOnly = false;
+        document.getElementById('input-dify-type').disabled = false;
         await refreshAccountsTable();
+        await loadDiscoveryData(); // refresh dropdown so the newly-mapped app drops off
       } catch (err) {
         showToast(err.message, 'error');
       } finally {
@@ -1365,11 +1380,62 @@
             evoTbody.appendChild(tr);
           });
         }
+
+        populateProvisionDifySelect();
       } catch (err) {
         showToast(err.message, 'error');
         cwTbody.innerHTML = `<tr><td colspan="3" style="text-align:center; color:var(--error);">Erro: ${err.message}</td></tr>`;
         difyTbody.innerHTML = `<tr><td colspan="3" style="text-align:center; color:var(--error);">Erro: ${err.message}</td></tr>`;
         evoTbody.innerHTML = `<tr><td colspan="3" style="text-align:center; color:var(--error);">Erro: ${err.message}</td></tr>`;
+      }
+    }
+
+    // Populate the provision form's Dify project dropdown from discovery data.
+    // Mirrors the import form's dropdown but is rebuilt whenever discovery loads;
+    // preserves the current selection if that app is still available.
+    function populateProvisionDifySelect() {
+      const select = document.getElementById('input-dify-select');
+      if (!select) return;
+      const prev = select.value;
+      select.innerHTML = '<option value="manual">-- Inserir Manualmente --</option>';
+      if (discoveryData && discoveryData.difyApps) {
+        discoveryData.difyApps
+          .filter(app => !app.mapped && app.apiKey)
+          .forEach(app => {
+            const opt = document.createElement('option');
+            opt.value = app.id;
+            opt.textContent = `${app.name} (${app.mode})`;
+            opt.dataset.key = app.apiKey;
+            opt.dataset.mode = app.mode;
+            select.appendChild(opt);
+          });
+      }
+      if (prev && [...select.options].some(o => o.value === prev)) {
+        select.value = prev;
+      }
+    }
+
+    // When a Dify project is selected in the provision form, auto-fill the API key
+    // and infer the app type from the Dify mode (agent-chat -> agent). Mirror of
+    // onImportDifySelectChange(). handleProvision reads .value directly, so a
+    // disabled type select still submits its value.
+    function onProvisionDifySelectChange() {
+      const select = document.getElementById('input-dify-select');
+      const selectedOption = select.options[select.selectedIndex];
+      const keyInput = document.getElementById('input-dify-key');
+      const typeSelect = document.getElementById('input-dify-type');
+
+      if (selectedOption.value === 'manual') {
+        keyInput.value = '';
+        typeSelect.value = 'chatflow';
+        keyInput.readOnly = false;
+        typeSelect.disabled = false;
+      } else {
+        keyInput.value = selectedOption.dataset.key;
+        keyInput.readOnly = true;
+        const mode = selectedOption.dataset.mode;
+        typeSelect.value = (mode && (mode.includes('agent') || mode === 'agent-chat')) ? 'agent' : 'chatflow';
+        typeSelect.disabled = true;
       }
     }
 

@@ -572,4 +572,40 @@ test.describe('Omnichannel Admin Portal Browser UI rendering', () => {
     await page.goto(`${targetMiddlewareUrl}/admin/${targetTenantSlug}`);
     await expect(page.locator('#active-tenant-title')).toContainText('Ambiente');
   });
+
+  // Regression: the provision form used to require manually pasting the Dify API
+  // key. It now lists the registered Dify apps (from /discovery) in a dropdown, and
+  // selecting one auto-fills the (readonly) API key and infers the app type from the
+  // Dify mode. Guards against the dropdown not populating, not filtering already-mapped
+  // apps, or not auto-filling key/type. Mock-data specific -> only against the
+  // in-process mock server (discovery returns the seeded dify-app-1/2).
+  test('provision form: selecting a Dify app auto-fills the API key and type', async ({ page, context, request }) => {
+    test.skip(!!liveMiddlewareUrl, 'asserts seeded mock Dify discovery data');
+
+    const token = await getSessionCookie(request);
+    await context.addCookies([{
+      name: 'admin_session',
+      value: token,
+      domain: new URL(targetMiddlewareUrl).hostname,
+      path: '/'
+    }]);
+    await page.goto(`${targetMiddlewareUrl}/admin/${targetTenantSlug}`);
+
+    const select = page.locator('#input-dify-select');
+    // Unmapped app with an API key shows up...
+    await expect(select.locator('option', { hasText: 'Unmapped Dify Bot (chat)' })).toHaveCount(1);
+    // ...and the already-mapped app (Acme AI Assistant) is filtered out.
+    await expect(select.locator('option', { hasText: 'Acme AI Assistant' })).toHaveCount(0);
+
+    // Selecting the app auto-fills the key (readonly) and maps mode 'chat' -> chatflow.
+    await select.selectOption({ label: 'Unmapped Dify Bot (chat)' });
+    await expect(page.locator('#input-dify-key')).toHaveValue('app-dify-api-key-2');
+    await expect(page.locator('#input-dify-key')).toHaveJSProperty('readOnly', true);
+    await expect(page.locator('#input-dify-type')).toHaveValue('chatflow');
+
+    // Switching back to manual clears and unlocks the key.
+    await select.selectOption('manual');
+    await expect(page.locator('#input-dify-key')).toHaveValue('');
+    await expect(page.locator('#input-dify-key')).toHaveJSProperty('readOnly', false);
+  });
 });
