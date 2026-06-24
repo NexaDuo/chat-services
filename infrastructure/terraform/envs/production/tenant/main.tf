@@ -342,10 +342,14 @@ resource "coolify_service_envs" "nexaduo" {
     value      = data.google_secret_manager_secret_version.chatwoot_platform_token.secret_data
     is_literal = true
   }
-  # Host path that observability bind-mounts resolve against. The compose template
-  # uses a bare ${NEXADUO_CONF_PATH} (NOT ${VAR:-default}) because Coolify's compose
-  # parser mangles the bash default syntax into an invalid volume spec
-  # ("/opt/nexaduo:"), which silently fails every redeploy. Define it explicitly here.
+  # Host path that observability bind-mounts resolve against. The repo compose
+  # template keeps ${NEXADUO_CONF_PATH}/... so the local CI stack (real docker
+  # compose) works, but Coolify's parser treats any source not beginning with a
+  # literal '/' as an empty NAMED volume -> observability crash-loop. The deploy
+  # (scripts/sync-coolify-compose.sh) rewrites ${NEXADUO_CONF_PATH} -> /opt/nexaduo
+  # in the Coolify-bound copy before ingest, so the rendered compose has literal
+  # bind-mount paths. This env is consequently unused by Coolify after the rewrite;
+  # kept as a harmless explicit definition of the host conf path.
   env {
     key        = "NEXADUO_CONF_PATH"
     value      = "/opt/nexaduo"
