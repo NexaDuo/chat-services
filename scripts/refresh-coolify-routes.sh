@@ -106,19 +106,28 @@ echo "Restarting coolify-proxy to reload generated routes..."
 sudo docker restart coolify-proxy >/dev/null
 sleep 5
 
-need_fallback=0
-check_local_not_404 "chat${DNS_SUFFIX}.${BASE_DOMAIN}"       || need_fallback=1
-check_local_not_404 "dify${DNS_SUFFIX}.${BASE_DOMAIN}"       || need_fallback=1
-check_local_not_404 "coolify${DNS_SUFFIX}.${BASE_DOMAIN}"     || need_fallback=1
-check_local_not_404 "evolution${DNS_SUFFIX}.${BASE_DOMAIN}"   || need_fallback=1
-check_local_not_404 "middleware${DNS_SUFFIX}.${BASE_DOMAIN}"  || need_fallback=1
-check_local_dify_setup                          || need_fallback=1
+# Always write our deterministic routes YAML. AGENTS.md prefers the deterministic
+# fallback YAML over Coolify's unreliable dynamic routing for this multi-container
+# stack, and -- critically -- our YAML is the only place the Chatwoot CSRF fix
+# lives (the nexaduo-force-https-proto headers middleware that rewrites
+# X-Forwarded-Proto to https; see the middlewares block below). Gating the write
+# on "dynamic rebuild looked broken" meant a deploy where the not-404 probes
+# happened to pass left Chatwoot on a route WITHOUT the middleware -> the 422
+# origin/base_url-mismatch bug returned. So we force the write every deploy. The
+# checks below are kept for informational logging only.
+need_fallback=1
+check_local_not_404 "chat${DNS_SUFFIX}.${BASE_DOMAIN}"       || true
+check_local_not_404 "dify${DNS_SUFFIX}.${BASE_DOMAIN}"       || true
+check_local_not_404 "coolify${DNS_SUFFIX}.${BASE_DOMAIN}"     || true
+check_local_not_404 "evolution${DNS_SUFFIX}.${BASE_DOMAIN}"   || true
+check_local_not_404 "middleware${DNS_SUFFIX}.${BASE_DOMAIN}"  || true
+check_local_dify_setup                          || true
 if [[ "${SKIP_GRAFANA}" != "true" ]]; then
-  check_local_not_404 "grafana${DNS_SUFFIX}.${BASE_DOMAIN}" || need_fallback=1
+  check_local_not_404 "grafana${DNS_SUFFIX}.${BASE_DOMAIN}" || true
 fi
 
 if [[ "${need_fallback}" == "1" ]]; then
-  echo "Dynamic rebuild still incomplete; applying deterministic fallback routes..."
+  echo "Writing deterministic proxy routes (with X-Forwarded-Proto=https middleware)..."
 
   chat_container="$(container_by_subname chatwoot-rails)"
   dify_container="$(container_by_subname dify-web)"
