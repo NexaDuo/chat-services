@@ -168,15 +168,18 @@ http:
     nexaduo-chat:
       rule: "Host(\`chat${DNS_SUFFIX}.${BASE_DOMAIN}\`)"
       entryPoints: [http, https]
+      middlewares: [nexaduo-force-https-proto]
       service: nexaduo-chat-svc
     nexaduo-dify:
       rule: "Host(\`dify${DNS_SUFFIX}.${BASE_DOMAIN}\`)"
       entryPoints: [http, https]
+      middlewares: [nexaduo-force-https-proto]
       service: nexaduo-dify-svc
     nexaduo-dify-api:
       rule: "Host(\`dify${DNS_SUFFIX}.${BASE_DOMAIN}\`) && PathPrefix(\`/console/api\`)"
       priority: 200
       entryPoints: [http, https]
+      middlewares: [nexaduo-force-https-proto]
       service: nexaduo-dify-api-svc
     nexaduo-coolify:
       rule: "Host(\`coolify${DNS_SUFFIX}.${BASE_DOMAIN}\`)"
@@ -185,12 +188,29 @@ http:
     nexaduo-evolution:
       rule: "Host(\`evolution${DNS_SUFFIX}.${BASE_DOMAIN}\`)"
       entryPoints: [http, https]
+      middlewares: [nexaduo-force-https-proto]
       service: nexaduo-evolution-svc
     nexaduo-middleware:
       rule: "Host(\`middleware${DNS_SUFFIX}.${BASE_DOMAIN}\`)"
       entryPoints: [http, https]
+      middlewares: [nexaduo-force-https-proto]
       service: nexaduo-middleware-svc
 ${grafana_router}
+  middlewares:
+    # Cloudflared (HTTPS) -> coolify-proxy:80 (this http entrypoint) -> backends.
+    # Traefik's http entrypoint has no forwardedHeaders.trustedIPs/insecure, so it
+    # does NOT trust cloudflared's inbound X-Forwarded-Proto and rewrites it to
+    # "http". Chatwoot (Rails 7.1) then computes request.base_url = http://... and
+    # its CSRF forgery_protection_origin_check rejects the browser Origin
+    # (https://...) with ActionController::InvalidAuthenticityToken -> HTTP 422 on
+    # every non-GET form POST (e.g. SuperAdmin::UsersController#update). We force
+    # the forwarded scheme back to https here. This sets a request HEADER only --
+    # it does NOT issue redirects -- so it cannot create a Cloudflare SSL redirect
+    # loop (cf. AGENTS.md "Cloudflare SSL Loops"). Chatwoot keeps FORCE_SSL=false.
+    nexaduo-force-https-proto:
+      headers:
+        customRequestHeaders:
+          X-Forwarded-Proto: "https"
   services:
     nexaduo-chat-svc:
       loadBalancer:
