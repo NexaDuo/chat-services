@@ -342,6 +342,15 @@ resource "coolify_service_envs" "nexaduo" {
     value      = data.google_secret_manager_secret_version.chatwoot_platform_token.secret_data
     is_literal = true
   }
+  # Host path that observability bind-mounts resolve against. The compose template
+  # uses a bare ${NEXADUO_CONF_PATH} (NOT ${VAR:-default}) because Coolify's compose
+  # parser mangles the bash default syntax into an invalid volume spec
+  # ("/opt/nexaduo:"), which silently fails every redeploy. Define it explicitly here.
+  env {
+    key        = "NEXADUO_CONF_PATH"
+    value      = "/opt/nexaduo"
+    is_literal = true
+  }
   env {
     key   = "DIFY_BASE_URL"
     value = "http://dify-api:5001/v1"

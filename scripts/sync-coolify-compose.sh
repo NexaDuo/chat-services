@@ -122,3 +122,58 @@ for svc in shared chatwoot dify nexaduo; do
 done
 
 echo "=== All services synced and redeploy triggered. ==="
+
+# --- Post-deploy guard: validate Coolify's *rendered* compose -------------------
+# Coolify's compose parser does not understand bash ${VAR:-default} syntax and
+# silently mangles such volume specs (e.g. "/opt/nexaduo:"), which makes the
+# `docker compose up` inside the deploy fail at config validation. Because the
+# deploy trigger above is fire-and-forget, that failure used to go unnoticed and
+# the pipeline reported green while NO container was recreated ("green but inert").
+# This guard renders the same validation Coolify runs and fails loudly instead.
+echo "Verifying rendered compose for each service (catch invalid specs)..."
+verify_cmd=$(cat <<'EOF'
+set -uo pipefail
+
+validate_one() {
+  local dir="/data/coolify/services/$1"
+  [ -f "${dir}/docker-compose.yml" ] || { echo "__nofile__"; return 0; }
+  sudo docker compose -f "${dir}/docker-compose.yml" --env-file "${dir}/.env" config -q 2>&1
+}
+
+# Strict service (nexaduo-app) carries the observability bind-mounts that
+# triggered the original "green but inert" bug, where Coolify mangled
+# ${VAR:-default} volume specs into "/opt/nexaduo:" and every redeploy failed
+# silently. Poll until its freshly-rendered compose validates (the deploy we just
+# triggered is async, so a fixed sleep could read the previous, stale render).
+STRICT="__STRICT__"
+rc=1
+for _ in $(seq 1 15); do
+  sleep 10
+  out=$(validate_one "${STRICT}")
+  if [ -z "${out}" ]; then echo "OK: ${STRICT} rendered compose is valid"; rc=0; break; fi
+  if [ "${out}" = "__nofile__" ]; then echo "...waiting for Coolify to render ${STRICT}"; continue; fi
+  echo "...not valid yet for ${STRICT}: ${out}" >&2
+done
+if [ "${rc}" -ne 0 ]; then
+  echo "ERROR: ${STRICT} rendered compose never became valid (deploy would be green-but-inert)" >&2
+fi
+
+# Other services validated once as warnings only (don't expand blast radius).
+for uuid in __OTHERS__; do
+  out=$(validate_one "${uuid}")
+  if [ -z "${out}" ] || [ "${out}" = "__nofile__" ]; then echo "OK: ${uuid} ok/absent"; else
+    echo "WARN: invalid rendered compose for ${uuid} (non-strict): ${out}" >&2
+  fi
+done
+exit $rc
+EOF
+)
+verify_cmd="${verify_cmd/__STRICT__/${SERVICES[nexaduo]}}"
+verify_cmd="${verify_cmd/__OTHERS__/${SERVICES[shared]} ${SERVICES[chatwoot]} ${SERVICES[dify]}}"
+gcloud_ssh \
+  ubuntu@${VM_NAME} \
+  --project="${PROJECT_ID}" \
+  --zone="${ZONE}" \
+  --command "${verify_cmd}"
+
+echo "=== Rendered compose verified for all services. ==="
