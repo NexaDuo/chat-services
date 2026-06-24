@@ -65,6 +65,25 @@ check_local_dify_setup() {
   [[ "${code}" == "200" ]]
 }
 
+# Retry wrappers. A `docker restart coolify-proxy` leaves Traefik briefly
+# unhealthy (404/502/000 for ~20-30s) before it reloads routes and backends.
+# The post-write verification must tolerate that window, otherwise it fails the
+# routes job on a transient 502 even though the routes (and the X-Forwarded-Proto
+# CSRF-fix middleware) were written correctly. Retry for ~90s before giving up.
+retry_check() {
+  # usage: retry_check "<human label>" <function> [args...]
+  local label="$1"; shift
+  local attempt
+  for attempt in $(seq 1 18); do
+    if "$@"; then
+      return 0
+    fi
+    echo "  ${label} not ready yet (attempt ${attempt}/18); retrying in 5s..."
+    sleep 5
+  done
+  return 1
+}
+
 container_by_subname() {
   local subname="$1"
   # Try Coolify label first, then standard Docker Compose service label
@@ -251,16 +270,17 @@ EOF
   rm -f "${tmp_file}"
 
   sudo docker restart coolify-proxy >/dev/null
-  sleep 5
+  # Give the freshly restarted proxy a head start before the (retrying) checks.
+  sleep 10
 
-  check_local_not_404 "chat${DNS_SUFFIX}.${BASE_DOMAIN}"       || { echo "chat route still 404 after fallback." >&2; exit 1; }
-  check_local_not_404 "dify${DNS_SUFFIX}.${BASE_DOMAIN}"       || { echo "dify route still 404 after fallback." >&2; exit 1; }
-  check_local_not_404 "coolify${DNS_SUFFIX}.${BASE_DOMAIN}"     || { echo "coolify route still 404 after fallback." >&2; exit 1; }
-  check_local_not_404 "evolution${DNS_SUFFIX}.${BASE_DOMAIN}"   || { echo "evolution route still 404 after fallback." >&2; exit 1; }
-  check_local_not_404 "middleware${DNS_SUFFIX}.${BASE_DOMAIN}"  || { echo "middleware route still 404 after fallback." >&2; exit 1; }
-  check_local_dify_setup                          || { echo "dify setup API still failing after fallback." >&2; exit 1; }
+  retry_check "chat route"       check_local_not_404 "chat${DNS_SUFFIX}.${BASE_DOMAIN}"       || { echo "chat route still failing after fallback." >&2; exit 1; }
+  retry_check "dify route"       check_local_not_404 "dify${DNS_SUFFIX}.${BASE_DOMAIN}"       || { echo "dify route still failing after fallback." >&2; exit 1; }
+  retry_check "coolify route"    check_local_not_404 "coolify${DNS_SUFFIX}.${BASE_DOMAIN}"     || { echo "coolify route still failing after fallback." >&2; exit 1; }
+  retry_check "evolution route"  check_local_not_404 "evolution${DNS_SUFFIX}.${BASE_DOMAIN}"   || { echo "evolution route still failing after fallback." >&2; exit 1; }
+  retry_check "middleware route" check_local_not_404 "middleware${DNS_SUFFIX}.${BASE_DOMAIN}"  || { echo "middleware route still failing after fallback." >&2; exit 1; }
+  retry_check "dify setup API"   check_local_dify_setup                          || { echo "dify setup API still failing after fallback." >&2; exit 1; }
   if [[ "${SKIP_GRAFANA}" != "true" ]]; then
-    check_local_not_404 "grafana${DNS_SUFFIX}.${BASE_DOMAIN}" || { echo "grafana route still 404 after fallback." >&2; exit 1; }
+    retry_check "grafana route"  check_local_not_404 "grafana${DNS_SUFFIX}.${BASE_DOMAIN}" || { echo "grafana route still failing after fallback." >&2; exit 1; }
   fi
 fi
 REMOTE
