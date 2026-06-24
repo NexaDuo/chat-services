@@ -403,12 +403,24 @@ jobs:
           # managed, applied in-place via PATCH from the plan computed above.
           terraform apply -auto-approve tfplan.bin
 
-      - name: Check if compose templates changed
+      - name: Check if compose templates or sync scripts changed
         id: compose-changes
         run: |
-          # Fetch origin/main for comparison if needed
-          git fetch origin main --depth=1 || true
-          if git diff --name-only origin/main...HEAD 2>/dev/null | grep -q "^deploy/"; then
+          # The redeploy below ingests deploy/*.yml into Coolify via
+          # scripts/sync-coolify-compose.sh (+ scripts/fix_compose.php). A change
+          # to EITHER the compose templates OR those sync scripts must trigger it
+          # -- otherwise a fix that lives only in the sync script never reaches the
+          # VM. Compare against the previous commit so a direct push to main is
+          # detected (origin/main...HEAD is empty once the commit is on main).
+          git fetch origin main --depth=2 || true
+          base="$(git rev-parse HEAD~1 2>/dev/null || echo '')"
+          if [ -n "${base}" ]; then
+            range="${base}...HEAD"
+          else
+            range="origin/main...HEAD"
+          fi
+          if git diff --name-only "${range}" 2>/dev/null \
+               | grep -qE '^deploy/|^scripts/sync-coolify-compose\.sh$|^scripts/fix_compose\.php$'; then
             echo "changed=true" >> "$GITHUB_OUTPUT"
           else
             echo "changed=false" >> "$GITHUB_OUTPUT"
