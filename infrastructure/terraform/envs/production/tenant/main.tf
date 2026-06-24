@@ -338,6 +338,11 @@ resource "coolify_service_envs" "nexaduo" {
     is_literal = true
   }
   env {
+    key        = "CHATWOOT_PLATFORM_TOKEN"
+    value      = data.google_secret_manager_secret_version.chatwoot_platform_token.secret_data
+    is_literal = true
+  }
+  env {
     key   = "DIFY_BASE_URL"
     value = "http://dify-api:5001/v1"
   }

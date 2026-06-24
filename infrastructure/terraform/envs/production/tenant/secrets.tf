@@ -22,6 +22,14 @@ data "google_secret_manager_secret_version" "chatwoot_api_token" {
   secret = "chatwoot_api_token"
 }
 
+# Platform App token (super-admin) required by the middleware to call the
+# Chatwoot Platform API (/platform/api/v1/*) during tenant provisioning. The
+# regular account api_token (chatwoot_api_token) is NOT authorized there and
+# yields 401, which is why provisioning failed before this was wired up.
+data "google_secret_manager_secret_version" "chatwoot_platform_token" {
+  secret = "chatwoot_platform_token"
+}
+
 data "google_secret_manager_secret_version" "dify_secret_key" {
   secret = "dify_secret_key"
 }
