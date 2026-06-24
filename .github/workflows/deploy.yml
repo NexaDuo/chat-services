@@ -569,6 +569,54 @@ jobs:
           SKIP_DB_SYNC: "true"
         run: npm run tenants:sync -- "${{ needs.resolve-env.outputs.target_environment }}"
 
+      # Chatwoot seeds EMPTY installation_configs rows for INSTAGRAM_APP_ID/SECRET/
+      # VERIFY_TOKEN (installation_config.yml has no value for them), and
+      # GlobalConfigService reads the DB row BEFORE the ENV, so the terraform-set
+      # env is masked by the empty row (and ConfigLoader resets it to the yaml
+      # default). Re-assert the values from the container env into the DB on every
+      # deploy (idempotent), after the tenant segment has (re)deployed Chatwoot,
+      # then verify the webhook handshake so a regression fails the deploy loudly.
+      - name: Reconcile Chatwoot Instagram configs (env -> installation_configs)
+        if: needs.resolve-env.outputs.is_dry_run == 'false'
+        run: |
+          gcloud compute ssh "${{ needs.resolve-env.outputs.vm_name }}" \
+            --project="${{ env.PROJECT_ID }}" \
+            --zone="${{ env.ZONE }}" \
+            --tunnel-through-iap \
+            --quiet \
+            --command='
+              set -euo pipefail
+              CW=""
+              for c in $(sudo docker ps --filter name=^/chatwoot-rails- --format "{{.Names}}"); do CW="$c"; break; done
+              if [ -z "$CW" ]; then echo "ERROR: no chatwoot-rails container found" >&2; exit 1; fi
+              echo "Reconciling Instagram installation_configs on $CW"
+              sudo docker exec "$CW" bundle exec rails runner "
+                %w[INSTAGRAM_APP_ID INSTAGRAM_APP_SECRET INSTAGRAM_VERIFY_TOKEN].each do |k|
+                  v = ENV[k].to_s
+                  next if v.empty?
+                  c = InstallationConfig.find_or_initialize_by(name: k)
+                  if c.value.to_s != v
+                    c.value = v
+                    c.save!
+                    puts(%(reconciled #{k}))
+                  end
+                end
+                GlobalConfig.clear_cache
+              "
+              VT=$(sudo docker exec "$CW" printenv INSTAGRAM_VERIFY_TOKEN || true)
+              FU=$(sudo docker exec "$CW" printenv FRONTEND_URL || true)
+              if [ -n "$VT" ] && [ -n "$FU" ]; then
+                CH=ig-deploy-handshake-check
+                CODE=$(curl -sS -o /tmp/igc -w "%{http_code}" --max-time 20 "$FU/webhooks/instagram?hub.mode=subscribe&hub.verify_token=$VT&hub.challenge=$CH" || echo 000)
+                BODY=$(cat /tmp/igc 2>/dev/null || true)
+                echo "Instagram webhook handshake: http=$CODE body=$BODY"
+                if [ "$CODE" != "200" ] || [ "$BODY" != "$CH" ]; then echo "ERROR: Instagram webhook verify-token handshake failed" >&2; exit 1; fi
+                echo "Instagram webhook handshake OK"
+              else
+                echo "INSTAGRAM_VERIFY_TOKEN/FRONTEND_URL not set on Chatwoot; skipping handshake check"
+              fi
+            '
+
       - name: Dry-run note
         if: needs.resolve-env.outputs.is_dry_run == 'true'
         run: echo "::notice::dry_run=true; skipping tenants:sync."
