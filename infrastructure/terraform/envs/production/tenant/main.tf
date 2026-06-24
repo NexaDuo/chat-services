@@ -137,6 +137,24 @@ resource "coolify_service_envs" "chatwoot" {
     key   = "CHATWOOT_DOMAIN"
     value = "chat${local.dns_suffix}.${var.base_domain}"
   }
+  # Instagram native channel (Instagram Login). Installation-wide single Meta app.
+  # NOTE: Chatwoot persists these into installation_configs on first read, so later
+  # value changes must be done via super_admin Configuration (or DB), not just here.
+  env {
+    key        = "INSTAGRAM_APP_ID"
+    value      = data.google_secret_manager_secret_version.instagram_app_id.secret_data
+    is_literal = true
+  }
+  env {
+    key        = "INSTAGRAM_APP_SECRET"
+    value      = data.google_secret_manager_secret_version.instagram_app_secret.secret_data
+    is_literal = true
+  }
+  env {
+    key        = "INSTAGRAM_VERIFY_TOKEN"
+    value      = data.google_secret_manager_secret_version.instagram_verify_token.secret_data
+    is_literal = true
+  }
 }
 
 # ---------------------------------------------------------------------------

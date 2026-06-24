@@ -87,6 +87,21 @@ data "google_secret_manager_secret_version" "google_oauth_client_secret" {
   secret = "google_oauth_client_secret"
 }
 
+# Instagram (Meta) app credentials for Chatwoot's native Instagram-Login channel.
+# Installation-wide (Chatwoot reads them via GlobalConfigService): a single Meta app
+# serves every tenant; per-tenant connection is a manual OAuth in each Chatwoot account.
+data "google_secret_manager_secret_version" "instagram_app_id" {
+  secret = "instagram_app_id"
+}
+
+data "google_secret_manager_secret_version" "instagram_app_secret" {
+  secret = "instagram_app_secret"
+}
+
+data "google_secret_manager_secret_version" "instagram_verify_token" {
+  secret = "instagram_verify_token"
+}
+
 data "google_secret_manager_secret_version" "admin_password" {
   secret = "admin_password"
 }
