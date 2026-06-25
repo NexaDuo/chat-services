@@ -92,6 +92,7 @@ sudo docker cp /tmp/docker-compose.shared.yml coolify:/tmp/shared.yml
 sudo docker exec coolify sh -c 'php fix_compose.php ${SERVICES["shared"]} < /tmp/shared.yml'
 
 echo "=== Syncing chatwoot ==="
+sed -i 's#\${NEXADUO_CONF_PATH}#/opt/nexaduo#g' /tmp/docker-compose.chatwoot.yml
 sudo docker cp /tmp/docker-compose.chatwoot.yml coolify:/tmp/chatwoot.yml
 sudo docker exec coolify sh -c 'php fix_compose.php ${SERVICES["chatwoot"]} < /tmp/chatwoot.yml'
 

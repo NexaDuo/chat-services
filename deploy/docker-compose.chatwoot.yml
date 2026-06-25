@@ -10,6 +10,8 @@ services:
       POSTGRES_DATABASE: chatwoot
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/1
       SECRET_KEY_BASE: ${CHATWOOT_SECRET_KEY_BASE}
+    volumes:
+      - ${NEXADUO_CONF_PATH}/deploy/ai_agents.rb:/app/config/initializers/ai_agents.rb:ro
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
@@ -52,6 +54,7 @@ services:
     volumes:
       - chatwoot-storage:/app/storage
       - chatwoot-public:/app/public
+      - ${NEXADUO_CONF_PATH}/deploy/ai_agents.rb:/app/config/initializers/ai_agents.rb:ro
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
@@ -80,6 +83,7 @@ services:
     volumes:
       - chatwoot-storage:/app/storage
       - chatwoot-public:/app/public
+      - ${NEXADUO_CONF_PATH}/deploy/ai_agents.rb:/app/config/initializers/ai_agents.rb:ro
     command: ["bundle", "exec", "sidekiq", "-C", "config/sidekiq.yml"]
     networks:
       - chat-network

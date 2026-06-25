@@ -190,11 +190,13 @@ gcloud compute ssh "$SSH_USER@$VM_NAME" \
 # are absent when a container starts, Docker creates them as DIRECTORIES,
 # which breaks Postgres (01-init.sql) and Loki/Prometheus/Promtail. Seeding
 # them here (bootstrap runs before the tenant deploy) keeps them as files.
-echo "Uploading 01-init.sql and observability configs to the VM..."
+echo "Uploading 01-init.sql, observability configs, and Chatwoot initializers to the VM..."
 SEED_TMP="$(mktemp -d)"
 cp "${PROJECT_ROOT}/infrastructure/postgres/01-init.sql" "${SEED_TMP}/01-init.sql"
 cp -r "${PROJECT_ROOT}/observability" "${SEED_TMP}/observability"
-tar -C "${SEED_TMP}" -czf "${SEED_TMP}/seed.tar.gz" 01-init.sql observability
+mkdir -p "${SEED_TMP}/deploy"
+cp "${PROJECT_ROOT}/deploy/ai_agents.rb" "${SEED_TMP}/deploy/ai_agents.rb"
+tar -C "${SEED_TMP}" -czf "${SEED_TMP}/seed.tar.gz" 01-init.sql observability deploy
 gcloud compute scp \
   --project "$PROJECT_ID" --zone "$ZONE" --tunnel-through-iap --quiet \
   "${SEED_TMP}/seed.tar.gz" "$SSH_USER@$VM_NAME:/tmp/seed.tar.gz"
@@ -205,6 +207,10 @@ gcloud compute ssh "$SSH_USER@$VM_NAME" \
     sudo mkdir -p /opt/nexaduo/postgres
     sudo rm -rf /opt/nexaduo/postgres/01-init.sql
     sudo mv /tmp/01-init.sql /opt/nexaduo/postgres/01-init.sql
+
+    sudo mkdir -p /opt/nexaduo/deploy
+    sudo rm -rf /opt/nexaduo/deploy/ai_agents.rb
+    sudo mv /tmp/deploy/ai_agents.rb /opt/nexaduo/deploy/ai_agents.rb
 
     # Observability configs are bind-mounted into their containers and read only
     # at startup; replacing the observability dir below swaps its inode, so a
