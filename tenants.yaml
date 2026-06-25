@@ -36,3 +36,15 @@ tenants:
       type: shared
       chatwoot_url: "https://chat-stg.nexaduo.com"
       dify_url: "https://dify-stg.nexaduo.com"
+
+  - slug: duda
+    name: Maria Eduarda
+    chatwoot_account_id: 3
+    status: active
+    environment: production
+    infra:
+      type: shared
+      chatwoot_url: "https://chat.nexaduo.com"
+      dify_url: "https://dify.nexaduo.com"
+      dify_app_type: agent
+      dify_api_key: "gcp-secret:duda_dify_api_key"

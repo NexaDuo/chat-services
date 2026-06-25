@@ -50,6 +50,10 @@ interface TenantConfig {
     type: string;
     chatwoot_url?: string;
     dify_url?: string;
+    dify_app_type?: string;
+    // May be a literal key or a `gcp-secret:<name>` reference, resolved by
+    // `resolveTenantSecrets` before seeding.
+    dify_api_key?: string;
   };
 }
 
@@ -69,27 +73,32 @@ async function syncDatabase(pool: Pool, tenants: TenantConfig[]) {
   logger.log('Syncing database...');
   for (const tenant of tenants) {
     const query = `
-      INSERT INTO tenants (slug, subdomain, name, chatwoot_account_id, status, infra_type, chatwoot_url, dify_url)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-      ON CONFLICT (slug) DO UPDATE 
+      INSERT INTO tenants (slug, subdomain, name, chatwoot_account_id, status, infra_type, chatwoot_url, dify_url, dify_app_type, dify_api_key)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+      ON CONFLICT (slug) DO UPDATE
       SET subdomain = EXCLUDED.subdomain,
-          name = EXCLUDED.name, 
+          name = EXCLUDED.name,
           chatwoot_account_id = EXCLUDED.chatwoot_account_id,
           status = EXCLUDED.status,
           infra_type = EXCLUDED.infra_type,
           chatwoot_url = EXCLUDED.chatwoot_url,
           dify_url = EXCLUDED.dify_url,
+          dify_app_type = EXCLUDED.dify_app_type,
+          -- Preserve a key set out-of-band when the seed does not carry one.
+          dify_api_key = COALESCE(EXCLUDED.dify_api_key, tenants.dify_api_key),
           updated_at = CURRENT_TIMESTAMP;
     `;
     const values = [
       tenant.slug,
       tenant.slug,
-      tenant.name, 
+      tenant.name,
       tenant.chatwoot_account_id.toString(),
       tenant.status,
       tenant.infra?.type || 'shared',
       tenant.infra?.chatwoot_url || null,
-      tenant.infra?.dify_url || null
+      tenant.infra?.dify_url || null,
+      tenant.infra?.dify_app_type || 'chatflow',
+      tenant.infra?.dify_api_key || null
     ];
     await pool.query(query, values);
     logger.log(`✅ Synced DB: ${tenant.slug}`);
@@ -119,8 +128,10 @@ function buildSeedSql(tenants: TenantConfig[], admin?: { username: string; passw
       tenant.infra?.type || 'shared',
       tenant.infra?.chatwoot_url || null,
       tenant.infra?.dify_url || null,
+      tenant.infra?.dify_app_type || 'chatflow',
+      tenant.infra?.dify_api_key || null,
     ].map(sqlLiteral).join(', ');
-    return `INSERT INTO tenants (slug, subdomain, name, chatwoot_account_id, status, infra_type, chatwoot_url, dify_url)
+    return `INSERT INTO tenants (slug, subdomain, name, chatwoot_account_id, status, infra_type, chatwoot_url, dify_url, dify_app_type, dify_api_key)
 VALUES (${values})
 ON CONFLICT (slug) DO UPDATE
 SET subdomain = EXCLUDED.subdomain,
@@ -130,6 +141,8 @@ SET subdomain = EXCLUDED.subdomain,
     infra_type = EXCLUDED.infra_type,
     chatwoot_url = EXCLUDED.chatwoot_url,
     dify_url = EXCLUDED.dify_url,
+    dify_app_type = EXCLUDED.dify_app_type,
+    dify_api_key = COALESCE(EXCLUDED.dify_api_key, tenants.dify_api_key),
     updated_at = CURRENT_TIMESTAMP;`;
   });
 
@@ -241,6 +254,34 @@ function resolveAdmin(admin?: { username: string; password: string }, projectId?
   return { username, password };
 }
 
+/**
+ * Resolves `gcp-secret:<name>` references in each tenant's `infra.dify_api_key`
+ * into the literal key, mirroring `resolveAdmin`. Mutates the tenants in place.
+ * On failure (e.g. gcloud unavailable in local dev) the reference is dropped to
+ * `undefined`, so the seed leaves the column untouched (the upsert COALESCEs
+ * `dify_api_key`) rather than writing a `gcp-secret:` placeholder as the key.
+ * The resolved value is never logged — only the secret name.
+ */
+function resolveTenantSecrets(tenants: TenantConfig[], projectId?: string): void {
+  for (const tenant of tenants) {
+    const ref = tenant.infra?.dify_api_key;
+    if (!ref || !ref.startsWith('gcp-secret:')) continue;
+    const secretName = ref.split(':')[1];
+    try {
+      if (!projectId) {
+        throw new Error('GCP Project ID is required to resolve GCP secrets');
+      }
+      const value = execSync(
+        `gcloud secrets versions access latest --secret=${secretName} --project=${projectId}`
+      ).toString().trim();
+      tenant.infra!.dify_api_key = value || undefined;
+    } catch {
+      logger.log(`⚠️ Failed to fetch dify_api_key secret ${secretName} for tenant ${tenant.slug}; leaving existing key untouched`);
+      tenant.infra!.dify_api_key = undefined;
+    }
+  }
+}
+
 async function main() {
   const yamlPath = path.resolve(process.cwd(), 'tenants.yaml');
   if (!fs.existsSync(yamlPath)) {
@@ -268,6 +309,10 @@ async function main() {
   const targetEnv = positional[0] || process.env.ENVIRONMENT || 'production';
 
   const targetTenants = config.tenants.filter(t => (t.environment || 'production') === targetEnv);
+
+  // Resolve any `gcp-secret:` dify_api_key references into literal keys before
+  // seeding (both the --print-sql and direct-DB paths use the resolved values).
+  resolveTenantSecrets(targetTenants, config.global.gcp_project_id);
 
   // --print-sql: emit an idempotent seed script to stdout and exit. CI pipes
   // this into `docker exec ... psql` on the VM (Postgres is docker-network-only,
