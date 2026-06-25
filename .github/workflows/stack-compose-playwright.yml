@@ -9,7 +9,9 @@ on:
 jobs:
   validate-stack:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # Raised from 30: the Dify readiness wait alone can use up to 15 min on a
+    # cold boot (issue #23); leave headroom for the Playwright run after it.
+    timeout-minutes: 45
     # Compose v2.30+ on ubuntu-latest forbids redefining services imported via
     # `include:`. The root docker-compose.yml carries cross-stack `depends_on`
     # overrides, so we chain compose files via -f / COMPOSE_FILE instead.
@@ -88,10 +90,13 @@ jobs:
           done
           [[ "${code}" =~ ^[234] ]] || { echo "::error::Chatwoot did not become ready in time."; exit 1; }
 
+          # Dify runs dozens of Alembic migrations on boot and competes for the
+          # runner's limited CPU/RAM, so it can take a while. Allow up to 15 min
+          # (180 x 5s) before failing (issue #23).
           echo "Waiting for Dify API (127.0.0.1:5001)..."
-          for i in $(seq 1 120); do
+          for i in $(seq 1 180); do
             code=$(curl -sS -o /dev/null -w "%{http_code}" --max-time 5 http://127.0.0.1:5001/console/api/setup 2>/dev/null || echo "000")
-            echo "  attempt ${i}/120: 127.0.0.1:5001 -> ${code}"
+            echo "  attempt ${i}/180: 127.0.0.1:5001 -> ${code}"
             case "${code}" in 2*|3*|4*) echo "Dify API ready."; break ;; esac
             sleep 5
           done
