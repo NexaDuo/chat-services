@@ -540,7 +540,10 @@ jobs:
         if: needs.resolve-env.outputs.is_dry_run == 'false'
         run: |
           npm run --silent tenants:sync -- "${{ needs.resolve-env.outputs.target_environment }}" --print-sql > /tmp/tenant-seed.sql
-          echo "--- seed SQL ---"; cat /tmp/tenant-seed.sql
+          # The seed SQL now carries dify_api_key values; redact them in the log
+          # (the file piped to psql below stays intact).
+          echo "--- seed SQL (keys redacted) ---"
+          sed -E 's/app-[A-Za-z0-9_-]+/app-REDACTED/g' /tmp/tenant-seed.sql
 
           gcloud compute ssh "${{ needs.resolve-env.outputs.vm_name }}" \
             --project="${{ env.PROJECT_ID }}" \
