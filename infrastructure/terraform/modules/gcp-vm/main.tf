@@ -36,6 +36,16 @@ variable "disk_size" {
   default = 50
 }
 
+variable "boot_disk_type" {
+  type    = string
+  default = "pd-balanced"
+}
+
+variable "postgres_disk_type" {
+  type    = string
+  default = "pd-balanced"
+}
+
 variable "ssh_user" {
   type    = string
   default = "ubuntu"
@@ -118,7 +128,7 @@ resource "google_compute_instance" "vm" {
     initialize_params {
       image = "ubuntu-os-cloud/ubuntu-2404-lts-amd64"
       size  = var.disk_size
-      type  = "pd-ssd"
+      type  = var.boot_disk_type
     }
   }
 
@@ -158,7 +168,7 @@ output "public_ip" {
 
 resource "google_compute_disk" "postgres_disk" {
   name = "${var.name}-postgres-disk"
-  type = "pd-ssd"
+  type = var.postgres_disk_type
   zone = var.zone
   size = var.disk_size
 }
