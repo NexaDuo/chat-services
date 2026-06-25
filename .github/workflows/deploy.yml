@@ -270,11 +270,16 @@ jobs:
         run: |
           terraform workspace select "${{ needs.resolve-env.outputs.target_environment }}"
 
+      - name: Resolve GCP Zone
+        run: |
+          ZONE=$(gcloud secrets versions access latest --secret=terraform_tfvars_${{ needs.resolve-env.outputs.target_environment }} --project="${{ env.PROJECT_ID }}" | grep -E '^\s*gcp_zone\s*=' | cut -d'"' -f2)
+          echo "ZONE=$ZONE" >> "$GITHUB_ENV"
+          echo "GCP_ZONE=$ZONE" >> "$GITHUB_ENV"
+
       - name: Bootstrap Coolify
         if: needs.resolve-env.outputs.is_dry_run == 'false'
         env:
           APP_NAME: ${{ needs.resolve-env.outputs.vm_name }}
-          GCP_ZONE: ${{ env.ZONE }}
           BACKUP_BUCKET: ${{ needs.resolve-env.outputs.backup_bucket }}
           ENVIRONMENT: ${{ needs.resolve-env.outputs.target_environment }}
         run: |
@@ -453,12 +458,17 @@ jobs:
 
       - uses: google-github-actions/setup-gcloud@v2
 
+      - name: Resolve GCP Zone
+        run: |
+          ZONE=$(gcloud secrets versions access latest --secret=terraform_tfvars_${{ needs.resolve-env.outputs.target_environment }} --project="${{ env.PROJECT_ID }}" | grep -E '^\s*gcp_zone\s*=' | cut -d'"' -f2)
+          echo "ZONE=$ZONE" >> "$GITHUB_ENV"
+          echo "GCP_ZONE=$ZONE" >> "$GITHUB_ENV"
+
       - name: Refresh Coolify routes
         if: needs.resolve-env.outputs.is_dry_run == 'false'
         env:
           BASE_DOMAIN: ${{ env.BASE_DOMAIN }}
           PROJECT_ID: ${{ env.PROJECT_ID }}
-          ZONE: ${{ env.ZONE }}
           VM_NAME: ${{ needs.resolve-env.outputs.vm_name }}
           SKIP_GRAFANA: ${{ inputs.skip_grafana == true && 'true' || 'false' }}
           DNS_SUFFIX: ${{ needs.resolve-env.outputs.target_environment != 'production' && '-stg' || '' }}
@@ -494,6 +504,12 @@ jobs:
 
       - uses: google-github-actions/setup-gcloud@v2
 
+      - name: Resolve GCP Zone
+        run: |
+          ZONE=$(gcloud secrets versions access latest --secret=terraform_tfvars_${{ needs.resolve-env.outputs.target_environment }} --project="${{ env.PROJECT_ID }}" | grep -E '^\s*gcp_zone\s*=' | cut -d'"' -f2)
+          echo "ZONE=$ZONE" >> "$GITHUB_ENV"
+          echo "GCP_ZONE=$ZONE" >> "$GITHUB_ENV"
+
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -520,7 +536,7 @@ jobs:
         run: |
           gcloud compute ssh "${{ needs.resolve-env.outputs.vm_name }}" \
             --project="${{ env.PROJECT_ID }}" \
-            --zone="${{ env.ZONE }}" \
+            --zone="$ZONE" \
             --tunnel-through-iap \
             --quiet \
             --command='
@@ -547,7 +563,7 @@ jobs:
 
           gcloud compute ssh "${{ needs.resolve-env.outputs.vm_name }}" \
             --project="${{ env.PROJECT_ID }}" \
-            --zone="${{ env.ZONE }}" \
+            --zone="$ZONE" \
             --tunnel-through-iap \
             --quiet \
             --command='
@@ -584,7 +600,7 @@ jobs:
         run: |
           gcloud compute ssh "${{ needs.resolve-env.outputs.vm_name }}" \
             --project="${{ env.PROJECT_ID }}" \
-            --zone="${{ env.ZONE }}" \
+            --zone="$ZONE" \
             --tunnel-through-iap \
             --quiet \
             --command='
