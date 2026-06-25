@@ -737,6 +737,10 @@ jobs:
         run: |
           npm ci
           npm ci --prefix ..
+          # 15-admin-portal.spec.ts imports middleware/src/handlers/admin.ts at
+          # module load, so the middleware deps (e.g. @fastify/static) must be
+          # installed for the import to resolve.
+          npm ci --prefix ../middleware
           npx playwright install --with-deps chromium
 
       # Functional validation suite (gates the deploy). Environment-aware via
