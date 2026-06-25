@@ -331,6 +331,12 @@ jobs:
 
       - uses: google-github-actions/setup-gcloud@v2
 
+      - name: Resolve GCP Zone
+        run: |
+          ZONE=$(gcloud secrets versions access latest --secret=terraform_tfvars_${{ needs.resolve-env.outputs.target_environment }} --project="${{ env.PROJECT_ID }}" | grep -E '^\s*gcp_zone\s*=' | cut -d'"' -f2)
+          echo "ZONE=$ZONE" >> "$GITHUB_ENV"
+          echo "GCP_ZONE=$ZONE" >> "$GITHUB_ENV"
+
       - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: ${{ env.TF_VERSION }}
