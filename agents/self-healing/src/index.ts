@@ -43,6 +43,9 @@ const pool = new Pool({
 const db = new Database(pool);
 
 let difyApiKey = '';
+// Log the "no Dify key" degraded mode once, not on every error/loop iteration
+// (the per-iteration spam is what polluted CI logs — issue #22).
+let warnedNoDifyKey = false;
 
 const AnalysisSchema = z.object({
   root_cause: z.string(),
@@ -55,7 +58,9 @@ const AnalysisSchema = z.object({
  */
 async function fetchConfig(retries = 5, delay = 5000): Promise<void> {
   if (!HANDOFF_SHARED_SECRET) {
-    logger.warn('HANDOFF_SHARED_SECRET not set, cannot fetch remote config');
+    // Expected when running without the middleware config API (e.g. CI):
+    // the agent degrades to detection-only. Info, not warn (issue #22).
+    logger.info('HANDOFF_SHARED_SECRET not set; running without remote config (LLM analysis disabled)');
     return;
   }
 
@@ -122,7 +127,10 @@ async function queryLokiErrors(): Promise<LokiQueryResult[]> {
 
 async function analyzeWithErrorLLM(service: string, logSnippet: string): Promise<LLMAnalysis | null> {
   if (!difyApiKey) {
-    logger.warn('difyApiKey not set, skipping LLM analysis');
+    if (!warnedNoDifyKey) {
+      logger.info('Dify API key not configured; skipping LLM analysis (logged once)');
+      warnedNoDifyKey = true;
+    }
     return null;
   }
 
