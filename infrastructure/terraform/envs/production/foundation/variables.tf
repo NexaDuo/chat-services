@@ -27,6 +27,11 @@ variable "machine_type" {
   default = "e2-standard-4"
 }
 
+variable "staging_machine_type" {
+  type    = string
+  default = "e2-standard-2"
+}
+
 variable "disk_size" {
   type    = number
   default = 50

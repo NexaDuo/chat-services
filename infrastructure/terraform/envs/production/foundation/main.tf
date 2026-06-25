@@ -5,7 +5,7 @@ locals {
   vm_name   = "${var.app_name}${local.vm_suffix}"
 
   # Scaled down sizes for non-production environments to minimize costs
-  machine_type = local.is_prod ? var.machine_type : "e2-standard-2"
+  machine_type = local.is_prod ? var.machine_type : var.staging_machine_type
   disk_size    = local.is_prod ? var.disk_size : 30
 
   # Environment suffix for subdomains
