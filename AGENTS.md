@@ -19,7 +19,7 @@ WhatsApp ──▶ Evolution API ──▶ Chatwoot (Webhook) ──▶ Middlewa
 - **Coolify** — [coolify.nexaduo.com](https://coolify.nexaduo.com) (Orquestração e Deploy via Bash/Docker).
 - **Chatwoot** — [chat.nexaduo.com](https://chat.nexaduo.com). Inbox, CRM, ticketing, human handoff. Single source of truth.
 - **Dify** — [dify.nexaduo.com](https://dify.nexaduo.com). Agentic engine + RAG. Supports MCP bidirectionally.
-- **Evolution API v2.1+** — WhatsApp/Instagram bridge.
+- **Evolution API v2.1+** — **WhatsApp-only** bridge. (It does NOT support Instagram in any version — the `integration` enum is `WHATSAPP-BAILEYS`/`WHATSAPP-BUSINESS`/`EVOLUTION`. Instagram is handled by Chatwoot's **native** channel via Meta/Instagram-Login OAuth, independent of Evolution — see issue #31.)
 - **Middleware (Adapter)** — Node.js service that translates Chatwoot webhooks to Dify API calls and sends responses back to Chatwoot. Centralized config provider for internal agents.
 - **Self-Healing Agent** — Node.js agent that analyzes Loki logs via Dify to find root causes of errors.
 - **Observability** — Loki, Promtail, Prometheus, and Grafana (centralized logs and metrics).

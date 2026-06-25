@@ -1,7 +1,9 @@
 import { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import fs from "fs/promises";
+import fsSync from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
+import staticPlugin from "@fastify/static";
 import pg from "pg";
 import defaultAxios from "axios";
 import crypto from "crypto";
@@ -10,6 +12,8 @@ import { AppConfig } from "../config.js";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const htmlPath = path.resolve(__dirname, "../public/index.html");
+// Built React SPA (Vite output): dist/public/app/{index.html,assets/*}.
+const appDir = path.resolve(__dirname, "../public/app");
 
 export async function registerAdminRoutes(
   app: FastifyInstance,
@@ -62,6 +66,33 @@ export async function registerAdminRoutes(
 
     return true;
   };
+
+  // Serve the React admin SPA (Vite build) under /admin/app. Assets are public
+  // (the data they fetch is behind the cookie-authed API); the HTML entry is
+  // auth-gated like the legacy portal. existsSync-guarded so `npm run dev`
+  // (no build output) does not crash on a missing directory.
+  const assetsDir = path.join(appDir, "assets");
+  if (fsSync.existsSync(assetsDir)) {
+    await app.register(staticPlugin, {
+      root: assetsDir,
+      prefix: "/admin/app/assets/",
+      decorateReply: false,
+    });
+  }
+
+  const serveAdminApp = async (request: FastifyRequest, reply: FastifyReply) => {
+    if (!(await checkAuth(request, reply))) return;
+    const appHtml = path.join(appDir, "index.html");
+    try {
+      const html = await fs.readFile(appHtml, "utf-8");
+      return reply.code(200).type("text/html").send(html);
+    } catch (err) {
+      app.log.error({ err, appHtml }, "Failed to read admin-ui index.html (build missing?)");
+      return reply.code(500).send({ error: "internal_server_error" });
+    }
+  };
+  app.get("/admin/app", serveAdminApp);
+  app.get("/admin/app/", serveAdminApp);
 
   // GET /admin/login
   app.get("/admin/login", async (_request, reply) => {
@@ -251,6 +282,95 @@ export async function registerAdminRoutes(
     }
   });
 
+  // GET /admin/api/accounts — all tenant rows with their Dify routing config.
+  // Never returns the key itself, only `difyApiKeySet`. Powers the React
+  // "Roteamento de Dify por conta" screen (/admin/app).
+  app.get("/admin/api/accounts", async (request, reply) => {
+    if (!(await checkAuth(request, reply))) return;
+    try {
+      const result = await pool.query(
+        `SELECT slug, subdomain, name, chatwoot_account_id, status, dify_app_type,
+                chatwoot_url, dify_url, dify_api_key
+           FROM tenants
+          ORDER BY chatwoot_account_id, created_at DESC`
+      );
+
+      // Best-effort: resolve each tenant's Dify app (id + name) by matching its
+      // API key against the Dify workspace, so the UI can deep-link straight to
+      // the app ("space"). Degrades to just the workspace link when Dify is
+      // unreachable. The key is used only server-side for the match, never sent.
+      let appsByKey = new Map<string, { id: string; name: string }>();
+      try {
+        const difyApps = await fetchDifyApps(config, pool);
+        appsByKey = new Map(
+          difyApps
+            .filter((a: any) => a.apiKey)
+            .map((a: any) => [String(a.apiKey), { id: String(a.id), name: a.name }])
+        );
+      } catch (err) {
+        app.log.warn({ err }, "Could not resolve Dify apps for account links");
+      }
+
+      const accounts = result.rows.map(row => {
+        const matched = row.dify_api_key ? appsByKey.get(String(row.dify_api_key)) : undefined;
+        return {
+          slug: row.slug,
+          subdomain: row.subdomain,
+          name: row.name,
+          chatwootAccountId: row.chatwoot_account_id,
+          status: row.status,
+          difyAppType: row.dify_app_type,
+          chatwootUrl: row.chatwoot_url,
+          difyUrl: row.dify_url, // Dify workspace ("space") link
+          difyAppId: matched ? matched.id : null,
+          difyAppName: matched ? matched.name : null,
+          difyApiKeySet: !!(row.dify_api_key && row.dify_api_key !== ""),
+        };
+      });
+      return reply.code(200).send(accounts);
+    } catch (err) {
+      app.log.error({ err }, "Failed to fetch accounts for dify config");
+      return reply.code(500).send({ error: "internal_server_error" });
+    }
+  });
+
+  // PUT /admin/api/accounts/:slug/dify — update an existing account's Dify
+  // routing (app type + optional key). The key is preserved when the body omits
+  // it (COALESCE), mirroring the seeder so a blank field never wipes a set key.
+  // The response never echoes the key.
+  app.put("/admin/api/accounts/:slug/dify", async (request, reply) => {
+    if (!(await checkAuth(request, reply))) return;
+    const { slug } = request.params as { slug: string };
+    const { difyAppType, difyApiKey } = (request.body || {}) as {
+      difyAppType?: string;
+      difyApiKey?: string;
+    };
+    if (difyAppType !== "agent" && difyAppType !== "chatflow") {
+      return reply.code(400).send({ error: "invalid_dify_app_type" });
+    }
+    const key =
+      typeof difyApiKey === "string" && difyApiKey.trim() ? difyApiKey.trim() : null;
+    try {
+      const result = await pool.query(
+        `UPDATE tenants
+            SET dify_app_type = $1,
+                dify_api_key = COALESCE($2, dify_api_key),
+                updated_at = CURRENT_TIMESTAMP
+          WHERE slug = $3`,
+        [difyAppType, key, slug]
+      );
+      if (result.rowCount === 0) {
+        return reply.code(404).send({ error: "account_not_found" });
+      }
+      return reply
+        .code(200)
+        .send({ status: "success", slug, difyAppType, difyApiKeyUpdated: key !== null });
+    } catch (err) {
+      app.log.error({ err, slug }, "Failed to update dify config");
+      return reply.code(500).send({ error: "internal_server_error" });
+    }
+  });
+
   // POST /admin/api/tenants/:tenantSlug/provision
   app.post("/admin/api/tenants/:tenantSlug/provision", async (request, reply) => {
     if (!(await checkAuth(request, reply))) return;
@@ -331,50 +451,13 @@ export async function registerAdminRoutes(
         throw dbErr;
       }
 
-      // 6. Create Instagram instance in Evolution API
-      const instanceName = `${subdomain}-instagram`;
-      try {
-        if (config.evolution.apiKey) {
-          const evoBaseUrl = config.evolution.baseUrl;
-          await axios.post(
-            `${evoBaseUrl}/instance/create`,
-            {
-              instanceName,
-              token: "",
-              integration: "instagram",
-              qrcode: false
-            },
-            { headers: { apikey: config.evolution.apiKey } }
-          );
-
-          await axios.post(
-            `${evoBaseUrl}/chatwoot/set/${instanceName}`,
-            {
-              enabled: true,
-              accountId: String(accountId),
-              url: chatwootUrl,
-              token: config.chatwoot.apiToken,
-              importMessages: true,
-              syncContact: true
-            },
-            { headers: { apikey: config.evolution.apiKey } }
-          );
-        }
-      } catch (evoErr: any) {
-        app.log.error({ evoErr }, "Evolution API provisioning failed. Rolling back DB and Chatwoot.");
-        await pool.query("DELETE FROM tenants WHERE slug = $1", [subdomain]).catch(err => app.log.error({ err }));
-        await axios.delete(
-          `${chatwootUrl}/platform/api/v1/accounts/${accountId}`,
-          { headers: { api_access_token: platformToken } }
-        ).catch(err => app.log.error({ err }, "Failed to rollback Chatwoot account"));
-        throw evoErr;
-      }
-
+      // Instagram is handled by Chatwoot's native channel (Meta OAuth), not by
+      // Evolution (WhatsApp-only) — see GitHub issue #31. Provisioning now ends
+      // after creating the Chatwoot account + tenant mapping; no Evolution call.
       return reply.code(201).send({
         status: "success",
         accountId: String(accountId),
-        instanceName,
-        message: "Account created and instance initialized under selected tenant."
+        message: "Account created and mapped under selected tenant."
       });
     } catch (err: any) {
       app.log.error({ err }, "Failed to provision account");
@@ -412,56 +495,27 @@ export async function registerAdminRoutes(
         app.log.error({ err, tenantSlug }, "Failed to fetch Chatwoot accounts via Platform API");
       }
 
-      // 3. Fetch Evolution API instances
-      let evolutionInstances: any[] = [];
-      try {
-        if (config.evolution.apiKey) {
-          const evoBaseUrl = config.evolution.baseUrl;
-          const evoResp = await axios.get(
-            `${evoBaseUrl}/instance/fetchInstances`,
-            { headers: { apikey: config.evolution.apiKey } }
-          );
-          evolutionInstances = Array.isArray(evoResp.data) ? evoResp.data : (evoResp.data?.instances || []);
-        }
-      } catch (err) {
-        app.log.error({ err, tenantSlug }, "Failed to fetch Evolution API instances");
-      }
+      // Evolution instance discovery removed (issue #31): Evolution is
+      // WhatsApp-only and the Instagram instance flow never worked.
 
-      // 4. Fetch Dify Apps from database
+      // 3. Fetch Dify Apps from database
       const difyApps = await fetchDifyApps(config, pool);
 
-      // 5. Fetch currently mapped tenants in our middleware db
+      // 4. Fetch currently mapped tenants in our middleware db
       const mappedResult = await pool.query(
         "SELECT subdomain, chatwoot_account_id, dify_api_key FROM tenants WHERE chatwoot_url = $1",
         [chatwootUrl]
       );
       const mappedRows = mappedResult.rows;
       const mappedAccountIds = new Set(mappedRows.map(r => String(r.chatwoot_account_id)));
-      const mappedSubdomains = new Set(mappedRows.map(r => String(r.subdomain)));
       const mappedDifyKeys = new Set(mappedRows.map(r => String(r.dify_api_key)));
 
-      // 6. Cross-reference and format the list
+      // 5. Cross-reference and format the list
       const formattedCwAccounts = chatwootAccounts.map((acc: any) => ({
         id: String(acc.id),
         name: acc.name,
         mapped: mappedAccountIds.has(String(acc.id))
       }));
-
-      const formattedEvoInstances = evolutionInstances.map((inst: any) => {
-        const name = inst.name || inst.instanceName;
-        let isMapped = false;
-        for (const sub of mappedSubdomains) {
-          if (name === `${sub}-instagram`) {
-            isMapped = true;
-            break;
-          }
-        }
-        return {
-          instanceName: name,
-          status: inst.status || inst.connectionState || "disconnected",
-          mapped: isMapped
-        };
-      });
 
       const formattedDifyApps = difyApps.map((app: any) => ({
         id: app.id,
@@ -473,7 +527,6 @@ export async function registerAdminRoutes(
 
       return reply.code(200).send({
         chatwootAccounts: formattedCwAccounts,
-        evolutionInstances: formattedEvoInstances,
         difyApps: formattedDifyApps
       });
     } catch (err) {
@@ -525,61 +578,12 @@ export async function registerAdminRoutes(
         [subdomain, subdomain, name, chatwootAccountId, chatwootUrl, difyUrl, difyApiKey, difyAppType]
       );
 
-      // 4. Connect/Configure Instagram instance in Evolution API
-      const instanceName = `${subdomain}-instagram`;
-      try {
-        if (config.evolution.apiKey) {
-          const evoBaseUrl = config.evolution.baseUrl;
-          
-          let exists = false;
-          try {
-            const listResp = await axios.get(
-              `${evoBaseUrl}/instance/fetchInstances`,
-              { headers: { apikey: config.evolution.apiKey } }
-            );
-            const instances = Array.isArray(listResp.data) ? listResp.data : (listResp.data?.instances || []);
-            exists = instances.some((inst: any) => (inst.name || inst.instanceName) === instanceName);
-          } catch (listErr) {
-            app.log.warn({ listErr }, "Failed to fetch existing instances to check for duplicates");
-          }
-
-          if (!exists) {
-            await axios.post(
-              `${evoBaseUrl}/instance/create`,
-              {
-                instanceName,
-                token: "",
-                integration: "instagram",
-                qrcode: false
-              },
-              { headers: { apikey: config.evolution.apiKey } }
-            );
-          }
-
-          await axios.post(
-            `${evoBaseUrl}/chatwoot/set/${instanceName}`,
-            {
-              enabled: true,
-              accountId: chatwootAccountId,
-              url: chatwootUrl,
-              token: config.chatwoot.apiToken,
-              importMessages: true,
-              syncContact: true
-            },
-            { headers: { apikey: config.evolution.apiKey } }
-          );
-        }
-      } catch (evoErr: any) {
-        app.log.error({ evoErr }, "Evolution API import sync failed. Rolling back DB mapping.");
-        await pool.query("DELETE FROM tenants WHERE subdomain = $1", [subdomain]).catch(err => app.log.error({ err }));
-        throw evoErr;
-      }
-
+      // No Evolution Instagram step (issue #31): Evolution is WhatsApp-only and
+      // Instagram uses Chatwoot's native channel. Import ends after the mapping.
       return reply.code(201).send({
         status: "success",
         accountId: chatwootAccountId,
-        instanceName,
-        message: "Account imported and synchronized successfully."
+        message: "Account imported and mapped successfully."
       });
     } catch (err: any) {
       app.log.error({ err }, "Failed to import account");
@@ -589,27 +593,8 @@ export async function registerAdminRoutes(
     }
   });
 
-  // GET /admin/api/instances/:name/status
-  app.get("/admin/api/instances/:name/status", async (request, reply) => {
-    if (!(await checkAuth(request, reply))) return;
-    const { name } = request.params as { name: string };
-    try {
-      if (!config.evolution.apiKey) {
-        return reply.code(200).send({ instanceName: name, connectionState: "offline" });
-      }
-      const response = await axios.get(
-        `${config.evolution.baseUrl}/instance/connectionState/${name}`,
-        { headers: { apikey: config.evolution.apiKey } }
-      );
-      return reply.code(200).send({
-        instanceName: name,
-        connectionState: response.data.instance?.state || "unknown"
-      });
-    } catch (err: any) {
-      app.log.error({ err, name }, "Failed to fetch instance connection state");
-      return reply.code(200).send({ instanceName: name, connectionState: "disconnected" });
-    }
-  });
+  // (Removed GET /admin/api/instances/:name/status — Evolution Instagram
+  // instance status; dead per issue #31.)
 }
 
 async function fetchDifyApps(config: AppConfig, pool: pg.Pool): Promise<{ id: string; name: string; mode: string; apiKey: string | null }[]> {

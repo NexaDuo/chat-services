@@ -15,8 +15,9 @@ RUN --mount=type=cache,target=/root/.npm \
 FROM node:22-alpine AS build
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
-COPY package.json tsconfig.json ./
+COPY package.json tsconfig.json vite.config.ts ./
 COPY src ./src
+COPY admin-ui ./admin-ui
 RUN npm run build
 
 # ---------- Stage 3: prod deps only -----------------------------------------
