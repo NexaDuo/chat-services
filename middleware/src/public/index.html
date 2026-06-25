@@ -694,6 +694,9 @@
         <div>
           <h2 id="active-tenant-title">Ambiente</h2>
         </div>
+        <div>
+          <a class="btn-action-connect" href="/admin/app">⚙️ Configuração de Dify</a>
+        </div>
       </div>
 
       <div class="tabs-container">
@@ -711,8 +714,8 @@
             <div class="channel-card-static">
               <div class="channel-logo">I</div>
               <div>
-                <strong style="display:block;">Instagram Direct Messages</strong>
-                <span style="font-size:0.8rem; color:var(--text-muted);">Integração via Evolution API</span>
+                <strong style="display:block;">Provisionamento de Conta</strong>
+                <span style="font-size:0.8rem; color:var(--text-muted);">Cria a conta no Chatwoot + mapeamento. Instagram é conectado via canal nativo do Chatwoot.</span>
               </div>
             </div>
 
@@ -773,7 +776,6 @@
                     <th>Nome do Cliente</th>
                     <th>Subdomínio</th>
                     <th>Chatwoot ID</th>
-                    <th>Status Instagram</th>
                     <th>Ações</th>
                   </tr>
                 </thead>
@@ -829,55 +831,10 @@
             </div>
           </div>
 
-          <!-- Evolution Instances Panel -->
-          <div class="panel">
-            <h3 class="panel-title">Evolution API</h3>
-            <p style="color:var(--text-muted); font-size:0.85rem; margin-bottom:1rem;">Instâncias WhatsApp/Instagram.</p>
-            <div class="table-container">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Instância</th>
-                    <th>Conexão</th>
-                    <th>Status</th>
-                  </tr>
-                </thead>
-                <tbody id="sync-evo-table-body">
-                  <!-- Dyn -->
-                </tbody>
-              </table>
-            </div>
-          </div>
         </div>
       </div>
     </section>
   </main>
-
-  <!-- Modal -->
-  <div id="connect-modal" class="modal-backdrop">
-    <div class="modal">
-      <button class="modal-close" onclick="closeModal()">&times;</button>
-      <h3 class="modal-title">Conectar Instagram Direct</h3>
-      <div class="modal-content">
-        <div class="instruction-step">
-          <strong>Passo 1: Pré-requisitos do Facebook</strong>
-          <p>Garanta que a conta profissional do Instagram esteja vinculada à Página do Facebook que você gerencia.</p>
-        </div>
-        <div class="instruction-step">
-          <strong>Passo 2: Acessar a Evolution API</strong>
-          <p>Abra o painel do gerenciador da Evolution API em:</p>
-          <a id="link-evo-manager" href="#" target="_blank" style="color:var(--accent-color); font-weight:600; text-decoration:none;">Evolution Dashboard Manager</a>
-        </div>
-        <div class="instruction-step">
-          <strong>Passo 3: Fazer Login</strong>
-          <p>Localize a instância <strong id="modal-instance-name">duda-instagram</strong> no gerenciador e clique em conectar para autenticar com as credenciais da Meta.</p>
-        </div>
-      </div>
-      <button class="btn-submit" onclick="checkConnectionStatusForModal()">
-        Checar Status da Conexão
-      </button>
-    </div>
-  </div>
 
   <!-- Import Modal -->
   <div id="import-modal" class="modal-backdrop">
@@ -1183,65 +1140,15 @@
             <td><code>${account.subdomain}</code></td>
             <td>${account.chatwootAccountId}</td>
             <td>
-              <span id="badge-${account.subdomain}" class="badge badge-error">Verificando...</span>
-            </td>
-            <td>
-              <button class="btn-action-connect" onclick="openConnectModal('${account.subdomain}')">
-                Conectar
-              </button>
+              <a class="btn-action-connect" href="/admin/app">Config. Dify</a>
             </td>
           `;
           tbody.appendChild(tr);
-          
-          // Poll connection status immediately
-          updateInstagramStatus(account.subdomain);
         });
       } catch (err) {
         showToast(err.message, 'error');
-        tbody.innerHTML = `<tr><td colspan="5" style="text-align:center; color:var(--error);">Erro: ${err.message}</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="4" style="text-align:center; color:var(--error);">Erro: ${err.message}</td></tr>`;
       }
-    }
-
-    async function updateInstagramStatus(subdomain) {
-      const badge = document.getElementById(`badge-${subdomain}`);
-      if (!badge) return;
-
-      const instanceName = `${subdomain}-instagram`;
-      try {
-        const response = await fetch(`/admin/api/instances/${instanceName}/status`);
-        const statusData = await response.json();
-        
-        if (statusData.connectionState === 'open' || statusData.connectionState === 'connected') {
-          badge.className = 'badge badge-success';
-          badge.textContent = 'Conectado';
-        } else {
-          badge.className = 'badge badge-error';
-          badge.textContent = 'Desconectado';
-        }
-      } catch {
-        badge.className = 'badge badge-error';
-        badge.textContent = 'Erro';
-      }
-    }
-
-    let activeModalSubdomain = null;
-    function openConnectModal(subdomain) {
-      activeModalSubdomain = subdomain;
-      document.getElementById('modal-instance-name').textContent = `${subdomain}-instagram`;
-      document.getElementById('link-evo-manager').href = `/evolution/manager`; // Reuses relative path on the proxy
-      document.getElementById('connect-modal').classList.add('active');
-    }
-
-    function closeModal() {
-      document.getElementById('connect-modal').classList.remove('active');
-      activeModalSubdomain = null;
-    }
-
-    async function checkConnectionStatusForModal() {
-      if (!activeModalSubdomain) return;
-      await updateInstagramStatus(activeModalSubdomain);
-      showToast('Status da conexão atualizado com sucesso.');
-      closeModal();
     }
 
     async function handleProvision(event) {
@@ -1305,12 +1212,10 @@
     async function loadDiscoveryData() {
       const cwTbody = document.getElementById('sync-cw-table-body');
       const difyTbody = document.getElementById('sync-dify-table-body');
-      const evoTbody = document.getElementById('sync-evo-table-body');
-      
+
       cwTbody.innerHTML = '<tr><td colspan="3" style="text-align:center; color:var(--text-muted);">Carregando contas...</td></tr>';
       difyTbody.innerHTML = '<tr><td colspan="3" style="text-align:center; color:var(--text-muted);">Carregando projetos...</td></tr>';
-      evoTbody.innerHTML = '<tr><td colspan="3" style="text-align:center; color:var(--text-muted);">Carregando instâncias...</td></tr>';
-      
+
       try {
         const response = await fetch(`/admin/api/tenants/${activeTenant}/discovery`);
         if (!response.ok) throw new Error('Falha ao carregar dados de sincronização');
@@ -1359,34 +1264,11 @@
           });
         }
         
-        evoTbody.innerHTML = '';
-        if (discoveryData.evolutionInstances.length === 0) {
-          evoTbody.innerHTML = '<tr><td colspan="3" style="text-align:center; color:var(--text-muted);">Nenhuma instância encontrada.</td></tr>';
-        } else {
-          discoveryData.evolutionInstances.forEach(inst => {
-            const tr = document.createElement('tr');
-            const statusBadge = inst.mapped
-              ? '<span class="badge badge-success">Mapeada</span>'
-              : '<span class="badge badge-error">Órfã</span>';
-            const connBadge = inst.status === 'open' || inst.status === 'connected'
-              ? '<span class="badge badge-success">Conectada</span>'
-              : '<span class="badge badge-error">Desconectada</span>';
-            
-            tr.innerHTML = `
-              <td><strong>${inst.instanceName}</strong></td>
-              <td>${connBadge}</td>
-              <td>${statusBadge}</td>
-            `;
-            evoTbody.appendChild(tr);
-          });
-        }
-
         populateProvisionDifySelect();
       } catch (err) {
         showToast(err.message, 'error');
         cwTbody.innerHTML = `<tr><td colspan="3" style="text-align:center; color:var(--error);">Erro: ${err.message}</td></tr>`;
         difyTbody.innerHTML = `<tr><td colspan="3" style="text-align:center; color:var(--error);">Erro: ${err.message}</td></tr>`;
-        evoTbody.innerHTML = `<tr><td colspan="3" style="text-align:center; color:var(--error);">Erro: ${err.message}</td></tr>`;
       }
     }
 

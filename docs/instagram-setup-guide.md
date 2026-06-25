@@ -1,58 +1,54 @@
-# Instagram Integration Guide for NexaDuo Tenant
+# Conectando um Instagram (canal nativo do Chatwoot)
 
-This guide describes how to integrate a new Instagram account into the **NexaDuo** tenant (Account ID: 1).
+> **Importante:** o Instagram é conectado pelo **canal nativo do Chatwoot**
+> (Meta App + Instagram Login / OAuth), **não** pela Evolution API. A Evolution é
+> **WhatsApp-only** e não suporta Instagram em nenhuma versão (issue #31). O antigo
+> `scripts/provision-instagram.sh` e o fluxo "Conectar Instagram Direct" do admin
+> portal foram removidos por isso.
 
-## Prerequisites
+## Pré-requisitos (lado Meta — uma vez por plataforma)
 
-1.  **Instagram Professional Account**: The Instagram account must be a **Business** or **Creator** account.
-2.  **Facebook Page**: The Instagram account must be linked to a Facebook Page.
-3.  **Facebook Developer Account**: You need access to the Facebook Developer Portal.
+1. Conta Instagram **Business/Creator** vinculada a uma Página do Facebook.
+2. App no [developers.facebook.com](https://developers.facebook.com) com o produto
+   **Instagram → API setup with Instagram login**.
+3. Envs do Chatwoot já provisionados (via terraform `tenant`): `INSTAGRAM_APP_ID`,
+   `INSTAGRAM_APP_SECRET`, `INSTAGRAM_VERIFY_TOKEN`. O deploy reconcilia esses
+   valores nos `installation_configs` e valida o handshake do webhook
+   (ver lição "Chatwoot installation_configs mask env").
+4. No painel da Meta, em **Business login settings**, adicione a **OAuth redirect
+   URI** exatamente: `https://<FRONTEND_URL>/instagram/callback`
+   (ex.: `https://chat.nexaduo.com/instagram/callback`). O Chatwoot monta esse
+   `redirect_uri` a partir de `FRONTEND_URL` (`base_url` em `instagram_concern.rb`).
+   Scopes: `instagram_business_basic`, `instagram_business_manage_messages`.
+5. Webhook do App apontando para `https://<FRONTEND_URL>/webhooks/instagram` com o
+   mesmo `INSTAGRAM_VERIFY_TOKEN`, inscrito no campo `messages`.
 
-## Step 1: Facebook Developer Portal Setup
+> Em modo *Development* do App, só contas adicionadas como **test users/roles**
+> conseguem mandar DM. Para produção, é preciso **App Review** da Meta.
 
-1.  Go to [developers.facebook.com](https://developers.facebook.com/).
-2.  Create a new App (type: "Other" -> "Business").
-3.  Add the **Instagram Graph API** product to your app.
-4.  Configure the **Webhook** to point to your Evolution API URL (if not handled automatically by Evolution).
-    *   *Note: Evolution API v2 usually manages the webhook subscription automatically when you connect the instance.*
+## Conectar a conta (por tenant)
 
-## Step 2: Provision the Instance in NexaDuo Stack
+1. Logue no Chatwoot do tenant (ex.: `https://chat.nexaduo.com`) **na conta certa**
+   (cada tenant é um *account* separado).
+2. **Settings → Inboxes → Add Inbox → Instagram** → login OAuth com a conta
+   profissional do Instagram.
+3. O Chatwoot cria o `Channel::Instagram` + Inbox e assina o webhook
+   automaticamente. DMs novos passam a chegar como conversas.
 
-Run the following command on the production server (or via CI/CD if configured):
+## Habilitar a IA (Dify) para o inbox
 
-```bash
-./scripts/provision-instagram.sh nexaduo-instagram 1
-```
+O middleware roteia por `chatwoot_account_id` → app do Dify via tabela `tenants`.
+Para a conta responder via IA:
 
-This will:
-*   Create a new instance named `nexaduo-instagram` in the Evolution API.
-*   Configure the Chatwoot integration for Account ID `1` (NexaDuo).
+- **Reproduzível (canônico):** adicione o tenant em `tenants.yaml`
+  (`infra.dify_app_type` + `infra.dify_api_key: "gcp-secret:<nome>"`) e rode o
+  deploy/seed.
+- **Runtime (rápido):** use a tela **Configuração de Dify** do admin portal
+  (`/admin/app`) para setar `dify_app_type` + a API key da conta. ⚠️ Isso grava só
+  no banco; para reprodutibilidade, replique em `tenants.yaml` + Secret Manager.
 
-## Step 3: Connect the Account (via Browser)
+## Verificar
 
-1.  Open the Evolution API Dashboard (if available) or use the API to get the connection URL.
-2.  Alternatively, monitor the logs to get the Pairing Code or QR Code:
-    ```bash
-    docker compose logs -f evolution-api
-    ```
-3.  Follow the instructions in the logs to authenticate.
-    *   For Instagram, you might need to use the Pairing Code method or provide the Instagram username/password depending on the Evolution API version settings.
-
-## Step 4: Verify in Chatwoot
-
-1.  Login to [chat.nexaduo.com](https://chat.nexaduo.com).
-2.  Go to **Settings** -> **Inboxes**.
-3.  You should see a new **API Channel** created by the Evolution API.
-4.  Send a Direct Message to your Instagram account and verify it appears in Chatwoot.
-
-## Step 5: Verify AI Agent (Dify)
-
-1.  The Middleware is already configured to monitor Account ID `1`.
-2.  When a message arrives in the new Instagram inbox in Chatwoot, the Middleware will automatically forward it to Dify.
-3.  Check the Middleware logs to ensure processing:
-    ```bash
-    docker compose logs -f middleware
-    ```
-
----
-**Guide created on:** 2026-05-19
+- Mande um DM novo de outro perfil → a conversa aparece no inbox do tenant.
+- Logs do middleware devem mostrar `account_id=<id> status=ok` (não
+  `no_tenant_mapping`) e a resposta da IA cai na conversa.

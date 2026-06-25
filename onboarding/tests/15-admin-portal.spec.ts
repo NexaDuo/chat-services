@@ -119,6 +119,22 @@ const mockDb = {
       };
     }
 
+    // GET /admin/api/accounts (Dify routing config screen)
+    if (text.includes("FROM tenants") && text.includes("ORDER BY chatwoot_account_id")) {
+      return {
+        rows: [
+          { slug: 'duda', subdomain: 'duda', name: 'Miau Duda', chatwoot_account_id: '12', status: 'active', dify_app_type: 'agent', chatwoot_url: 'https://chat.nexaduo.com', dify_url: 'https://dify.nexaduo.com', dify_api_key: 'app-duda-key' },
+          { slug: 'nexaduo', subdomain: 'nexaduo', name: 'NexaDuo Main', chatwoot_account_id: '1', status: 'active', dify_app_type: 'chatflow', chatwoot_url: 'https://chat.nexaduo.com', dify_url: 'https://dify.nexaduo.com', dify_api_key: null }
+        ]
+      };
+    }
+
+    // PUT /admin/api/accounts/:slug/dify
+    if (text.includes("UPDATE tenants")) {
+      const slug = values ? values[values.length - 1] : '';
+      return { rowCount: slug === 'ghost' ? 0 : 1, rows: [] };
+    }
+
     // Mapped tenants query for discovery
     if (text.includes("FROM tenants WHERE chatwoot_url = $1")) {
       return {
@@ -405,11 +421,12 @@ test.describe('Admin Portal API Endpoints', () => {
 
     expect(response.status()).toBe(201);
     const body = await response.json();
+    // Issue #31: provision no longer creates an Evolution Instagram instance,
+    // so the response carries no instanceName.
     expect(body).toEqual({
       status: 'success',
       accountId: '456',
-      instanceName: 'client-slug-instagram',
-      message: 'Account created and instance initialized under selected tenant.'
+      message: 'Account created and mapped under selected tenant.'
     });
 
     // Verify Chatwoot Platform API calls
@@ -437,31 +454,9 @@ test.describe('Admin Portal API Endpoints', () => {
       'agent'
     ]);
 
-    // Verify Evolution API calls
+    // Issue #31: provision must NOT call the Evolution API anymore.
     const createInstancePost = mockAxiosRequests.find(r => r.url.includes('/instance/create'));
-    expect(createInstancePost).toBeDefined();
-    expect(createInstancePost.data).toEqual({
-      instanceName: 'client-slug-instagram',
-      token: '',
-      integration: 'instagram',
-      qrcode: false
-    });
-  });
-
-  test('GET /admin/api/instances/:name/status - should return connectionState', async ({ request }) => {
-    // This status test checks local mocked state and runs against the test server
-    const token = await getSessionCookie(request);
-    const authHeader = { cookie: `admin_session=${token}` };
-
-    const response = await request.get(`${testMiddlewareUrl}/admin/api/instances/client-slug-instagram/status`, {
-      headers: authHeader
-    });
-    expect(response.status()).toBe(200);
-    const body = await response.json();
-    expect(body).toEqual({
-      instanceName: 'client-slug-instagram',
-      connectionState: 'open'
-    });
+    expect(createInstancePost).toBeUndefined();
   });
 
   test('GET /admin/api/tenants/:tenantSlug/discovery - should return unmapped and mapped entities', async ({ request }) => {
@@ -473,19 +468,15 @@ test.describe('Admin Portal API Endpoints', () => {
     expect(response.status()).toBe(200);
     const body = await response.json();
     expect(body).toHaveProperty('chatwootAccounts');
-    expect(body).toHaveProperty('evolutionInstances');
     expect(body).toHaveProperty('difyApps');
-    
+    // Issue #31: discovery no longer returns Evolution instances.
+    expect(body).not.toHaveProperty('evolutionInstances');
+
     // Check Chatwoot accounts mapping
     const cw = body.chatwootAccounts;
     expect(cw).toContainEqual({ id: '1', name: 'Admin Principal', mapped: false });
     expect(cw).toContainEqual({ id: '12', name: 'Miau Duda', mapped: true });
     expect(cw).toContainEqual({ id: '99', name: 'Some Unmapped Account', mapped: false });
-
-    // Check Evolution instances mapping
-    const evo = body.evolutionInstances;
-    expect(evo).toContainEqual({ instanceName: 'duda-instagram', status: 'connected', mapped: true });
-    expect(evo).toContainEqual({ instanceName: 'orphan-instagram', status: 'disconnected', mapped: false });
 
     // Check Dify apps mapping
     const dify = body.difyApps;
@@ -515,11 +506,11 @@ test.describe('Admin Portal API Endpoints', () => {
 
     expect(response.status()).toBe(201);
     const body = await response.json();
+    // Issue #31: import no longer creates an Evolution Instagram instance.
     expect(body).toEqual({
       status: 'success',
       accountId: '99',
-      instanceName: 'unmapped-slug-instagram',
-      message: 'Account imported and synchronized successfully.'
+      message: 'Account imported and mapped successfully.'
     });
 
     // Verify DB insert query
@@ -536,15 +527,53 @@ test.describe('Admin Portal API Endpoints', () => {
       'chatflow'
     ]);
 
-    // Verify Evolution API calls for setup
+    // Issue #31: import must NOT call the Evolution API anymore.
     const createInstancePost = mockAxiosRequests.find(r => r.url.includes('/instance/create') && r.method === 'POST');
-    expect(createInstancePost).toBeDefined();
-    expect(createInstancePost.data).toEqual({
-      instanceName: 'unmapped-slug-instagram',
-      token: '',
-      integration: 'instagram',
-      qrcode: false
+    expect(createInstancePost).toBeUndefined();
+  });
+
+  test('GET /admin/api/accounts - lists accounts with difyApiKeySet, never the key', async ({ request }) => {
+    const token = await getSessionCookie(request);
+    const response = await request.get(`${targetMiddlewareUrl}/admin/api/accounts`, {
+      headers: { cookie: `admin_session=${token}` }
     });
+    expect(response.status()).toBe(200);
+    const text = await response.text();
+    // The raw key/column must never leak to the client.
+    expect(text).not.toContain('dify_api_key');
+    const body = JSON.parse(text);
+    expect(Array.isArray(body)).toBe(true);
+    if (!liveMiddlewareUrl) {
+      expect(body).toContainEqual(expect.objectContaining({ slug: 'duda', difyAppType: 'agent', difyApiKeySet: true }));
+    }
+    for (const acc of body) {
+      expect(acc).toHaveProperty('difyApiKeySet');
+      expect(typeof acc.difyApiKeySet).toBe('boolean');
+      expect(acc).not.toHaveProperty('difyApiKey');
+    }
+  });
+
+  test('PUT /admin/api/accounts/:slug/dify - rejects an invalid app type', async ({ request }) => {
+    const token = await getSessionCookie(request);
+    const response = await request.put(`${targetMiddlewareUrl}/admin/api/accounts/duda/dify`, {
+      headers: { cookie: `admin_session=${token}` },
+      data: { difyAppType: 'bogus' }
+    });
+    expect(response.status()).toBe(400);
+    expect((await response.json()).error).toBe('invalid_dify_app_type');
+  });
+
+  test('PUT /admin/api/accounts/:slug/dify - updates and never echoes the key', async ({ request }) => {
+    if (liveMiddlewareUrl) test.skip(true, 'mutating test runs only against the in-process mock server');
+    const token = await getSessionCookie(request);
+    const response = await request.put(`${testMiddlewareUrl}/admin/api/accounts/duda/dify`, {
+      headers: { cookie: `admin_session=${token}` },
+      data: { difyAppType: 'agent', difyApiKey: 'app-supersecret-xyz' }
+    });
+    expect(response.status()).toBe(200);
+    const text = await response.text();
+    expect(text).not.toContain('app-supersecret-xyz');
+    expect(JSON.parse(text)).toMatchObject({ status: 'success', slug: 'duda', difyAppType: 'agent', difyApiKeyUpdated: true });
   });
 });
 
