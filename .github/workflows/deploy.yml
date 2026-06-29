@@ -232,10 +232,79 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
 
   # -----------------------------------------------------------------------
+  # start-vm: power on the staging VM before any VM-touching job.
+  # Cost-saving: staging is STOPPED between runs (see stop-vm at the end of
+  # this file); production stays always-on, so this job is a no-op for prod.
+  # Use scripts/stack-power.sh for manual start/stop of any environment.
+  # -----------------------------------------------------------------------
+  start-vm:
+    needs: [resolve-env, foundation]
+    if: |
+      always() &&
+      needs.resolve-env.outputs.target_environment == 'staging' &&
+      needs.resolve-env.outputs.is_dry_run == 'false'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOYER_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Resolve GCP Zone
+        run: |
+          ZONE=$(gcloud secrets versions access latest --secret=terraform_tfvars_${{ needs.resolve-env.outputs.target_environment }} --project="${{ env.PROJECT_ID }}" | grep -E '^\s*gcp_zone\s*=' | cut -d'"' -f2)
+          echo "ZONE=${ZONE:-${{ env.ZONE }}}" >> "$GITHUB_ENV"
+
+      - name: Start staging VM
+        env:
+          VM: ${{ needs.resolve-env.outputs.vm_name }}
+        run: |
+          set -euo pipefail
+          if ! gcloud compute instances describe "$VM" --zone="$ZONE" --project="${{ env.PROJECT_ID }}" >/dev/null 2>&1; then
+            echo "::notice::VM $VM does not exist yet (greenfield); foundation creates it already RUNNING. Nothing to start."
+            exit 0
+          fi
+          STATUS=$(gcloud compute instances describe "$VM" --zone="$ZONE" --project="${{ env.PROJECT_ID }}" --format='value(status)')
+          echo "Current status of $VM: $STATUS"
+          if [ "$STATUS" != "RUNNING" ]; then
+            gcloud compute instances start "$VM" --zone="$ZONE" --project="${{ env.PROJECT_ID }}"
+          fi
+          ssh() { gcloud compute ssh "$VM" --zone="$ZONE" --project="${{ env.PROJECT_ID }}" --tunnel-through-iap --command="$1" 2>/dev/null; }
+
+          # 1) Wait until the Docker daemon is up (not just SSH): on a cold boot SSH
+          # answers well before dockerd finishes starting, and bootstrap talks to
+          # Docker immediately — racing it yields "Cannot connect to the Docker daemon".
+          docker_ok=
+          for i in $(seq 1 36); do
+            if ssh "sudo docker ps >/dev/null 2>&1 && echo dockerready" | grep -q dockerready; then
+              echo "VM Docker daemon ready."; docker_ok=1; break
+            fi
+            echo "Waiting for VM Docker daemon... ($i/36)"; sleep 10
+          done
+          [ -n "$docker_ok" ] || { echo "::error::Docker daemon not ready within timeout."; exit 1; }
+
+          # 2) Wait for the cold-boot memory spike to subside. On boot Docker
+          # restarts every container at once; on the 8 GB staging VM that transient
+          # spike OOM-kills the next memory-hungry step (Coolify Tinker, exit 137).
+          # Steady state fits in 8 GB (warm deploys succeed), so just let it settle.
+          for i in $(seq 1 24); do
+            AVAIL=$(ssh "awk '/MemAvailable/ {print int(\$2/1024)}' /proc/meminfo")
+            echo "MemAvailable=${AVAIL:-?}MiB ($i/24)"
+            if [ -n "$AVAIL" ] && [ "$AVAIL" -ge 1200 ]; then
+              echo "Memory settled (${AVAIL}MiB available)."; exit 0
+            fi
+            sleep 10
+          done
+          echo "::warning::Memory did not settle above 1200MiB; proceeding anyway."
+
+  # -----------------------------------------------------------------------
   # bootstrap: install Coolify on the VM (one-time per VM)
   # -----------------------------------------------------------------------
   bootstrap:
-    needs: [resolve-env, foundation]
+    needs: [resolve-env, foundation, start-vm]
     if: |
       always() &&
       (needs.resolve-env.outputs.target_segment == 'bootstrap' ||
@@ -307,7 +376,7 @@ jobs:
   # tenant: terraform apply tenant (Coolify services + envs)
   # -----------------------------------------------------------------------
   tenant:
-    needs: [resolve-env, build-images, bootstrap]
+    needs: [resolve-env, build-images, bootstrap, start-vm]
     if: |
       always() &&
       (needs.resolve-env.outputs.target_segment == 'tenant' ||
@@ -447,7 +516,7 @@ jobs:
   # routes: refresh the Coolify proxy (Traefik) - fast, no terraform
   # -----------------------------------------------------------------------
   routes:
-    needs: [resolve-env, tenant]
+    needs: [resolve-env, tenant, start-vm]
     if: |
       always() &&
       (needs.resolve-env.outputs.target_segment == 'routes' ||
@@ -490,7 +559,7 @@ jobs:
   # sync: synchronize tenants from tenants.yaml to Postgres
   # -----------------------------------------------------------------------
   sync:
-    needs: [resolve-env, tenant, routes]
+    needs: [resolve-env, tenant, routes, start-vm]
     if: |
       always() &&
       (needs.resolve-env.outputs.target_segment == 'sync' ||
@@ -650,7 +719,7 @@ jobs:
   # onboarding: create initial admins (idempotent; safe on re-runs)
   # -----------------------------------------------------------------------
   onboarding:
-    needs: [resolve-env, tenant, sync]
+    needs: [resolve-env, tenant, sync, start-vm]
     if: |
       always() &&
       (needs.resolve-env.outputs.target_segment == 'onboarding' ||
@@ -686,7 +755,7 @@ jobs:
   # validate: public smoke probes using a dynamic GHA matrix
   # -----------------------------------------------------------------------
   validate:
-    needs: [resolve-env, tenant, onboarding]
+    needs: [resolve-env, tenant, onboarding, start-vm]
     if: |
       always() &&
       (needs.resolve-env.outputs.target_segment == 'validate' ||
@@ -808,3 +877,42 @@ jobs:
           name: playwright-report-${{ matrix.tenant.slug }}-${{ github.run_id }}
           path: onboarding/playwright-report
           retention-days: 14
+
+  # -----------------------------------------------------------------------
+  # stop-vm: power off the staging VM after all tests/validations finish.
+  # Cost-saving counterpart to start-vm: staging only bills vCPU/RAM while a
+  # deploy/validation run is in flight (disks persist). Runs always() so the
+  # VM is shut down even if a prior job failed. No-op for production.
+  # -----------------------------------------------------------------------
+  stop-vm:
+    needs: [resolve-env, start-vm, foundation, bootstrap, tenant, routes, sync, onboarding, validate]
+    if: |
+      always() &&
+      needs.resolve-env.outputs.target_environment == 'staging' &&
+      needs.resolve-env.outputs.is_dry_run == 'false'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOYER_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Resolve GCP Zone
+        run: |
+          ZONE=$(gcloud secrets versions access latest --secret=terraform_tfvars_${{ needs.resolve-env.outputs.target_environment }} --project="${{ env.PROJECT_ID }}" | grep -E '^\s*gcp_zone\s*=' | cut -d'"' -f2)
+          echo "ZONE=${ZONE:-${{ env.ZONE }}}" >> "$GITHUB_ENV"
+
+      - name: Stop staging VM
+        env:
+          VM: ${{ needs.resolve-env.outputs.vm_name }}
+        run: |
+          set -euo pipefail
+          if ! gcloud compute instances describe "$VM" --zone="$ZONE" --project="${{ env.PROJECT_ID }}" >/dev/null 2>&1; then
+            echo "::notice::VM $VM not found; nothing to stop."
+            exit 0
+          fi
+          gcloud compute instances stop "$VM" --zone="$ZONE" --project="${{ env.PROJECT_ID }}" \
+            || echo "::warning::Failed to stop $VM; stop it manually with scripts/stack-power.sh staging stop."
