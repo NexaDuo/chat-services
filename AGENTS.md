@@ -123,11 +123,37 @@ Whenever you need to run routine verification, ask the agent to **"run a routine
 ## Operational Non-Negotiables
 
 - **RAM:** **16 GB minimum** recommended for the shared stack.
-- **Backup:** daily `pg_dump` (all DBs) to GCS via `scripts/vm-backup.sh` (root
-  cron 03:00, installed by `bootstrap-coolify.sh` 3e); `/dify-apps` backed up via
-  Git. Postgres is on a **dedicated disk** (`attached_disk` inline on the VM).
+- **Backup:** daily `pg_dump` (all DBs, `--clean --if-exists`) to GCS via
+  `scripts/vm-backup.sh` (root cron 03:00, installed by `bootstrap-coolify.sh`
+  3e). The script verifies critical DBs (`chatwoot`, `middleware`) were dumped
+  and **fails** otherwise. `/dify-apps` backed up via Git.
+- **Postgres data disk is SACRED.** It is a dedicated `google_compute_disk`
+  guarded by `lifecycle { prevent_destroy = true, ignore_changes = [type] }` plus
+  a daily disk **snapshot schedule** (14-day retention). **Never** change a
+  force-new disk attribute (`type`, zone, size-down): on 2026-06-25 a
+  `pd-balanced` type change recreated the disk **blank** and wiped production
+  Chatwoot (the startup script `mkfs`'d the empty disk). See memory
+  `prod-data-loss-2026-06-25`.
 - **Observability:** Grafana + Prometheus for queue depths and **token usage per account_id**.
 - **Rate limiting:** Respect Meta tiers; throttle in Dify.
+
+### Disaster recovery — restore Postgres from a GCS dump
+
+Dumps live at `gs://nexaduo-coolify-backups/<vm-name>/<db>-<YYYY-MM-DD>-0300.sql.gz`.
+To restore one DB (example: `chatwoot`) onto the running stack:
+
+1. **Snapshot first** (rollback): `gcloud compute snapshots create pre-restore-<ts>
+   --source-disk=<vm>-postgres-disk --source-disk-zone=<zone>`.
+2. Pick the right dump — verify it has the data (`gsutil cat <dump> | zcat |
+   grep <marker>`); a post-incident dump may be of an already-empty DB.
+3. Stop the consumers: `docker stop` the `chatwoot-*` containers (or the service
+   that owns the DB).
+4. Recreate the DB empty: terminate connections, `DROP DATABASE` + `CREATE
+   DATABASE` (the dump is `--clean --if-exists`, so restoring onto a populated DB
+   also works, but an empty DB is cleanest).
+5. Restore: `gsutil cat <dump> | zcat | docker exec -i <pg> psql -U postgres -d <db>`
+   (or pipe a locally-downloaded dump through `gcloud compute ssh ... --command`).
+6. Start the consumers and validate row counts + the app responding.
 
 ## Deployment Strategies to AVOID
 
