@@ -318,6 +318,17 @@ if (!$dest) {
 }
 print("DEST_RESULT:" . $dest->uuid);
 '
+# The first Tinker can transiently restart the coolify container (and on a tight
+# VM the kernel may have reaped it under memory pressure); wait for it to be
+# running again before the next `docker exec coolify` to avoid "No such container".
+echo "Waiting for coolify container to be running..."
+gcloud compute ssh "$SSH_USER@$VM_NAME" \
+  --project "$PROJECT_ID" \
+  --zone "$ZONE" \
+  --tunnel-through-iap \
+  --quiet \
+  --command 'for i in $(seq 1 30); do sudo docker ps --format {{.Names}} | grep -qx coolify && exit 0; sleep 5; done; echo coolify-not-running; exit 1'
+
 DESTINATION_RAW_OUTPUT=$(gcloud compute ssh "$SSH_USER@$VM_NAME" \
   --project "$PROJECT_ID" \
   --zone "$ZONE" \
