@@ -272,17 +272,33 @@ jobs:
           if [ "$STATUS" != "RUNNING" ]; then
             gcloud compute instances start "$VM" --zone="$ZONE" --project="${{ env.PROJECT_ID }}"
           fi
-          # Wait until the Docker daemon is up (not just SSH): on a cold boot SSH
+          ssh() { gcloud compute ssh "$VM" --zone="$ZONE" --project="${{ env.PROJECT_ID }}" --tunnel-through-iap --command="$1" 2>/dev/null; }
+
+          # 1) Wait until the Docker daemon is up (not just SSH): on a cold boot SSH
           # answers well before dockerd finishes starting, and bootstrap talks to
           # Docker immediately — racing it yields "Cannot connect to the Docker daemon".
+          docker_ok=
           for i in $(seq 1 36); do
-            if gcloud compute ssh "$VM" --zone="$ZONE" --project="${{ env.PROJECT_ID }}" --tunnel-through-iap --command="sudo docker ps >/dev/null 2>&1 && echo dockerready" 2>/dev/null | grep -q dockerready; then
-              echo "VM Docker daemon ready."; exit 0
+            if ssh "sudo docker ps >/dev/null 2>&1 && echo dockerready" | grep -q dockerready; then
+              echo "VM Docker daemon ready."; docker_ok=1; break
             fi
             echo "Waiting for VM Docker daemon... ($i/36)"; sleep 10
           done
-          echo "::error::VM started but Docker daemon not ready within timeout."
-          exit 1
+          [ -n "$docker_ok" ] || { echo "::error::Docker daemon not ready within timeout."; exit 1; }
+
+          # 2) Wait for the cold-boot memory spike to subside. On boot Docker
+          # restarts every container at once; on the 8 GB staging VM that transient
+          # spike OOM-kills the next memory-hungry step (Coolify Tinker, exit 137).
+          # Steady state fits in 8 GB (warm deploys succeed), so just let it settle.
+          for i in $(seq 1 24); do
+            AVAIL=$(ssh "awk '/MemAvailable/ {print int(\$2/1024)}' /proc/meminfo")
+            echo "MemAvailable=${AVAIL:-?}MiB ($i/24)"
+            if [ -n "$AVAIL" ] && [ "$AVAIL" -ge 1200 ]; then
+              echo "Memory settled (${AVAIL}MiB available)."; exit 0
+            fi
+            sleep 10
+          done
+          echo "::warning::Memory did not settle above 1200MiB; proceeding anyway."
 
   # -----------------------------------------------------------------------
   # bootstrap: install Coolify on the VM (one-time per VM)
