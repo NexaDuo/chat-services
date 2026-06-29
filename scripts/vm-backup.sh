@@ -67,4 +67,30 @@ find "$BACKUP_DIR" -type f -name '*.sql.gz' -mtime +"$BACKUP_KEEP_DAYS" -print -
 log "==> Enviando para gs://${BACKUP_BUCKET}/${HOSTTAG}/"
 gcloud storage cp "${FILES[@]}" "gs://${BACKUP_BUCKET}/${HOSTTAG}/"
 
-log "==> Backup concluído (${#FILES[@]} DBs)."
+# 6. Verificação de cobertura: os DBs CRÍTICOS (dados de cliente) precisam ter
+# sido dumpados com tamanho plausível. Roda DEPOIS do upload (envia o que tiver)
+# mas SAI com erro se faltar algo — assim a falha fica visível no log do cron.
+# Salvaguarda contra um futuro regression onde um DB crítico (ex: chatwoot)
+# pare de ser dumpado silenciosamente (ver incidente 2026-06-25).
+CRITICAL_DBS=(${BACKUP_REQUIRED_DBS:-chatwoot middleware})
+MIN_BYTES="${BACKUP_MIN_BYTES:-1000}"
+missing=0
+for DB in "${CRITICAL_DBS[@]}"; do
+  f="${BACKUP_DIR}/${DB}-${TS}.sql.gz"
+  if [[ ! -f "$f" ]]; then
+    log "ERRO: DB crítico '${DB}' NÃO foi dumpado (arquivo ausente). Existe no Postgres?"
+    missing=1
+    continue
+  fi
+  sz="$(stat -c%s "$f" 2>/dev/null || echo 0)"
+  if [[ "$sz" -lt "$MIN_BYTES" ]]; then
+    log "ERRO: dump de '${DB}' suspeito (${sz} bytes < ${MIN_BYTES})."
+    missing=1
+  fi
+done
+if [[ "$missing" -ne 0 ]]; then
+  log "==> FALHA: cobertura de backup incompleta para DBs críticos (${CRITICAL_DBS[*]})."
+  exit 1
+fi
+
+log "==> Backup concluído (${#FILES[@]} DBs; críticos OK: ${CRITICAL_DBS[*]})."

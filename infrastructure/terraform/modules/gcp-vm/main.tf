@@ -139,6 +139,10 @@ resource "google_compute_instance" "vm" {
   attached_disk {
     source      = google_compute_disk.postgres_disk.id
     device_name = "postgres-disk"
+    mode        = "READ_WRITE"
+    # The data disk is a separate resource guarded by prevent_destroy; a
+    # secondary attached_disk is never auto-deleted on instance delete/recreate,
+    # so the volume survives a VM replacement (it reattaches by source id).
   }
 
   network_interface {
@@ -166,10 +170,54 @@ output "public_ip" {
   value = google_compute_address.static_ip.address
 }
 
+# Daily disk-level snapshots (14-day retention) as a second line of defense for
+# the Postgres volume, beyond the pg_dump-to-GCS cron. Kept even if the disk is
+# deleted, so a recreate/mkfs is recoverable.
+resource "google_compute_resource_policy" "postgres_snapshot" {
+  name   = "${var.name}-postgres-snapshot"
+  region = var.region
+
+  snapshot_schedule_policy {
+    schedule {
+      daily_schedule {
+        days_in_cycle = 1
+        start_time    = "06:00"
+      }
+    }
+    retention_policy {
+      max_retention_days    = 14
+      on_source_disk_delete = "KEEP_AUTO_SNAPSHOTS"
+    }
+    snapshot_properties {
+      storage_locations = [var.region]
+    }
+  }
+}
+
 resource "google_compute_disk" "postgres_disk" {
   name = "${var.name}-postgres-disk"
   type = var.postgres_disk_type
   zone = var.zone
   size = var.disk_size
+
+  # The Postgres data disk is sacred. A change to a force-new attribute — e.g.
+  # `type` (exactly the 2026-06-25 pd-balanced change that recreated this disk
+  # blank and wiped production) — would otherwise silently destroy it.
+  # prevent_destroy turns any such plan into a hard ERROR instead of data loss;
+  # ignore_changes[type] stops disk-type drift from ever planning a replacement.
+  # See memory: prod-data-loss-2026-06-25.
+  lifecycle {
+    prevent_destroy = true
+    ignore_changes  = [type]
+  }
+}
+
+# Attach the daily snapshot schedule to the Postgres disk. (google_compute_disk
+# does not accept `resource_policies` inline in this provider; the attachment is
+# a separate resource.)
+resource "google_compute_disk_resource_policy_attachment" "postgres_snapshot" {
+  name = google_compute_resource_policy.postgres_snapshot.name
+  disk = google_compute_disk.postgres_disk.name
+  zone = var.zone
 }
 
