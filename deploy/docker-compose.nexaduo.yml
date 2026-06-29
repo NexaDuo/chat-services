@@ -1,6 +1,8 @@
 services:
   evolution-api:
-    image: atendai/evolution-api:v2.1.1
+    # Evolution API's official image moved to evoapicloud/* — atendai/evolution-api
+    # now denies pulls and broke CI/redeploys. Same pinned version (v2.1.1).
+    image: evoapicloud/evolution-api:v2.1.1
     restart: unless-stopped
     environment:
       SERVER_TYPE: http
