@@ -272,14 +272,17 @@ jobs:
           if [ "$STATUS" != "RUNNING" ]; then
             gcloud compute instances start "$VM" --zone="$ZONE" --project="${{ env.PROJECT_ID }}"
           fi
-          # Wait for SSH (IAP) so downstream bootstrap/sync don't race the boot.
-          for i in $(seq 1 30); do
-            if gcloud compute ssh "$VM" --zone="$ZONE" --project="${{ env.PROJECT_ID }}" --tunnel-through-iap --command="echo ready" >/dev/null 2>&1; then
-              echo "VM SSH ready."; exit 0
+          # Wait until the Docker daemon is up (not just SSH): on a cold boot SSH
+          # answers well before dockerd finishes starting, and bootstrap talks to
+          # Docker immediately — racing it yields "Cannot connect to the Docker daemon".
+          for i in $(seq 1 36); do
+            if gcloud compute ssh "$VM" --zone="$ZONE" --project="${{ env.PROJECT_ID }}" --tunnel-through-iap --command="sudo docker ps >/dev/null 2>&1 && echo dockerready" 2>/dev/null | grep -q dockerready; then
+              echo "VM Docker daemon ready."; exit 0
             fi
-            echo "Waiting for VM SSH... ($i/30)"; sleep 10
+            echo "Waiting for VM Docker daemon... ($i/36)"; sleep 10
           done
-          echo "::warning::VM started but SSH not confirmed within timeout; downstream jobs will retry."
+          echo "::error::VM started but Docker daemon not ready within timeout."
+          exit 1
 
   # -----------------------------------------------------------------------
   # bootstrap: install Coolify on the VM (one-time per VM)
