@@ -72,6 +72,26 @@ until curl -s "http://$VM_IP:8000/api/v1/version" > /dev/null; do
 done
 echo "Coolify API is ready."
 
+# 2b. Ensure a persistent swapfile on the VM.
+# The full stack + a Coolify `php artisan tinker` invocation exceeds the 8 GB
+# staging VM RAM and gets OOM-killed (exit 137) without swap. A 4 GB swapfile
+# (persisted in /etc/fstab so it survives reboots / power-cycles) lets the Tinker
+# steps fit. Idempotent: no-op once /swapfile exists and is active.
+echo "Ensuring swapfile is present and active..."
+gcloud compute ssh "$SSH_USER@$VM_NAME" \
+  --project "$PROJECT_ID" \
+  --zone "$ZONE" \
+  --tunnel-through-iap \
+  --quiet \
+  --command 'if ! sudo swapon --show | grep -q /swapfile; then
+      sudo fallocate -l 4G /swapfile || sudo dd if=/dev/zero of=/swapfile bs=1M count=4096;
+      sudo chmod 600 /swapfile;
+      sudo mkswap /swapfile;
+      sudo swapon /swapfile;
+      grep -q /swapfile /etc/fstab || echo /swapfile none swap sw 0 0 | sudo tee -a /etc/fstab;
+    fi;
+    sudo swapon --show'
+
 # 3. Create Admin User and Generate API Token via Tinker
 echo "Ensuring Admin user and generating Coolify API token via Tinker..."
 TINKER_CMD=$(cat <<'PHP'
