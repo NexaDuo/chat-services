@@ -200,8 +200,6 @@ resource "google_compute_disk" "postgres_disk" {
   zone = var.zone
   size = var.disk_size
 
-  resource_policies = [google_compute_resource_policy.postgres_snapshot.id]
-
   # The Postgres data disk is sacred. A change to a force-new attribute — e.g.
   # `type` (exactly the 2026-06-25 pd-balanced change that recreated this disk
   # blank and wiped production) — would otherwise silently destroy it.
@@ -212,5 +210,14 @@ resource "google_compute_disk" "postgres_disk" {
     prevent_destroy = true
     ignore_changes  = [type]
   }
+}
+
+# Attach the daily snapshot schedule to the Postgres disk. (google_compute_disk
+# does not accept `resource_policies` inline in this provider; the attachment is
+# a separate resource.)
+resource "google_compute_disk_resource_policy_attachment" "postgres_snapshot" {
+  name = google_compute_resource_policy.postgres_snapshot.name
+  disk = google_compute_disk.postgres_disk.name
+  zone = var.zone
 }
 
