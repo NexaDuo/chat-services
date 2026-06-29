@@ -1,0 +1,54 @@
+name: Stack power (start/stop VM)
+
+# One-click power control for a stack VM from the Actions tab.
+# Use this to stop production when idle (saves vCPU/RAM cost) and start it back
+# up on demand. Staging is normally cycled automatically by deploy.yml
+# (start-vm/stop-vm), but can also be toggled here.
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Target environment
+        type: choice
+        required: true
+        default: staging
+        options:
+          - staging
+          - production
+      action:
+        description: Power action
+        type: choice
+        required: true
+        default: status
+        options:
+          - status
+          - start
+          - stop
+          - restart
+
+permissions:
+  contents: read
+  id-token: write   # WIF
+
+env:
+  PROJECT_ID: nexaduo-492818
+
+jobs:
+  power:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOYER_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: ${{ inputs.action }} ${{ inputs.environment }}
+        run: |
+          chmod +x scripts/stack-power.sh
+          GCP_PROJECT_ID="${{ env.PROJECT_ID }}" \
+            ./scripts/stack-power.sh "${{ inputs.environment }}" "${{ inputs.action }}"
