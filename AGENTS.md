@@ -127,6 +127,22 @@ Whenever you need to run routine verification, ask the agent to **"run a routine
   `scripts/vm-backup.sh` (root cron 03:00, installed by `bootstrap-coolify.sh`
   3e). The script verifies critical DBs (`chatwoot`, `middleware`) were dumped
   and **fails** otherwise. `/dify-apps` backed up via Git.
+- **⚠️ The pg_dump is NOT a full backup — Docker VOLUMES are not in it.** Some
+  critical state lives only on disk in Docker volumes, not in Postgres:
+  - **Dify's per-workspace RSA private key** (`dify-api-storage` →
+    `storage/privkeys/<tenant_id>/private.pem`). This key **encrypts every model
+    provider credential** (e.g. the Azure OpenAI API key). Lose it and those
+    credentials are **permanently undecryptable** — Dify throws
+    `PrivkeyNotFoundError` 500s and the agent can't call the LLM. The only repair
+    is `flask reset-encrypt-key-pair` (regenerates the key, **wipes** the stored
+    credentials) followed by **re-entering the provider keys by hand**. This bit
+    us migrating off GCP (2026-06-29): restoring only the pg_dump left Dify with
+    a workspace whose key was gone. **When changing infrastructure, back up /
+    carry over the Dify storage volume (and `chatwoot-storage`/`chatwoot-public`
+    for uploaded files), not just the DB dumps.** See memory `local-run-stack`.
+  - Migrating hosts: `docker run --rm -v <vol>:/data -v $PWD:/b alpine tar czf
+    /b/<vol>.tgz -C /data .` per volume; restore by `tar xzf` into the new
+    volume **before** starting the consumers.
 - **Postgres data disk is SACRED.** It is a dedicated `google_compute_disk`
   guarded by `lifecycle { prevent_destroy = true, ignore_changes = [type] }` plus
   a daily disk **snapshot schedule** (14-day retention). **Never** change a

@@ -44,6 +44,11 @@ services:
       FORCE_SSL: "false"
       GOOGLE_CLIENT_ID: ${GOOGLE_OAUTH_CLIENT_ID}
       GOOGLE_CLIENT_SECRET: ${GOOGLE_OAUTH_CLIENT_SECRET}
+      # Chatwoot's omniauth.rb reads ENV['GOOGLE_OAUTH_CLIENT_ID'/'..._SECRET']
+      # directly (not GOOGLE_CLIENT_ID). Without these exact names the Google
+      # login button builds an OAuth URL with an empty client_id and fails.
+      GOOGLE_OAUTH_CLIENT_ID: ${GOOGLE_OAUTH_CLIENT_ID}
+      GOOGLE_OAUTH_CLIENT_SECRET: ${GOOGLE_OAUTH_CLIENT_SECRET}
       GOOGLE_OAUTH_CALLBACK_URL: ${GOOGLE_OAUTH_CALLBACK_URL}
       OMNIAUTH_PROVIDERS: google_oauth2
     labels:

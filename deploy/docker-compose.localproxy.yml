@@ -1,0 +1,49 @@
+# Local-only Traefik that stands in for Coolify's managed proxy.
+#
+# On the VM, Coolify runs a Traefik container named `coolify-proxy`, and the
+# Cloudflare Tunnel ingress points every hostname (chat/dify/grafana/evolution/
+# middleware) at `http://coolify-proxy:80`. There is no Coolify locally, so we
+# bring up our own Traefik with the SAME container name + the `http` entrypoint
+# the service labels reference. cloudflared (in docker-compose.shared.yml) then
+# resolves `coolify-proxy` over nexaduo-network exactly as it does in prod —
+# nothing in Cloudflare changes.
+#
+# Append this file to COMPOSE_FILE (run-local.sh does this).
+services:
+  coolify-proxy:
+    # v3.4+ required: older Traefik's bundled Docker API client fails version
+    # negotiation against Docker Engine 29.x ("Error response from daemon:").
+    image: traefik:v3.4
+    container_name: coolify-proxy
+    restart: unless-stopped
+    # File provider (not docker provider): Docker Desktop on WSL rejects
+    # Traefik's Docker API calls. dynamic.yml replicates the service labels.
+    command:
+      - --providers.file.directory=/etc/traefik/dynamic
+      - --providers.file.watch=true
+      - --entrypoints.http.address=:80
+      - --ping=true
+    healthcheck:
+      test: ["CMD", "traefik", "healthcheck", "--ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+    volumes:
+      # mount the directory (not the single file) — single-file bind mounts are
+      # unreliable on Docker Desktop/WSL (same failure mode that hits promtail).
+      - ${NEXADUO_CONF_PATH}/deploy/traefik:/etc/traefik/dynamic:ro
+    networks:
+      - chat-network
+
+# cloudflared is defined in docker-compose.shared.yml; here we only add an env
+# override. WSL2's UDP stack makes cloudflared's default QUIC transport flap
+# ("datagram handler context canceled" / "control stream failure"). Forcing the
+# HTTP/2 transport gives a stable tunnel.
+  cloudflared:
+    environment:
+      TUNNEL_TRANSPORT_PROTOCOL: http2
+
+networks:
+  chat-network:
+    external: true
+    name: nexaduo-network
