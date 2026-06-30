@@ -1,0 +1,76 @@
+# =============================================================================
+# deploy/traefik/dynamic.yml — Traefik FILE-PROVIDER fallback routes.
+#
+# Primary routing for the host-local production runtime is the Traefik Docker
+# provider (labels on the app services; see deploy/docker-compose.localproxy.yml).
+# On hosts where the Docker provider is flaky (Docker Desktop / WSL: "Error
+# response from daemon:" reaching the socket — see memory local-run-stack.md),
+# mount this file instead:
+#
+#   command:
+#     - "--providers.file.directory=/etc/traefik/dynamic"
+#     - "--providers.file.watch=true"
+#     - "--entrypoints.http.address=:80"
+#   volumes:
+#     - ./deploy/traefik:/etc/traefik/dynamic:ro
+#
+# These routes mirror the committed traefik.* labels 1:1. Service hostnames
+# (container DNS names on nexaduo-network) and ports match the compose files.
+# Keep in sync with deploy/docker-compose.{chatwoot,dify,nexaduo}.yml labels.
+# =============================================================================
+http:
+  routers:
+    chatwoot:
+      rule: "Host(`chat.nexaduo.com`)"
+      entrypoints: http
+      service: chatwoot
+    # Dify path split: /v1, /console/api, /api, /files routed to the API
+    # backend at a higher priority than the web UI catch-all.
+    dify-api:
+      rule: "Host(`dify.nexaduo.com`) && (PathPrefix(`/v1`) || PathPrefix(`/console/api`) || PathPrefix(`/api`) || PathPrefix(`/files`))"
+      entrypoints: http
+      priority: 20
+      service: dify-api
+    dify:
+      rule: "Host(`dify.nexaduo.com`)"
+      entrypoints: http
+      priority: 10
+      service: dify
+    evolution:
+      rule: "Host(`evolution.nexaduo.com`)"
+      entrypoints: http
+      service: evolution
+    middleware:
+      rule: "Host(`middleware.nexaduo.com`)"
+      entrypoints: http
+      service: middleware
+    grafana:
+      rule: "Host(`grafana.nexaduo.com`)"
+      entrypoints: http
+      service: grafana
+
+  services:
+    chatwoot:
+      loadBalancer:
+        servers:
+          - url: "http://chatwoot-rails:3000"
+    dify-api:
+      loadBalancer:
+        servers:
+          - url: "http://dify-api:5001"
+    dify:
+      loadBalancer:
+        servers:
+          - url: "http://dify-web:3000"
+    evolution:
+      loadBalancer:
+        servers:
+          - url: "http://evolution-api:8080"
+    middleware:
+      loadBalancer:
+        servers:
+          - url: "http://middleware:4000"
+    grafana:
+      loadBalancer:
+        servers:
+          - url: "http://grafana:3000"
