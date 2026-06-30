@@ -130,7 +130,7 @@
   ],
   "refresh": "10s",
   "schemaVersion": 39,
-  "tags": ["nexaduo", "logs"],
+  "tags": ["chat-services", "logs"],
   "templating": {
     "list": [
       {
@@ -193,7 +193,7 @@
   "time": { "from": "now-6h", "to": "now" },
   "timepicker": {},
   "timezone": "browser",
-  "title": "NexaDuo — Logs Final",
+  "title": "Chat Services — Logs",
   "uid": "stack-logs-final",
   "version": 6
 }

@@ -82,7 +82,7 @@
     }
   ],
   "schemaVersion": 39,
-  "tags": [],
+  "tags": ["chat-services", "self-healing"],
   "templating": {
     "list": []
   },
@@ -93,7 +93,7 @@
   },
   "timepicker": {},
   "timezone": "browser",
-  "title": "Self-Healing Insights V2",
+  "title": "Chat Services — Self-Healing Insights",
   "uid": "self-healing-v2",
   "version": 9
 }

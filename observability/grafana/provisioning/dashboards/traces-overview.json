@@ -14,7 +14,7 @@
       "id": 10,
       "options": {
         "mode": "markdown",
-        "content": "## Correlação Logs ↔ Traces ↔ Metrics\n\n**Fluxo para operadores (Grafana 11.3):**\n\n1. **Logs → Trace:** No dashboard *NexaDuo — Logs Final*, abra um log no painel *Live Log Stream*, expanda os detalhes (Log details). O campo derivado `trace_id` (configurado no datasource Loki) exibe um link **➜ Tempo** que abre o trace correspondente.\n2. **Trace → Logs:** Dentro de um trace no Tempo, cada span tem a ação **Logs for this span** (configurada via `tracesToLogsV2` no datasource Tempo, correlacionando por `trace_id`). Isso volta ao Loki já filtrado por aquele trace.\n3. **Trace → Metrics:** Latência/erros por serviço aparecem em *NexaDuo — Chat Services* (Prometheus). Para latência por span é necessário o **metrics-generator** do Tempo (span metrics); se não estiver habilitado, use a busca TraceQL + a tabela de *traces lentos* abaixo.\n\n**Campos canônicos do contrato:** `service`, `level`, `trace_id`, `span_id`, `account_id`, `conversation_id`. `trace_id` é o pivô entre os três sinais.\n\n> Datasources usados: Loki (`loki`), Tempo (`tempo`), Prometheus (`prometheus`)."
+        "content": "## Correlação Logs ↔ Traces ↔ Metrics\n\n**Fluxo para operadores (Grafana 11.3):**\n\n1. **Logs → Trace:** No dashboard *Chat Services — Logs*, abra um log no painel *Live Log Stream*, expanda os detalhes (Log details). O campo derivado `trace_id` (configurado no datasource Loki) exibe um link **➜ Tempo** que abre o trace correspondente.\n2. **Trace → Logs:** Dentro de um trace no Tempo, cada span tem a ação **Logs for this span** (configurada via `tracesToLogsV2` no datasource Tempo, correlacionando por `trace_id`). Isso volta ao Loki já filtrado por aquele trace.\n3. **Trace → Metrics:** Latência/erros por serviço aparecem em *Chat Services — Application Metrics* (Prometheus). Para latência por span é necessário o **metrics-generator** do Tempo (span metrics); se não estiver habilitado, use a busca TraceQL + a tabela de *traces lentos* abaixo.\n\n**Campos canônicos do contrato:** `service`, `level`, `trace_id`, `span_id`, `account_id`, `conversation_id`. `trace_id` é o pivô entre os três sinais.\n\n> Datasources usados: Loki (`loki`), Tempo (`tempo`), Prometheus (`prometheus`)."
       },
       "title": "Como correlacionar Logs, Traces e Metrics",
       "type": "text"
@@ -93,7 +93,7 @@
   ],
   "refresh": "30s",
   "schemaVersion": 39,
-  "tags": ["nexaduo", "traces", "tempo"],
+  "tags": ["chat-services", "traces", "tempo"],
   "templating": {
     "list": [
       {
@@ -145,7 +145,7 @@
   "time": { "from": "now-6h", "to": "now" },
   "timepicker": {},
   "timezone": "browser",
-  "title": "NexaDuo — Traces Overview",
+  "title": "Chat Services — Traces",
   "uid": "stack-traces-overview",
   "version": 1
 }

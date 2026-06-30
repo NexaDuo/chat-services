@@ -114,13 +114,13 @@
   ],
   "refresh": "30s",
   "schemaVersion": 39,
-  "tags": ["nexaduo", "chat-services"],
+  "tags": ["chat-services", "metrics"],
   "templating": { "list": [] },
   "time": { "from": "now-6h", "to": "now" },
   "timepicker": {},
   "timezone": "",
-  "title": "NexaDuo — Chat Services",
-  "uid": "nexaduo-chat-services",
+  "title": "Chat Services — Application Metrics",
+  "uid": "chat-services-metrics",
   "version": 1,
   "weekStart": ""
 }
