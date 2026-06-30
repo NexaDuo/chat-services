@@ -5,6 +5,7 @@ import crypto from 'crypto';
 import { z } from 'zod';
 import { trace, isSpanContextValid } from '@opentelemetry/api';
 import { Database } from './db.js';
+import { GitHubActions } from './github.js';
 import { LLMAnalysis, LokiQueryResult } from './types.js';
 
 const logger = pino({
@@ -35,12 +36,27 @@ if (!process.env.DATABASE_URL) {
 }
 
 const POLL_INTERVAL_MS = parseInt(process.env.POLL_INTERVAL_MS || '300000'); // 5 minutes
-const COOLDOWN_HOURS = 24;
+const COOLDOWN_HOURS = parseInt(process.env.COOLDOWN_HOURS || '24');
+// Hard ceiling on LLM calls per cycle so a log storm can't blow the token budget.
+const MAX_ANALYSES_PER_CYCLE = parseInt(process.env.MAX_ANALYSES_PER_CYCLE || '10');
+
+// Severity gate for opening issues: only error/fatal by default (warnings/info
+// are saved as insights but don't spam the issue tracker).
+const SEVERITY_RANK: Record<string, number> = { info: 0, warning: 1, error: 2, fatal: 3 };
+const ISSUE_MIN_SEVERITY = (process.env.ISSUE_MIN_SEVERITY || 'error').toLowerCase();
+
+// Benign log lines that match the broad "error" regex but aren't worth an LLM
+// call. Override/extend with SELF_HEALING_NOISE_REGEX. Keeps token spend on real
+// problems (e.g. healthcheck noise, the OTel exporter retrying, 4xx access logs).
+const DEFAULT_NOISE =
+  '(GET|POST|HEAD).*(200|204|301|302)|healthcheck|/health|favicon|opentelemetry|OTLPExporter|:431[78]|deprecat';
+const NOISE_REGEX = new RegExp(process.env.SELF_HEALING_NOISE_REGEX || DEFAULT_NOISE, 'i');
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
 });
 const db = new Database(pool);
+const github = new GitHubActions(process.env.GITHUB_TOKEN || '', process.env.GITHUB_REPO || '');
 
 let difyApiKey = '';
 // Log the "no Dify key" degraded mode once, not on every error/loop iteration
@@ -78,14 +94,16 @@ async function fetchConfig(retries = 5, delay = 5000): Promise<void> {
         logger.info('Remote config fetched successfully');
         return;
       }
+      logger.warn('Config fetched but dify.selfHealingApiKey is empty (set DIFY_SELF_HEALING_API_KEY in middleware.configs)');
+      return;
     } catch (error) {
       const isLast = i === retries - 1;
-      logger.warn({ 
-        attempt: i + 1, 
+      logger.warn({
+        attempt: i + 1,
         error: (error as Error).message,
-        nextRetryIn: isLast ? 0 : delay / 1000 
+        nextRetryIn: isLast ? 0 : delay / 1000
       }, 'Failed to fetch config from middleware');
-      
+
       if (!isLast) {
         await new Promise(resolve => setTimeout(resolve, delay));
         delay *= 2; // Exponential backoff
@@ -103,17 +121,20 @@ function getFingerprint(service: string, message: string): string {
     .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, '<UUID>') // UUIDs
     .replace(/\d+/g, 'N') // Numbers
     .slice(0, 300); // Keep it short
-  
+
   return crypto.createHash('sha256').update(`${service}:${normalized}`).digest('hex');
 }
 
 async function queryLokiErrors(): Promise<LokiQueryResult[]> {
   const end = Date.now() * 1000000;
   const start = (Date.now() - POLL_INTERVAL_MS) * 1000000;
-  
+
   const project = process.env.COMPOSE_PROJECT_NAME || 'nexaduo';
-  const query = `{project="${project}", service!="self-healing-agent"} |~ "(?i)(error|fatal|panic|exception|traceback)"`;
-  
+  // Exclude our OWN logs by `container` (always present), not `service` — Promtail
+  // derives `service` from the compose-service label, which isn't reliably set in
+  // every deployment, so the agent was analyzing its own errors (a feedback loop).
+  const query = `{project="${project}", container!~".*self-healing.*"} |~ "(?i)(error|fatal|panic|exception|traceback)"`;
+
   try {
     const response = await axios.get(`${LOKI_URL}/loki/api/v1/query_range`, {
       params: { query, start, end, limit: 100 },
@@ -160,39 +181,73 @@ async function analyzeWithErrorLLM(service: string, logSnippet: string): Promise
   }
 }
 
+/** True if the analysis severity meets the configured threshold for opening an issue. */
+function meetsIssueThreshold(severity: string): boolean {
+  const rank = SEVERITY_RANK[(severity || '').toLowerCase()] ?? SEVERITY_RANK.error;
+  const min = SEVERITY_RANK[ISSUE_MIN_SEVERITY] ?? SEVERITY_RANK.error;
+  return rank >= min;
+}
+
 let running = true;
 async function mainLoop(): Promise<void> {
-  logger.info('Starting self-healing main loop');
-  
+  logger.info(
+    { pollMs: POLL_INTERVAL_MS, maxPerCycle: MAX_ANALYSES_PER_CYCLE, issuesEnabled: github.isEnabled() },
+    'Starting self-healing main loop',
+  );
+
   while (running) {
+    let analyzedThisCycle = 0;
     try {
       const results = await queryLokiErrors();
-      
+
+      // Collect unique (service, message) candidates first, so the per-cycle cap
+      // applies across all streams rather than starving later services.
+      const candidates: { service: string; message: string; labels: any }[] = [];
+      const seen = new Set<string>();
       for (const result of results) {
         const service = result.stream.service || result.stream.container || 'unknown';
-        
-        const messages = result.values.map((v: [string, string]) => v[1]);
-        const uniqueMessages = Array.from(new Set(messages));
+        if (/self-healing/i.test(service)) continue; // defensive: never analyze ourselves
+        for (const [, message] of result.values) {
+          if (NOISE_REGEX.test(message)) continue; // skip benign noise before any LLM cost
+          const key = `${service}::${message}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          candidates.push({ service, message, labels: result.stream });
+        }
+      }
 
-        for (const message of uniqueMessages) {
-          const fingerprint = getFingerprint(service, message);
-          
-          if (await db.isCooldownActive(fingerprint, COOLDOWN_HOURS)) {
-            continue;
-          }
+      for (const { service, message, labels } of candidates) {
+        if (analyzedThisCycle >= MAX_ANALYSES_PER_CYCLE) {
+          logger.warn({ cap: MAX_ANALYSES_PER_CYCLE, remaining: candidates.length - analyzedThisCycle },
+            'Hit per-cycle analysis cap; deferring remaining errors to next cycle');
+          break;
+        }
 
-          logger.info({ service, fingerprint }, 'Analyzing new error');
-          const analysis = await analyzeWithErrorLLM(service, message);
-          if (analysis) {
-            await db.saveInsight(service, message, fingerprint, analysis, { loki_labels: result.stream });
-            logger.info({ service, fingerprint }, 'Saved unique insight to database');
-          }
+        const fingerprint = getFingerprint(service, message);
+
+        // Recurring within cooldown → just bump the count, no LLM spend.
+        if (await db.bumpIfRecent(fingerprint, COOLDOWN_HOURS)) {
+          continue;
+        }
+
+        logger.info({ service, fingerprint }, 'Analyzing new error');
+        analyzedThisCycle++;
+        const analysis = await analyzeWithErrorLLM(service, message);
+        if (!analysis) continue;
+
+        const id = await db.saveInsight(service, message, fingerprint, analysis, { loki_labels: labels });
+        logger.info({ service, fingerprint, severity: analysis.severity }, 'Saved unique insight to database');
+
+        // Action: open a deduped GitHub issue for sufficiently severe insights.
+        if (github.isEnabled() && meetsIssueThreshold(analysis.severity)) {
+          const url = await github.openIssue(service, fingerprint, analysis, message);
+          if (url) await db.setIssueUrl(id, url);
         }
       }
     } catch (err) {
       logger.error({ err }, 'Error in main loop iteration');
     }
-    
+
     if (running) {
       await new Promise(resolve => setTimeout(resolve, POLL_INTERVAL_MS));
     }

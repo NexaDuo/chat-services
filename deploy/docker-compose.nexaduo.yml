@@ -35,6 +35,12 @@ services:
       CHATWOOT_PLATFORM_TOKEN: '${CHATWOOT_PLATFORM_TOKEN}'
       EVOLUTION_AUTHENTICATION_API_KEY: '${EVOLUTION_API_KEY}'
       EVOLUTION_BASE_URL: http://evolution-api:8080
+      # Pin the OTLP endpoint so traces/metrics reach the collector instead of
+      # defaulting to localhost:4318 (was spamming ECONNREFUSED — self-healing #43).
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      # The collector has no logs pipeline (logs go to Loki via Promtail), so the
+      # auto-enabled OTLP logs exporter 404s on /v1/logs. Disable just that signal.
+      OTEL_LOGS_EXPORTER: none
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.middleware.rule=Host(`${MIDDLEWARE_DOMAIN}`)"
@@ -111,6 +117,23 @@ services:
       DATABASE_URL: 'postgresql://postgres:${POSTGRES_PASSWORD}@postgres:5432/self_healing'
       LOKI_URL: http://loki:3100
       MIDDLEWARE_URL: http://middleware:4000
+      # Required to authenticate to the middleware /config API and pull the Dify
+      # self-healing key — without it the agent runs detection-only (no analysis).
+      HANDOFF_SHARED_SECRET: ${HANDOFF_SHARED_SECRET}
+      # Pin the OTLP endpoint so traces reach the collector instead of defaulting
+      # to localhost:4318 (which spammed ECONNREFUSED and fed the agent's own loop).
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      # No logs pipeline on the collector (Promtail handles logs) → /v1/logs 404s.
+      OTEL_LOGS_EXPORTER: none
+      # Loki streams are labelled with this project; must match Promtail's label.
+      COMPOSE_PROJECT_NAME: ${COMPOSE_PROJECT_NAME:-nexaduo}
+      # Action: open a deduped GitHub issue per severe insight. Optional — with no
+      # token the agent just saves insights to its DB.
+      GITHUB_TOKEN: ${SELF_HEALING_GITHUB_TOKEN:-}
+      GITHUB_REPO: ${SELF_HEALING_GITHUB_REPO:-NexaDuo/chat-services}
+      # Efficiency knobs (token budget): cap LLM calls/cycle, gate issues by severity.
+      MAX_ANALYSES_PER_CYCLE: ${SELF_HEALING_MAX_ANALYSES:-10}
+      ISSUE_MIN_SEVERITY: ${SELF_HEALING_ISSUE_MIN_SEVERITY:-error}
     networks:
       - chat-network
   otel-collector:

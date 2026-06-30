@@ -17,7 +17,7 @@ export class Database {
     const client = await this.pool.connect();
     try {
       await client.query('CREATE EXTENSION IF NOT EXISTS pgcrypto');
-      
+
       await client.query(`
         CREATE TABLE IF NOT EXISTS insights (
           id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -30,13 +30,17 @@ export class Database {
           severity TEXT,
           fingerprint TEXT,
           occurrence_count INT DEFAULT 1,
+          github_issue_url TEXT,
           metadata JSONB
         )
       `);
 
+      // Converge existing tables (created before github_issue_url existed).
+      await client.query('ALTER TABLE insights ADD COLUMN IF NOT EXISTS github_issue_url TEXT');
+
       await client.query('CREATE INDEX IF NOT EXISTS idx_insights_fingerprint ON insights(fingerprint)');
       await client.query('CREATE INDEX IF NOT EXISTS idx_insights_service_created ON insights(service_name, created_at DESC)');
-      
+
       logger.info('Database schema verified');
     } catch (err) {
       logger.error({ err }, 'Failed to initialize database schema');
@@ -46,22 +50,40 @@ export class Database {
     }
   }
 
-  async isCooldownActive(fingerprint: string, cooldownHours: number): Promise<boolean> {
-    const query = `SELECT 1 FROM insights WHERE fingerprint = $1 AND created_at > NOW() - interval '${cooldownHours} hours'`;
-    const res = await this.pool.query(query, [fingerprint]);
+  /**
+   * If an insight with this fingerprint was already analyzed within the cooldown
+   * window, bump its occurrence_count and return true (caller should SKIP the
+   * expensive LLM analysis). Returns false when it's a genuinely new error that
+   * should be analyzed. This replaces a plain "skip" so recurring errors still
+   * accrue a useful count without spending tokens on every repeat.
+   */
+  async bumpIfRecent(fingerprint: string, cooldownHours: number): Promise<boolean> {
+    const query = `
+      UPDATE insights
+         SET occurrence_count = occurrence_count + 1
+       WHERE id = (
+         SELECT id FROM insights
+          WHERE fingerprint = $1 AND created_at > NOW() - ($2 || ' hours')::interval
+          ORDER BY created_at DESC
+          LIMIT 1
+       )
+      RETURNING id
+    `;
+    const res = await this.pool.query(query, [fingerprint, String(cooldownHours)]);
     return (res.rowCount ?? 0) > 0;
   }
 
   async saveInsight(
-    service: string, 
-    log: string, 
-    fingerprint: string, 
-    analysis: LLMAnalysis, 
+    service: string,
+    log: string,
+    fingerprint: string,
+    analysis: LLMAnalysis,
     metadata: any
-  ): Promise<void> {
+  ): Promise<string> {
     const query = `
       INSERT INTO insights (service_name, error_message, root_cause, suggested_fix, severity, fingerprint, metadata)
       VALUES ($1, $2, $3, $4, $5, $6, $7)
+      RETURNING id
     `;
     const values = [
       service,
@@ -74,10 +96,20 @@ export class Database {
     ];
 
     try {
-      await this.pool.query(query, values);
+      const res = await this.pool.query(query, values);
+      return res.rows[0].id as string;
     } catch (error) {
       logger.error({ error: (error as Error).message }, 'Failed to save insight to Postgres');
       throw error;
+    }
+  }
+
+  /** Records the GitHub issue opened for an insight (best-effort, non-fatal). */
+  async setIssueUrl(id: string, url: string): Promise<void> {
+    try {
+      await this.pool.query('UPDATE insights SET github_issue_url = $2 WHERE id = $1', [id, url]);
+    } catch (error) {
+      logger.warn({ error: (error as Error).message }, 'Failed to record GitHub issue URL');
     }
   }
 
