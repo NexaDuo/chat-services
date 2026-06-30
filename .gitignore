@@ -6,7 +6,16 @@
 
 # Local agent / Claude tooling
 .agents/
-.claude/
+# Version team-owned Claude assets (.claude/agents, .claude/skills) so future
+# edits show up normally. Only keep local/env-specific state ignored:
+.claude/settings.local.json
+# Symlinks to locally-installed shared skills (point into .agents/; would be
+# broken links on a fresh clone):
+.claude/skills/cloud-run-basics
+.claude/skills/create-github-action-workflow-specification
+.claude/skills/review-and-refactor
+.claude/skills/terraform-style-guide
+.claude/skills/terraform-test
 skills-lock.json
 .antigravitycli/
 .serena/
