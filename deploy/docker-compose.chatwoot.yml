@@ -75,6 +75,14 @@ services:
       RAILS_ENV: production
       INSTALLATION_ENV: docker
       SECRET_KEY_BASE: ${CHATWOOT_SECRET_KEY_BASE}
+      # FRONTEND_URL must be present in the Sidekiq process too: background
+      # jobs (SendReplyJob, AutoAssignment::AssignmentJob, Devise::Mailer, ...)
+      # build absolute URLs with no HTTP request context, so Rails derives
+      # default_url_options[:host] / the ActionMailer host from FRONTEND_URL.
+      # Without it Sidekiq raises "Missing host to link to!" (issue #83).
+      FRONTEND_URL: ${CHATWOOT_FRONTEND_URL}
+      CHATWOOT_FORCE_SSL: "false"
+      FORCE_SSL: "false"
       POSTGRES_HOST: postgres
       POSTGRES_USERNAME: postgres
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}

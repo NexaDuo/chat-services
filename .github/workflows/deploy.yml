@@ -688,6 +688,18 @@ jobs:
               CW=""
               for c in $(sudo docker ps --filter name=^/chatwoot-rails- --format "{{.Names}}"); do CW="$c"; break; done
               if [ -z "$CW" ]; then echo "ERROR: no chatwoot-rails container found" >&2; exit 1; fi
+              # issue #83: Sidekiq jobs build absolute URLs with no request
+              # context and need FRONTEND_URL in their own process env, or they
+              # raise "Missing host to link to!". Fail the deploy if it is unset.
+              SK=""
+              for c in $(sudo docker ps --filter name=^/chatwoot-sidekiq- --format "{{.Names}}"); do SK="$c"; break; done
+              if [ -n "$SK" ]; then
+                SKFU=$(sudo docker exec "$SK" printenv FRONTEND_URL || true)
+                if [ -z "$SKFU" ]; then echo "ERROR: FRONTEND_URL not set on $SK (issue #83); Sidekiq URL generation will fail" >&2; exit 1; fi
+                echo "Sidekiq FRONTEND_URL OK: $SKFU"
+              else
+                echo "WARN: no chatwoot-sidekiq container found; skipping FRONTEND_URL check"
+              fi
               echo "Reconciling Instagram installation_configs on $CW"
               sudo docker exec "$CW" bundle exec rails runner "
                 %w[INSTAGRAM_APP_ID INSTAGRAM_APP_SECRET INSTAGRAM_VERIFY_TOKEN].each do |k|
