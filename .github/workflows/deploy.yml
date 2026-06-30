@@ -47,10 +47,15 @@ on:
         required: false
         type: boolean
         default: true
-  pull_request:
-    branches: [ main ]
-  push:
-    branches: [ main ]
+  # GCP has been decommissioned, so this whole pipeline (WIF auth, the GCP VM,
+  # terraform foundation/tenant) cannot run. The automatic pull_request/push
+  # triggers are disabled to keep CI green; the pipeline stays invokable via
+  # workflow_dispatch for when a cloud target is restored. To re-enable, restore
+  # the GCP project/WIF and uncomment the triggers below.
+  # pull_request:
+  #   branches: [ main ]
+  # push:
+  #   branches: [ main ]
 
 permissions:
   contents: read
