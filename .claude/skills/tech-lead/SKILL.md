@@ -133,8 +133,21 @@ versioned source**, not only into per-session memory:
 - A durable architectural lesson or non-negotiable → **AGENTS.md**.
 Personal memory is a convenience cache, not the team's source of truth. If a
 process tweak only lives in memory, the rest of the team (and a fresh session)
-never gets it. Default to landing it in the skill/agent/AGENTS.md in the same
-turn — and consider opening a PR so the change is reviewed and versioned.
+never gets it.
+
+**But don't pay the full cost every interaction.** Editing a versioned file +
+opening/merging a PR for each tiny tweak is token-expensive and noisy. Instead,
+**buffer and flush on a healthy cadence**:
+- **Buffer (cheap, every time):** append the tweak as a dated bullet to the
+  `process-improvements-buffer` memory file. One line, near-zero cost.
+- **Flush (batched, periodic):** roll the buffer into the versioned
+  skill/agent/AGENTS.md in **one PR** when it's worth it — a natural trigger is
+  *≥ ~3 pending items* **or** *the oldest entry is ≥ 3 days old* (whichever comes
+  first), or when the user asks. Check the buffer's age at the **start** of a
+  tech-lead session and flush if it's stale; then clear the flushed entries.
+- **Exception — flush immediately** when the tweak changes behavior that's
+  active *right now* (e.g. a new dispatch rule that affects an in-flight agent),
+  or the user explicitly says "land this now". Correctness beats batching.
 
 ---
 
