@@ -57,9 +57,14 @@ export async function registerChatwootWebhookRoute(
   pool: pg.Pool,
 ): Promise<void> {
   app.post("/webhooks/chatwoot", async (req, reply) => {
-    // 1. Authenticate webhook if token is configured
+    // 1. Authenticate webhook if token is configured.
+    // Chatwoot's native account Webhooks can only customize the URL (no custom
+    // headers), so accept the token via `?token=` query param as well as the
+    // header. The query-param path is how the Chatwoot webhook actually delivers
+    // it; the header is kept for callers that can set it.
     if (config.chatwoot.webhookToken) {
-      const token = req.headers["x-chatwoot-webhook-token"];
+      const queryToken = (req.query as { token?: string } | undefined)?.token;
+      const token = req.headers["x-chatwoot-webhook-token"] ?? queryToken;
       if (!token || token !== config.chatwoot.webhookToken) {
         req.log.warn({ hasToken: !!token }, "webhook: unauthorized (invalid token)");
         return reply.code(401).send({ error: "unauthorized" });

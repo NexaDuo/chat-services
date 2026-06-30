@@ -253,12 +253,51 @@ cmd_down() {
   docker compose down
 }
 
+# Connect Chatwoot to the middleware. This link (a message_created webhook + the
+# API token the adapter uses to reply) was historically configured by hand in the
+# Chatwoot UI and never lived in code, so a restored/rebuilt env has neither and
+# inbound messages never reach Dify (nor do replies post back). Idempotent.
+cmd_wire() {
+  local cw="" tok="" current
+  log "Wiring Chatwoot <-> middleware (API token + message_created webhook)..."
+  # Wait for chatwoot-rails to be reachable (needed for the rails runner / token).
+  for _ in $(seq 1 30); do
+    cw="$(docker ps --filter name=chatwoot-rails --format '{{.Names}}' | head -1)"
+    [ -n "$cw" ] && break; sleep 3
+  done
+  [ -n "$cw" ] || { warn "chatwoot-rails not running; skipping wire (re-run '$0 wire' later)"; return 0; }
+
+  # 1. Resolve a valid admin access token from the restored Chatwoot DB and put it
+  #    in .env if the current value is empty or the .env.example placeholder.
+  local pg; pg="$(pg_container)"
+  tok="$(docker exec -i "$pg" psql -U postgres -d chatwoot -tAc \
+    "select at.token from access_tokens at join account_users au on au.user_id=at.owner_id where au.role=1 order by au.account_id limit 1;" 2>/dev/null | tr -d '[:space:]')"
+  current="$(grep -E '^CHATWOOT_API_TOKEN=' .env | cut -d= -f2-)"
+  if [ -n "$tok" ] && { [ -z "$current" ] || printf '%s' "$current" | grep -qi 'from Chatwoot'; }; then
+    python3 - "$tok" <<'PY'
+import sys, re
+tok = sys.argv[1]
+s = open(".env").read()
+s = re.sub(r'^CHATWOOT_API_TOKEN=.*$', f'CHATWOOT_API_TOKEN={tok}', s, flags=re.M)
+open(".env", "w").write(s)
+PY
+    log "Resolved CHATWOOT_API_TOKEN from DB; recreating middleware"
+    docker compose up -d --no-deps --force-recreate middleware
+  else
+    log "CHATWOOT_API_TOKEN already set (or no admin token found); leaving as-is"
+  fi
+
+  # 2. Seed the Chatwoot -> middleware webhook.
+  bash "$(dirname "$0")/seed-chatwoot-webhook.sh" || warn "webhook seed failed"
+}
+
 cmd_all() {
   cmd_env
   cmd_build
   cmd_db
   cmd_restore "${1:-$DUMP_DIR_DEFAULT}"
   cmd_up
+  cmd_wire
 }
 
 case "${1:-}" in
@@ -267,9 +306,10 @@ case "${1:-}" in
   db)      cmd_db ;;
   restore) cmd_restore "${2:-}" ;;
   up)      cmd_up ;;
+  wire)    cmd_wire ;;
   tunnel)  cmd_tunnel ;;
   status)  cmd_status ;;
   down)    cmd_down ;;
   all)     cmd_all "${2:-}" ;;
-  *) echo "usage: $0 {env|build|db|restore [DIR]|up|tunnel|status|down|all [DIR]}"; exit 1 ;;
+  *) echo "usage: $0 {env|build|db|restore [DIR]|up|wire|tunnel|status|down|all [DIR]}"; exit 1 ;;
 esac
