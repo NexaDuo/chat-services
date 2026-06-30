@@ -195,6 +195,41 @@ To restore one DB (example: `chatwoot`) onto the running stack:
   - **Validação:** Antes de concluir a correção de um bug, o agente deve obrigatoriamente rodar os testes localmente (`npm run test:all` dentro da pasta `onboarding`) e garantir que a nova asserção/teste de regressão passe, além de monitorar o workflow no CI.
 
 
+## Runbook: Instagram `external_error 100 — "não é a dona do tópico"` (subcode 2534037)
+
+Cluster recorrente de relatórios do self-healing (issue **#64**, agrega #67, #69,
+#72, #84, #97, #98, #100–#106). Mensagens **outgoing** em inboxes
+`Channel::Instagram` ficam `status: failed` com
+`100 - A ação é inválida porque não é a dona do tópico` (subcode `2534037`).
+
+- **Não é bug do nosso stack.** O envio é 100% upstream do Chatwoot:
+  `message.send_reply` → `SendReplyJob` → `Instagram::SendOnInstagramService` →
+  `POST https://graph.instagram.com/v22.0/<instagram_id>/messages`. O nosso
+  `middleware/` **não está no caminho da falha** (a mensagem que falha é a
+  resposta do agente humano/da API, não um echo sem ator) e a nossa IaC só
+  fornece as credenciais do app (`INSTAGRAM_APP_ID/SECRET/VERIFY_TOKEN` em
+  `tenant/main.tf`). O `performed_by: nil` no `ActionCableBroadcastJob` é só o
+  broadcast do status da mensagem já marcada `failed` — sintoma, não causa.
+- **Diagnóstico confirmado empiricamente** (issue #64): com o token de produção,
+  `GET /me` confirma o dono do canal, `GET /<ig_id>/conversations` mostra que a
+  conta **possui** a thread, e os `participants` da thread batem exatamente com o
+  `recipient.id` que o Chatwoot usa — ou seja, **endereçamento, ownership, token
+  e janela de 24h estão todos corretos** e mesmo assim o **POST de envio** é
+  rejeitado, enquanto o `GET` de perfil do mesmo id funciona. Leitura OK + envio
+  bloqueado = **gating de permissão/modo do App Meta**, não dado.
+- **Causa raiz:** o App Meta não tem **Advanced Access** para
+  `instagram_business_manage_messages` (ou está em modo Development). Em
+  Development o IG só envia para usuários com papel no app.
+- **Correção (Meta App Dashboard — não versionável neste repo):** App Review →
+  Advanced Access para `instagram_business_manage_messages`; mover o app para
+  modo **Live**; reconectar o canal (re-OAuth) para o token carregar os escopos;
+  validar reenviando e conferindo `messages.status = sent` + ausência de
+  `external_error 100` em `nexaduo-chatwoot-sidekiq-1`.
+- **Regressão Playwright N/A:** a falha é no job assíncrono Sidekiq; o `POST` da
+  UI retorna 200 (mensagem criada) e só depois vira `failed` — não é observável
+  como erro HTTP no fluxo web, e não há conexão Instagram controlável em CI.
+  Verificação por API/DB/logs.
+
 ## Lições Aprendidas: Migrações de Banco de Dados em Ambientes Existentes
 
 - **Convergência de Esquema é Automática (em código):** `01-init.sql` só roda na
