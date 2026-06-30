@@ -1,0 +1,59 @@
+# =============================================================================
+# docker-compose.localproxy.yml — host-local stand-in for the Coolify Traefik
+# proxy + the production Cloudflare tunnel.
+#
+# This is the SUPPORTED PRODUCTION runtime since GCP was decommissioned
+# (commit b02aa74). The full stack runs as Docker Compose on a single host and
+# is served on the production domains through the Cloudflare tunnel — see
+# AGENTS.md "Deployment Strategy" and issue #109.
+#
+# Routing model: Traefik **Docker provider**. The per-service routers are
+# declared as `traefik.*` labels already committed on each service in
+# deploy/docker-compose.{chatwoot,dify,nexaduo}.yml (chatwoot, dify-api,
+# dify-web, evolution, middleware, grafana). Bringing this file up alongside
+# them reproduces the live routing from code — no hand-mounted dynamic config.
+#
+# Usage (see scripts/run-stack.sh, which chains all compose files):
+#   docker compose \
+#     -f deploy/docker-compose.shared.yml \
+#     -f deploy/docker-compose.chatwoot.yml \
+#     -f deploy/docker-compose.dify.yml \
+#     -f deploy/docker-compose.nexaduo.yml \
+#     -f docker-compose.yml \
+#     -f deploy/docker-compose.localproxy.yml \
+#     up -d
+# =============================================================================
+services:
+  # Traefik edge proxy. Reads router/service definitions from the Docker
+  # provider (the labels on the app containers). The Cloudflare tunnel ingress
+  # for every *.nexaduo.com hostname points at this container on :80.
+  #
+  # NOTE: on Docker Desktop / WSL the Docker provider can fail to reach the
+  # socket ("Error response from daemon:"). If that happens on a given host,
+  # fall back to the file provider by mounting deploy/traefik/dynamic.yml and
+  # swapping --providers.docker for --providers.file.directory — the routes in
+  # that file mirror these labels 1:1. See AGENTS.md "Deployment Strategy".
+  coolify-proxy:
+    image: traefik:v3.4
+    container_name: coolify-proxy
+    restart: unless-stopped
+    command:
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--providers.docker.network=nexaduo-network"
+      - "--entrypoints.http.address=:80"
+      - "--ping=true"
+    healthcheck:
+      test: ["CMD", "traefik", "healthcheck", "--ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - chat-network
+
+networks:
+  chat-network:
+    external: true
+    name: nexaduo-network

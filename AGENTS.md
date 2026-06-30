@@ -32,9 +32,59 @@ WhatsApp ──▶ Evolution API ──▶ Chatwoot (Webhook) ──▶ Middlewa
 
 ## Deployment Strategy
 
-The stack uses a **Hybrid Deployment Model**:
-1. **Foundation (Terraform):** Mature infrastructure components (GCP VM, VPC, Cloudflare Tunnel/DNS, Secrets) are managed via Terraform in `infrastructure/terraform/envs/production/foundation`.
-2. **App Layer (Bash/Docker):** Services are deployed directly via `scripts/deploy-tenant-direct.sh`, which uses SCP/SSH to transfer configurations and start Docker Compose on the VM. This bypasses instabilities in the Coolify Terraform provider.
+> **Current reality (since commit `b02aa74`, 2026-06-30): GCP is decommissioned.**
+> There is no cloud VM, no Secret Manager, no GCS, and no WIF. The GitHub Actions
+> `deploy.yml` / `power.yml` pipeline is **GCP-bound and dead** (kept
+> `workflow_dispatch`-only as a stub for when/if a cloud target is restored — do
+> not rely on it). The only running environment is the **host-local Docker
+> Compose stack** described below. There is **no separate staging vs prod** today;
+> the single host-local stack *is* production. See memory
+> `deploy-pipeline-dead-gcp-decommissioned` and issue #109.
+
+**Supported runtime — host-local Docker Compose served by the Cloudflare tunnel:**
+The full four-service stack runs as Docker Compose on a single host (currently a
+WSL machine, ~31GB RAM) and is served on the production domains
+(`chat`/`dify`/`evolution`/`middleware`/`grafana.nexaduo.com`) through the
+**production Cloudflare tunnel** (`1eea65b4`, ingress → `coolify-proxy:80`). The
+edge → tunnel → local-proxy → container path keeps the public URLs working with
+no cloud spend.
+
+Reproducible, code-driven bootstrap (no manual drift — issue #109):
+1. **Inputs (operator-provided, host-local, NOT in git):**
+   - `./.env` — the real production secrets (incl.
+     `CHATWOOT_FRONTEND_URL=https://chat.nexaduo.com` and `TUNNEL_TOKEN`).
+     Authoritative source is the pre-deletion export `generated.env`
+     (OneDrive `gcp-export-2026-06-29/`), since Secret Manager is gone.
+     Keys documented in [`.env.production.example`](file:///home/ubuntu-24/repos/NexaDuo/chat-services/.env.production.example).
+     **This root `.env` is what the live stack loads — NOT `deploy/.env`**, which
+     is a dev file with a `localhost:3000` `CHATWOOT_FRONTEND_URL` default
+     (verified via #109; `run-stack.sh preflight` refuses a localhost value).
+   - `$DUMPS_DIR` (`~/nexaduo-local/dumps`) — the `pg_dump` set to restore.
+     Prefer the last-good `*-2026-06-25-0300.sql.gz` (see memory
+     `prod-data-loss-2026-06-25`).
+2. **Bootstrap:** [`scripts/run-stack.sh`](file:///home/ubuntu-24/repos/NexaDuo/chat-services/scripts/run-stack.sh)
+   `bootstrap` (= `preflight` + `up` + `restore`) brings up the whole stack +
+   proxy + tunnel from the committed compose chain
+   (`deploy/docker-compose.{shared,chatwoot,dify,nexaduo}.yml` + root
+   `docker-compose.yml` + [`deploy/docker-compose.localproxy.yml`](file:///home/ubuntu-24/repos/NexaDuo/chat-services/deploy/docker-compose.localproxy.yml)).
+3. **Routing:** Traefik **Docker provider** reads the `traefik.*` router labels
+   already committed on each service. The file-provider fallback (for hosts where
+   the Docker provider is flaky, e.g. Docker Desktop/WSL) lives at
+   [`deploy/traefik/dynamic.yml`](file:///home/ubuntu-24/repos/NexaDuo/chat-services/deploy/traefik/dynamic.yml)
+   and mirrors those labels 1:1.
+4. **Validate:** `scripts/run-stack.sh validate` smoke-tests the real tunnel URLs
+   and runs the Playwright connectivity + tenant-resolution suites against them.
+5. **Backup:** [`scripts/backup-host.sh`](file:///home/ubuntu-24/repos/NexaDuo/chat-services/scripts/backup-host.sh)
+   (daily 03:00 host cron via `run-stack.sh install-cron`) replaces the dead
+   GCS-bound `vm-backup.sh`.
+
+**Legacy (GCP) model — retained for reference / future cloud restore only:**
+1. **Foundation (Terraform):** GCP VM, VPC, Cloudflare Tunnel/DNS, Secrets in
+   `infrastructure/terraform/envs/production/foundation`. The Cloudflare-only
+   resources (tunnel/DNS) survive GCP loss; the GCP resources do not apply.
+2. **App Layer (Bash/Docker):** `scripts/deploy-tenant-direct.sh` SCP/SSH'd
+   configs to the VM. The `deploy.yml` pipeline orchestrated this. Dead until a
+   cloud target exists again.
 
 ### Standing up (or rebuilding) an environment from scratch
 
@@ -123,37 +173,61 @@ Whenever you need to run routine verification, ask the agent to **"run a routine
 ## Operational Non-Negotiables
 
 - **RAM:** **16 GB minimum** recommended for the shared stack.
-- **Backup:** daily `pg_dump` (all DBs, `--clean --if-exists`) to GCS via
-  `scripts/vm-backup.sh` (root cron 03:00, installed by `bootstrap-coolify.sh`
-  3e). The script verifies critical DBs (`chatwoot`, `middleware`) were dumped
-  and **fails** otherwise. `/dify-apps` backed up via Git.
-- **Postgres data disk is SACRED.** It is a dedicated `google_compute_disk`
-  guarded by `lifecycle { prevent_destroy = true, ignore_changes = [type] }` plus
-  a daily disk **snapshot schedule** (14-day retention). **Never** change a
-  force-new disk attribute (`type`, zone, size-down): on 2026-06-25 a
-  `pd-balanced` type change recreated the disk **blank** and wiped production
-  Chatwoot (the startup script `mkfs`'d the empty disk). See memory
-  `prod-data-loss-2026-06-25`.
+- **Backup (host-local runtime):** daily `pg_dump` (all DBs, `--clean
+  --if-exists`) via [`scripts/backup-host.sh`](file:///home/ubuntu-24/repos/NexaDuo/chat-services/scripts/backup-host.sh)
+  (host cron 03:00, installed by `run-stack.sh install-cron`). Dumps land in
+  `~/nexaduo-local/dumps` and, if `BACKUP_RCLONE_REMOTE` is set, are copied
+  **off-host** via rclone (a dump that only lives on the same host is not a
+  backup). The script verifies critical DBs (`chatwoot`, `middleware`) were
+  dumped and **fails** otherwise. `/dify-apps` backed up via Git.
+  - This **replaces** the GCS/`gcloud`-bound `scripts/vm-backup.sh`, which is
+    **dead** since GCP was decommissioned (`b02aa74`). `vm-backup.sh` is kept
+    only for a future cloud restore.
+  - **`pg_dump` is NOT a full backup.** Critical state lives in Docker volumes
+    that no dump captures: Dify per-workspace RSA privkeys (encrypt the Azure
+    OpenAI model-provider creds → lost = `PrivkeyNotFoundError` 500s) and
+    chatwoot-storage uploads. Periodically archive the Docker volumes too. See
+    memory `local-run-stack`.
+- **Postgres data is SACRED.** On the host-local runtime it lives in the Docker
+  named volume `nexaduo_postgres-data`. **Never** `docker compose down -v` or
+  prune it; `run-stack.sh down` deliberately omits `-v`. The host serves
+  production and is shared with concurrent work — do **not** recreate the
+  postgres container casually. (Legacy GCP: it was a dedicated
+  `google_compute_disk` guarded by `prevent_destroy` + daily snapshots; on
+  2026-06-25 a `pd-balanced` `type` change recreated that disk **blank** and
+  wiped production Chatwoot — never change a force-new disk attribute. See
+  memory `prod-data-loss-2026-06-25`.)
 - **Observability:** Grafana + Prometheus for queue depths and **token usage per account_id**.
 - **Rate limiting:** Respect Meta tiers; throttle in Dify.
 
-### Disaster recovery — restore Postgres from a GCS dump
+### Disaster recovery — restore Postgres from a dump (host-local runtime)
 
-Dumps live at `gs://nexaduo-coolify-backups/<vm-name>/<db>-<YYYY-MM-DD>-0300.sql.gz`.
-To restore one DB (example: `chatwoot`) onto the running stack:
+Dumps live in `~/nexaduo-local/dumps/<db>-<YYYY-MM-DD>-HHMM.sql.gz` (and, if an
+off-host `BACKUP_RCLONE_REMOTE` is configured, a mirror there). The pre-deletion
+full history is on OneDrive (`gcp-export-2026-06-29/dumps-full-history/`). The
+last-good production set is `*-2026-06-25-0300.sql.gz` (see memory
+`prod-data-loss-2026-06-25`). `scripts/run-stack.sh restore` automates the loop
+below; to restore one DB (example: `chatwoot`) by hand onto the running stack:
 
-1. **Snapshot first** (rollback): `gcloud compute snapshots create pre-restore-<ts>
-   --source-disk=<vm>-postgres-disk --source-disk-zone=<zone>`.
-2. Pick the right dump — verify it has the data (`gsutil cat <dump> | zcat |
-   grep <marker>`); a post-incident dump may be of an already-empty DB.
-3. Stop the consumers: `docker stop` the `chatwoot-*` containers (or the service
-   that owns the DB).
+1. **Archive current data first** (rollback): copy off the `nexaduo_postgres-data`
+   volume, or take a fresh `backup-host.sh` dump before overwriting.
+2. Pick the right dump — verify it has the data (`zcat <dump> | grep <marker>`);
+   a post-incident dump may be of an already-empty DB.
+3. Stop the consumers: `docker stop` the `nexaduo-chatwoot-*` containers (or the
+   service that owns the DB).
 4. Recreate the DB empty: terminate connections, `DROP DATABASE` + `CREATE
    DATABASE` (the dump is `--clean --if-exists`, so restoring onto a populated DB
    also works, but an empty DB is cleanest).
-5. Restore: `gsutil cat <dump> | zcat | docker exec -i <pg> psql -U postgres -d <db>`
-   (or pipe a locally-downloaded dump through `gcloud compute ssh ... --command`).
-6. Start the consumers and validate row counts + the app responding.
+5. Restore: `zcat <dump> | docker exec -i nexaduo-postgres-1 psql -U postgres -d <db>`.
+6. Start the consumers and validate row counts + the app responding via the
+   tunnel (`scripts/run-stack.sh validate`).
+7. **Remember the Docker volumes** (Dify privkeys, chatwoot-storage) — a dump
+   restore alone leaves `PrivkeyNotFoundError`; restore the archived volumes or
+   re-run `flask reset-encrypt-key-pair` and re-enter the Azure OpenAI creds.
+
+(Legacy GCP path: dumps were at `gs://nexaduo-coolify-backups/...`, restored via
+`gsutil cat | zcat | docker exec psql` after a `gcloud compute snapshots create`.
+Dead with GCP.)
 
 ## Deployment Strategies to AVOID
 
@@ -178,13 +252,40 @@ To restore one DB (example: `chatwoot`) onto the running stack:
 
 ## Diretrizes de Release, Deploy e Acompanhamento de Workflows
 
-- **Fases Obrigatórias no Plano:** Todo plano de implementação deve obrigatoriamente conter etapas claras para:
-  1. Deploy em Staging.
-  2. Validação E2E/Fumaça em Staging.
-  3. Deploy em Produção.
-  4. Validação E2E/Fumaça em Produção.
-- **Monitoramento Ativo de Workflows:** O agente não deve considerar a tarefa concluída apenas ao abrir o PR ou fazer o push. Ele deve monitorar a execução dos workflows do GitHub Actions (via logs, comandos `gh run watch` ou checagens no Git) até que o deploy em staging e produção seja concluído com sucesso.
-- **Validação com URLs Reais:** A validação final em staging e produção deve ser feita executando os testes automatizados (como os testes do Playwright) apontando para as URLs de produção/staging correspondentes, e nunca apenas localmente.
+> **Realidade pós-GCP (issue #109):** não existe mais pipeline de deploy
+> staging→prod por GitHub Actions, nem ambiente staging separado. Há **um único
+> ambiente**: o stack host-local servido pelo túnel Cloudflare, que **é** a
+> produção (ver "Deployment Strategy"). As fases abaixo foram reescritas para
+> esse modelo de ambiente único. Toda mudança serializa nesse stack vivo — não
+> recrie containers compartilhados (especialmente `nexaduo-postgres-1`) e
+> coordene com qualquer trabalho concorrente no mesmo host.
+
+- **Gate de CI (obrigatório, roda em todo PR):** o workflow
+  `stack-compose-playwright.yml` (job `validate-stack`) sobe a stack inteira em
+  efêmero no runner e roda Playwright (Stage 1 conectividade + Stage 4 resolução
+  de tenant). É o portão real de merge — monitore-o até verde com `gh run watch`.
+- **Fases Obrigatórias no Plano (ambiente único):**
+  1. **CI verde** no PR (`validate-stack`).
+  2. **Aplicar a mudança no stack vivo** a partir do código já mergeado
+     (`scripts/run-stack.sh up`, ou recreate só do serviço afetado — nunca
+     `down -v`, nunca o postgres sem necessidade).
+  3. **Validação no ambiente real:** `scripts/run-stack.sh validate` — smoke das
+     URLs reais do túnel + Playwright (`tests/01-infra.spec.ts`,
+     `tests/07-hybrid-tenants.spec.ts`) apontando para `https://*.nexaduo.com`.
+  4. **Confirmar saúde:** `scripts/health-check-all.sh` + inspeção dos
+     containers `nexaduo-*` afetados (logs/printenv) para o caminho específico
+     da correção.
+  - Se uma fase genuinamente não puder rodar (ex.: ainda não há alvo de cloud
+    para um deploy staging separado), **diga isso explicitamente** no PR — não
+    finja uma fase que não existe.
+- **Monitoramento Ativo de Workflows:** O agente não deve considerar a tarefa
+  concluída apenas ao abrir o PR ou fazer o push. Deve monitorar o
+  `validate-stack` no GitHub Actions (via `gh run watch`/logs) até verde, e
+  então executar/observar a aplicação e a validação no stack vivo.
+- **Validação com URLs Reais:** A validação no ambiente real deve rodar os testes
+  automatizados (Playwright) apontando para as URLs reais do túnel
+  (`https://*.nexaduo.com`) via `scripts/run-stack.sh validate`, e nunca apenas
+  localmente.
 - **Testes de Regressão no Playwright (Obrigatoriedade para Bugs):** Sempre que um bug for corrigido, o agente deve obrigatoriamente avaliar se faz sentido adicionar um teste de regressão ou asserção no Playwright para evitar que o erro ocorra novamente.
   - **Quando faz sentido:** Bugs de autenticação (ex: sessões expiradas, cookie security, redirecionamentos de login), problemas de roteamento (ex: redirecionamentos infinitos com SSL, links quebrados na interface), falhas em APIs consumidas pela UI (ex: erros 401, 500 no refresh de token ou rotas do console), validações de campos de formulário e fluxos de usuário ponta-a-ponta (E2E) que podem ser simulados via navegador.
   - **Quando não faz sentido:** Bugs de infraestrutura interna ou lógica que não são expostos/detectados no fluxo de usuário da web, tais como otimização de consultas SQL internas que não afetam respostas HTTP de maneira observável, configurações internas do sistema operacional, lógica interna do banco de dados que já é coberta por testes unitários, ou scripts auxiliares rodados sob demanda via CLI. Se o agente decidir que não faz sentido criar um teste no Playwright, ele deve justificar essa decisão na descrição da alteração ou em sua mensagem final.

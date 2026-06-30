@@ -1,5 +1,11 @@
 name: Stack power (start/stop VM)
 
+# DEAD since GCP was decommissioned (commit b02aa74) — there is no GCP VM to
+# power-cycle and WIF auth no longer resolves. The supported runtime is the
+# host-local Docker Compose stack served by the Cloudflare tunnel; use
+# scripts/run-stack.sh (up/down/status) instead. See AGENTS.md "Deployment
+# Strategy" and issue #109. Kept only for a future cloud restore.
+#
 # One-click power control for a stack VM from the Actions tab.
 # Use this to stop production when idle (saves vCPU/RAM cost) and start it back
 # up on demand. Staging is normally cycled automatically by deploy.yml
