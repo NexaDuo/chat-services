@@ -75,6 +75,32 @@ For each ready item:
    > still gets created either way — never lose the work because the board add
    > failed; fall back to Issues and flag the scope gap.
 
+#### Board status convention (keep it honest, reflect reality)
+The Project (NexaDuo #1 "chat-services") `Status` field is the at-a-glance state
+of every item. **You** are responsible for keeping it accurate:
+- **Todo** — triaged, not started.
+- **In Progress** — set the moment you dispatch it to a specialist.
+- **Blocked** — **needs the user's action or decision** (e.g. a Meta/dashboard
+  change outside the repo, a credential, an approval, a strategy sign-off). When
+  an agent reports back that it can't proceed without the user, move the item to
+  **Blocked** and tell the user *exactly* what you need — never leave it sitting
+  in "In Progress" pretending work is happening.
+- **Done** — only after merged **and** validated (see step 5).
+
+Setting status programmatically (discover IDs once per session; they're stable
+but re-fetch if an edit 404s):
+```bash
+# Discover the Status field id + option ids (Todo/In Progress/Blocked/Done)
+gh project field-list 1 --owner NexaDuo --format json \
+  | jq -r '.fields[] | select(.name=="Status") | .id, (.options[] | "  \(.name) → \(.id)")'
+# Map an issue number → board item id (DEFAULT PAGE IS 30 — use a high --limit)
+gh project item-list 1 --owner NexaDuo --format json --limit 200 \
+  | jq -r ".items[] | select(.content.number==<N>) | .id"
+# Set the status
+gh project item-edit --id <PVTI_…> --project-id <PVT_…> \
+  --field-id <STATUS_FIELD_ID> --single-select-option-id <OPTION_ID>
+```
+
 ### 4. Dispatch (automatic)
 Once an item is on the board, immediately delegate it to the right specialist —
 **do not wait for confirmation**. Use the Agent tool with the matching
@@ -92,8 +118,23 @@ follow AGENTS.md release phases and the regression-test rule. Tell each agent to
 ### 5. Track to done
 After dispatching, summarize for the user: a table of each demand → issue/board
 link → assigned specialist → status. When agents report back, relay PR links and
-whether CI/deploy workflows went green. The task is **not** complete at PR-open;
-follow it to staging+prod deploy success per AGENTS.md.
+whether CI/deploy workflows went green. Keep the board `Status` in sync as state
+changes (In Progress → Blocked when it needs the user → Done). The task is **not**
+complete at PR-open; follow it to staging+prod deploy success per AGENTS.md.
+
+### 6. Capture process improvements where they live (not just in chat)
+When the user teaches you a new way to run the team — a board convention, a
+dispatch rule, a validation gate, a recurring constraint — **persist it into the
+versioned source**, not only into per-session memory:
+- Orchestration / board / dispatch process → **this skill file**
+  (`.claude/skills/tech-lead/SKILL.md`).
+- A rule specific to one discipline's execution → that **agent definition**
+  (`.claude/agents/{engineer,sre,design}.md`).
+- A durable architectural lesson or non-negotiable → **AGENTS.md**.
+Personal memory is a convenience cache, not the team's source of truth. If a
+process tweak only lives in memory, the rest of the team (and a fresh session)
+never gets it. Default to landing it in the skill/agent/AGENTS.md in the same
+turn — and consider opening a PR so the change is reviewed and versioned.
 
 ---
 
