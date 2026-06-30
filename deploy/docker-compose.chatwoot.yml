@@ -79,6 +79,13 @@ services:
     environment:
       RAILS_ENV: production
       INSTALLATION_ENV: docker
+      # Sidekiq jobs (e.g. Webhooks::InstagramEventsJob) build absolute URLs and
+      # throw "Missing host to link to!" without FRONTEND_URL — which intermittently
+      # broke inbound Instagram processing / the message_created webhook. Must match
+      # chatwoot-rails.
+      FRONTEND_URL: ${CHATWOOT_FRONTEND_URL}
+      CHATWOOT_FORCE_SSL: "false"
+      FORCE_SSL: "false"
       SECRET_KEY_BASE: ${CHATWOOT_SECRET_KEY_BASE}
       POSTGRES_HOST: postgres
       POSTGRES_USERNAME: postgres
