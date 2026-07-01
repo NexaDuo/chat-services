@@ -77,6 +77,22 @@ Reproducible, code-driven bootstrap (no manual drift — issue #109):
 5. **Backup:** [`scripts/backup-host.sh`](file:///home/ubuntu-24/repos/NexaDuo/chat-services/scripts/backup-host.sh)
    (daily 03:00 host cron via `run-stack.sh install-cron`) replaces the dead
    GCS-bound `vm-backup.sh`.
+6. **Host ports (optional isolation — issue #119):** by default the base compose
+   publishes a few host ports for convenience/CI
+   (chatwoot 3000, dify-web 3001, dify-api 5001, evolution 8080, middleware 4000,
+   postgres 5432). Since the host is a shared Docker Desktop/WSL box, those can
+   collide with other dev stacks. Run **`scripts/run-stack.sh --isolated up`**
+   (or `ISOLATED=1`) to publish **zero** host ports: this appends
+   [`deploy/docker-compose.isolated.yml`](file:///home/ubuntu-24/repos/NexaDuo/chat-services/deploy/docker-compose.isolated.yml),
+   which resets every `ports:` to empty via the Compose `!reset []` merge tag
+   (needs Compose 2.24.4+; the host runs v5.x). Functionality is unchanged —
+   public traffic still flows via the Cloudflare tunnel → Traefik, and
+   service-to-service still uses the Docker network by container name (no service
+   talks to another over `localhost`/`host.docker.internal`). When isolated,
+   local debug access is via `docker exec` (e.g.
+   `docker exec -it nexaduo-postgres-1 psql -U postgres`) — not `localhost:PORT`.
+   The CI gate (`validate-stack`) keeps the base publishes and does **not** use
+   this override.
 
 **Legacy (GCP) model — retained for reference / future cloud restore only:**
 1. **Foundation (Terraform):** GCP VM, VPC, Cloudflare Tunnel/DNS, Secrets in
