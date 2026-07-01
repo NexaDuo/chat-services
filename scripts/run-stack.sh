@@ -47,6 +47,17 @@ NETWORK="${NETWORK:-nexaduo-network}"
 COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-nexaduo}"
 export COMPOSE_PROJECT_NAME
 
+# Isolation mode (issue #119): with --isolated / ISOLATED=1 we append
+# deploy/docker-compose.isolated.yml, which resets every host `ports:` publish to
+# empty (`ports: !reset []`) so the stack occupies ZERO Windows/WSL host ports
+# (no collision with the operator's other dev environments). Functionality is
+# unchanged: public traffic still flows via the Cloudflare tunnel → Traefik, and
+# service-to-service still uses the Docker network by container name. WITHOUT the
+# flag the base publishes ports normally (current behavior). Access when isolated:
+# via the tunnel URLs, or `docker exec` for local debugging.
+ISOLATED="${ISOLATED:-0}"
+if [[ "${1:-}" == "--isolated" ]]; then ISOLATED=1; shift; fi
+
 # Compose chain: app stacks + cross-stack overrides + the host-local proxy/tunnel.
 COMPOSE_FILES=(
   -f deploy/docker-compose.shared.yml
@@ -56,6 +67,10 @@ COMPOSE_FILES=(
   -f docker-compose.yml
   -f deploy/docker-compose.localproxy.yml
 )
+# Append the isolation override LAST so its `!reset []` wins over the base ports.
+if [[ "$ISOLATED" == "1" ]]; then
+  COMPOSE_FILES+=( -f deploy/docker-compose.isolated.yml )
+fi
 
 # Domains served via the tunnel (for `validate`).
 CHAT_URL="${CHATWOOT_URL:-https://chat.nexaduo.com}"
@@ -86,7 +101,8 @@ preflight() {
 
 up() {
   preflight
-  log "bringing up the stack (project=$COMPOSE_PROJECT_NAME)"
+  log "bringing up the stack (project=$COMPOSE_PROJECT_NAME, isolated=$ISOLATED)"
+  [[ "$ISOLATED" == "1" ]] && log "  isolation ON — no host ports published (access via tunnel URLs or 'docker exec')"
   dc up -d --remove-orphans
   dc ps
 }
@@ -161,7 +177,7 @@ case "${1:-}" in
   down)         down ;;
   status)       status ;;
   *) cat >&2 <<EOF
-Usage: $0 {preflight|up|restore|bootstrap|validate|backup|install-cron|down|status}
+Usage: $0 [--isolated] {preflight|up|restore|bootstrap|validate|backup|install-cron|down|status}
 
   bootstrap    clean rebuild: preflight + up + restore DBs from \$DUMPS_DIR
   up           bring up the stack (populated volume; no restore)
@@ -170,7 +186,14 @@ Usage: $0 {preflight|up|restore|bootstrap|validate|backup|install-cron|down|stat
   install-cron install the daily 03:00 backup cron
   down         stop the stack (Postgres volume PRESERVED)
 
-Env: ENV_FILE=$ENV_FILE  DUMPS_DIR=$DUMPS_DIR  NETWORK=$NETWORK
+  --isolated   (or ISOLATED=1) publish NO host ports — the stack occupies zero
+               Windows/WSL host ports so it won't collide with other dev
+               environments. Everything still works via the Cloudflare tunnel +
+               Traefik; for local debug use 'docker exec' (e.g. psql). WITHOUT
+               this flag the base publishes ports normally (3000/3001/5001/8080/
+               4000/5432). See deploy/docker-compose.isolated.yml.
+
+Env: ENV_FILE=$ENV_FILE  DUMPS_DIR=$DUMPS_DIR  NETWORK=$NETWORK  ISOLATED=$ISOLATED
 EOF
      exit 1 ;;
 esac

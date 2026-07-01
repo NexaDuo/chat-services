@@ -1,0 +1,49 @@
+# docker-compose.isolated.yml — OPT-IN host-port isolation override (issue #119).
+#
+# What it does: when appended to the compose chain, it strips EVERY host port
+# publish from the prod-path stack so the running stack occupies ZERO Windows/WSL
+# host ports. 100% of functionality is preserved because nothing depends on the
+# host publishes:
+#   - Public traffic: Cloudflare tunnel (cloudflared, OUTBOUND) → coolify-proxy:80
+#     → Traefik (Docker provider, committed `traefik.*` labels) → containers by name.
+#   - Service-to-service: the Docker bridge network `nexaduo-network` by container
+#     name (postgres:5432, redis:6379, dify-api:5001, chatwoot-rails:3000,
+#     evolution-api:8080, middleware:4000, …). No service reaches another via
+#     localhost/127.0.0.1/host.docker.internal (verified in #119).
+# Host `ports:` only enabled direct `localhost:PORT` access from the WSL host,
+# which collided with the operator's other dev environments.
+#
+# Why this file and not just editing the base: in Docker Compose, `ports:` in an
+# override is MERGED (concatenated) with the base, not replaced — so `ports: []`
+# would NOT remove anything. We use the Compose merge tag `!reset []` (Compose
+# 2.24.4+; the host runs Compose v5.x) which explicitly resets the list to empty.
+#
+# Usage (opt-in — WITHOUT this file the base publishes ports normally):
+#   scripts/run-stack.sh --isolated up        # or: ISOLATED=1 scripts/run-stack.sh up
+# or append it manually to the chain, LAST after docker-compose.yml:
+#   docker compose -f deploy/docker-compose.shared.yml \
+#     -f deploy/docker-compose.chatwoot.yml -f deploy/docker-compose.dify.yml \
+#     -f deploy/docker-compose.nexaduo.yml -f docker-compose.yml \
+#     -f deploy/docker-compose.isolated.yml up -d
+#
+# Verify: `docker ps` shows NO `0.0.0.0:*->*` mappings with this file; the base
+# alone shows them. Local debug access when isolated: use `docker exec`
+# (e.g. `docker exec -it nexaduo-postgres-1 psql -U postgres`) or drop this file
+# for the run.
+#
+# NOTE: This is NOT the CI override. CI (validate-stack) probes 127.0.0.1:PORT and
+# runs WITHOUT this file, so the base host publishes stay intact for CI. Do not
+# add this file to the CI COMPOSE_FILE chain.
+services:
+  chatwoot-rails:
+    ports: !reset []
+  dify-web:
+    ports: !reset []
+  dify-api:
+    ports: !reset []
+  evolution-api:
+    ports: !reset []
+  middleware:
+    ports: !reset []
+  postgres:
+    ports: !reset []
