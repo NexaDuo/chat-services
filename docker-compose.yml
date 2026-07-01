@@ -94,17 +94,24 @@ services:
 
   loki:
     volumes:
-      - ${PWD}/observability/loki/loki.yaml:/etc/loki/loki.yaml:ro
-  
+      # Directory mount (not single-file) — WSL stale-inode hardening (#113/#116).
+      - ${PWD}/observability/loki:/etc/loki:ro
+
   promtail:
     volumes:
-      - ${PWD}/observability/promtail/promtail.yaml:/etc/promtail/promtail.yaml:ro
+      # Directory mount (not single-file) — WSL stale-inode hardening (#113/#116).
+      - ${PWD}/observability/promtail:/etc/promtail:ro
       - promtail-data:/var/promtail
       - /var/lib/docker/containers:/var/lib/docker/containers:ro
 
   grafana:
-    ports:
-      - "3002:3000"
+    # NO host port publish. Grafana is reached via Traefik on chat-network
+    # (label grafana.loadbalancer.server.port=3000 in deploy/docker-compose.nexaduo.yml)
+    # and, on the tunnel, via https://grafana.nexaduo.com. Publishing 3002 on the
+    # host collided with an unrelated stack (typebot-builder) that grabbed 3002
+    # during the 2026-06-30 WSL restart race → grafana Exit 128
+    # "Bind for 0.0.0.0:3002 failed: port is already allocated" and it never
+    # recovered (see #113). The host is shared; do not re-publish this port.
     environment:
       GF_DATABASE_TYPE: postgres
       GF_DATABASE_HOST: postgres:5432
@@ -119,7 +126,8 @@ services:
 
   prometheus:
     volumes:
-      - ${PWD}/observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      # Directory mount (not single-file) — WSL stale-inode hardening (#113/#116).
+      - ${PWD}/observability/prometheus:/etc/prometheus:ro
 
   postgres:
     ports:
