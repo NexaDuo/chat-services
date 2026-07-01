@@ -1,0 +1,18 @@
+# docker-compose.ci.yml — CI-ONLY overrides for the ephemeral GitHub Actions
+# stack. NOT part of the supported production runtime (scripts/run-stack.sh) and
+# NOT loaded on the shared prod host.
+#
+# Why this exists: the shared root docker-compose.yml deliberately does NOT
+# publish a host port for grafana. On the shared production host that publish
+# collided with an unrelated stack on 0.0.0.0:3002 and caused grafana Exit(128)
+# "port is already allocated" (#113) — in prod grafana is reached via Traefik +
+# the Cloudflare tunnel (grafana.nexaduo.com), so no host port is needed.
+#
+# CI, however, runs on an isolated single-tenant runner with nothing else on
+# 3002 and probes grafana over 127.0.0.1:3002 (Stage 1 Infrastructure Health).
+# This override restores that host publish for CI only. Append it to COMPOSE_FILE
+# after docker-compose.yml in the workflow.
+services:
+  grafana:
+    ports:
+      - "3002:3000"
