@@ -7,11 +7,13 @@
 # is served on the production domains through the Cloudflare tunnel — see
 # AGENTS.md "Deployment Strategy" and issue #109.
 #
-# Routing model: Traefik **Docker provider**. The per-service routers are
-# declared as `traefik.*` labels already committed on each service in
-# deploy/docker-compose.{chatwoot,dify,nexaduo}.yml (chatwoot, dify-api,
-# dify-web, evolution, middleware, grafana). Bringing this file up alongside
-# them reproduces the live routing from code — no hand-mounted dynamic config.
+# Routing model: Traefik runs the **Docker provider AND the file provider**
+# together. The per-service routers are declared both as `traefik.*` labels on
+# each service in deploy/docker-compose.{chatwoot,dify,nexaduo}.yml AND, mirrored
+# 1:1, in deploy/traefik/dynamic.yml (mounted at /etc/traefik/dynamic). The file
+# provider is what keeps *.nexaduo.com routable on Docker Desktop / WSL, where
+# the Docker provider intermittently can't reach the socket. Bringing this file
+# up reproduces working edge routing from code on any host — no hand-editing.
 #
 # Usage (see scripts/run-stack.sh, which chains all compose files):
 #   docker compose \
@@ -28,11 +30,17 @@ services:
   # provider (the labels on the app containers). The Cloudflare tunnel ingress
   # for every *.nexaduo.com hostname points at this container on :80.
   #
-  # NOTE: on Docker Desktop / WSL the Docker provider can fail to reach the
-  # socket ("Error response from daemon:"). If that happens on a given host,
-  # fall back to the file provider by mounting deploy/traefik/dynamic.yml and
-  # swapping --providers.docker for --providers.file.directory — the routes in
-  # that file mirror these labels 1:1. See AGENTS.md "Deployment Strategy".
+  # Routing uses TWO providers simultaneously, for resilience across hosts:
+  #   1. Docker provider — primary; reads the traefik.* labels on the app
+  #      containers. Works on normal Docker hosts.
+  #   2. File provider — mounts deploy/traefik/dynamic.yml (routes mirror the
+  #      labels 1:1). REQUIRED on Docker Desktop / WSL, where the Docker
+  #      provider intermittently fails to reach the socket ("Error response
+  #      from daemon:") and discovers zero routers → every *.nexaduo.com 404s.
+  # Running both means a fresh, code-driven `run-stack.sh up` reproduces working
+  # edge routing on any host with no hand-editing (which previously drifted and
+  # was lost on container recreate — 2026-07-01 incident). Traefik merges
+  # providers; the file provider supplies the routes when Docker yields none.
   coolify-proxy:
     image: traefik:v3.4
     container_name: coolify-proxy
@@ -41,6 +49,8 @@ services:
       - "--providers.docker=true"
       - "--providers.docker.exposedbydefault=false"
       - "--providers.docker.network=nexaduo-network"
+      - "--providers.file.directory=/etc/traefik/dynamic"
+      - "--providers.file.watch=true"
       - "--entrypoints.http.address=:80"
       - "--ping=true"
     healthcheck:
@@ -50,6 +60,10 @@ services:
       retries: 5
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
+      # Directory mount (not single-file) so the WSL bind resolves to a dir and
+      # survives Docker restarts without the stale-inode OCI mount failure.
+      # Path is relative to THIS compose file (deploy/), so ./traefik → deploy/traefik.
+      - ./traefik:/etc/traefik/dynamic:ro
     networks:
       - chat-network
 
