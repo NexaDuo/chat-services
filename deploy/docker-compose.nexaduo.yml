@@ -48,7 +48,9 @@ services:
     user: "0"
     command: -config.file=/etc/loki/loki.yaml
     volumes:
-      - ${NEXADUO_CONF_PATH}/observability/loki/loki.yaml:/etc/loki/loki.yaml:ro
+      # Directory mount (not single-file) to survive the WSL stale-inode OCI
+      # failure that killed the proxy/observability on host restart (#113/#116).
+      - ${NEXADUO_CONF_PATH}/observability/loki:/etc/loki:ro
       - loki-data:/var/loki
     networks:
       - chat-network
@@ -57,7 +59,8 @@ services:
     restart: unless-stopped
     command: -config.file=/etc/promtail/promtail.yaml
     volumes:
-      - ${NEXADUO_CONF_PATH}/observability/promtail/promtail.yaml:/etc/promtail/promtail.yaml:ro
+      # Directory mount (not single-file) — WSL stale-inode hardening (#113/#116).
+      - ${NEXADUO_CONF_PATH}/observability/promtail:/etc/promtail:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - promtail-data:/var/promtail
       - /var/lib/docker/containers:/var/lib/docker/containers:ro
@@ -100,7 +103,10 @@ services:
       - --config.file=/etc/prometheus/prometheus.yml
       - --storage.tsdb.retention.time=30d
     volumes:
-      - ${NEXADUO_CONF_PATH}/observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      # Directory mount (not single-file) — WSL stale-inode hardening (#113/#116).
+      # The command only references --config.file (no default consoles), so
+      # shadowing /etc/prometheus with our config dir is safe.
+      - ${NEXADUO_CONF_PATH}/observability/prometheus:/etc/prometheus:ro
       - prometheus-data:/prometheus
     networks:
       - chat-network
@@ -121,7 +127,8 @@ services:
     restart: unless-stopped
     command: ["--config=/etc/otelcol-contrib/config.yaml"]
     volumes:
-      - ${NEXADUO_CONF_PATH}/observability/otel-collector/config.yaml:/etc/otelcol-contrib/config.yaml:ro
+      # Directory mount (not single-file) — WSL stale-inode hardening (#113/#116).
+      - ${NEXADUO_CONF_PATH}/observability/otel-collector:/etc/otelcol-contrib:ro
     networks:
       - chat-network
   tempo:
@@ -130,7 +137,8 @@ services:
     user: "0"
     command: ["-config.file=/etc/tempo/tempo.yaml"]
     volumes:
-      - ${NEXADUO_CONF_PATH}/observability/tempo/tempo.yaml:/etc/tempo/tempo.yaml:ro
+      # Directory mount (not single-file) — WSL stale-inode hardening (#113/#116).
+      - ${NEXADUO_CONF_PATH}/observability/tempo:/etc/tempo:ro
       - tempo-data:/var/tempo
     networks:
       - chat-network

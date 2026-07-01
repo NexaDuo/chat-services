@@ -16,7 +16,11 @@ jobs:
     # `include:`. The root docker-compose.yml carries cross-stack `depends_on`
     # overrides, so we chain compose files via -f / COMPOSE_FILE instead.
     env:
-      COMPOSE_FILE: deploy/docker-compose.shared.yml:deploy/docker-compose.chatwoot.yml:deploy/docker-compose.dify.yml:deploy/docker-compose.nexaduo.yml:docker-compose.yml
+      # deploy/docker-compose.ci.yml re-publishes grafana on host 3002 for CI
+      # only (the shared docker-compose.yml drops that publish to avoid a host
+      # port collision on the shared prod host — see #113). CI's Stage 1 probes
+      # grafana at 127.0.0.1:3002.
+      COMPOSE_FILE: deploy/docker-compose.shared.yml:deploy/docker-compose.chatwoot.yml:deploy/docker-compose.dify.yml:deploy/docker-compose.nexaduo.yml:docker-compose.yml:deploy/docker-compose.ci.yml
     steps:
       - name: Checkout
         uses: actions/checkout@v4
