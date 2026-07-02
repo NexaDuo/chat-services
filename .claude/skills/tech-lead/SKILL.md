@@ -193,3 +193,34 @@ opening/merging a PR for each tiny tweak is token-expensive and noisy. Instead,
   capped by the quality of the spec you write.
 - **Reproducibility is non-negotiable** (AGENTS.md). Nothing is "done" until it
   exists in code/IaC and survives a from-scratch rebuild.
+
+---
+
+## Working rules (retro 2026-07-01 — verify, don't assume)
+
+These are hard rules, learned from a session where an unverified assumption caused
+a whole issue + PR + config change to be created and then reverted.
+
+- **Verify before you dispatch or record.** Do NOT create an issue, dispatch an
+  agent, or change config based on an *inferred* fact (an ID's owner, who controls
+  an app, what a value "must be"). Confirm it empirically first — one lookup is
+  cheaper than an issue+PR+revert. The Instagram saga (`1042111571516215` assumed
+  to be a foreign "Cloud Humans" app, drove a migration, was actually the tenant's
+  own Instagram App ID) is the canonical cautionary tale.
+- **Tag confidence: verified vs assumed.** In every diagnosis you relay, mark each
+  claim as *verified* (you ran the check) or *assumed* (hypothesis). The user
+  decides differently when they know which is which.
+- **No premature success on async flows.** Never tell the user something worked
+  until you've checked the *terminal state* (the log line, the `status` column, the
+  job result) — not the "enqueued"/"created" step. An outgoing message that returns
+  HTTP 200 can still flip to `failed`.
+- **Authoritative docs before the user hunts.** When the fix needs the user to
+  configure an external system (Meta/GCP/DNS/etc.), dispatch a research step to get
+  the *exact* labels/paths/endpoints FIRST, then give ONE precise instruction.
+  Do not iterate live through wrong guesses — it burns the user's time and trust.
+- **Adversarial/empirical verification comes before the narrative, not after.**
+  Prove the mechanism (API probe, DB row, log) before you write the root-cause story.
+- **Schedule routine SRE audits.** Silent infra failures (a broken backup cron,
+  observability down, a dead file-provider) should surface from a routine
+  `sre-auditor` pass, not from the user stumbling into them. In the 2026-07-01
+  session, 3 of the items closed were infra already broken that nobody knew about.

@@ -52,3 +52,20 @@ the relevant sections before touching code.
 5. Monitor CI/deploy workflows (`gh run watch`) through staging and prod.
 6. Report back: PR URL, test results, and workflow status — plainly, including
    failures.
+
+---
+
+## Efficiency & correctness rules (retro 2026-07-01)
+
+- **Schema-first DB access.** Before writing value queries, confirm the schema once
+  (`\d <table>` or `information_schema.columns`) and use defensive casts
+  (`jsonb::text`, etc.). Blind queries with wrong columns / bad casts / empty joins
+  waste round-trips — a whole batch of retries happened this way in one session.
+- **Scope every tool output.** `SELECT` specific columns + always `LIMIT`; filter
+  `docker logs` by `--since` + a grep pattern; never dump unbounded output. Large
+  outputs cost tokens and get truncated anyway.
+- **Verify before you build.** Don't implement on an inferred fact (an ID's owner,
+  a value's meaning). Confirm empirically first — a wrong assumption can cost an
+  entire PR that has to be reverted.
+- **No premature success.** Report a fix as working only after checking the terminal
+  state (status/log/job result), not the enqueue step — especially for async paths.
