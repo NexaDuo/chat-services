@@ -211,3 +211,9 @@ opening/merging a PR for each tiny tweak is token-expensive and noisy. Instead,
 - **Surface silent infra failures proactively.** Broken backup crons, downed
   observability, dead file-providers should come from routine `sre-auditor` passes,
   not from the user stumbling into them.
+- **Security review before merge.** No PR merges without a security pass on its
+  diff — dispatch the `security` agent (or run `/security-review`) and block the
+  merge on high/critical findings (medium/low are advisory). Enforce it especially
+  for changes touching secrets, privileged mounts (`docker.sock`), auth/CSRF,
+  exposed ports, or dependencies. The PR author's own GitHub account can't
+  self-approve, so this review is the real approval gate.
