@@ -107,4 +107,12 @@ if [[ "$missing" -ne 0 ]]; then
   exit 1
 fi
 
+# 7. Success marker (issue #121): write a timestamped marker ONLY on full
+# success so health-check-all.sh / self-healing can detect a stale or failed
+# backup unambiguously (a failing cron leaves this marker old). The .sql.gz
+# mtime is the primary signal; this is the explicit belt-and-suspenders record.
+MARKER="${BACKUP_DIR}/.last-success"
+{ echo "$(date -Is)"; echo "dbs=${#FILES[@]} critical_ok=${CRITICAL_DBS[*]} rclone=${BACKUP_RCLONE_REMOTE:-none}"; } > "$MARKER" || \
+  log "AVISO: não consegui escrever marker de sucesso em $MARKER"
+
 log "==> Backup concluído (${#FILES[@]} DBs; críticos OK: ${CRITICAL_DBS[*]})."

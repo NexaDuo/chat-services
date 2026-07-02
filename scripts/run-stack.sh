@@ -27,7 +27,10 @@
 #   bootstrap   - preflight + up + restore (greenfield / clean rebuild)
 #   validate    - smoke the real tunnel URLs + run Playwright against them
 #   backup      - run scripts/backup-host.sh once
-#   install-cron- install the 03:00 daily backup cron (host)
+#   install-cron- install/converge the 03:00 daily backup cron (host); dedupes
+#                 stale/legacy entries (issue #121) so it self-heals to one line
+#   reconcile-cron - alias of install-cron (run after a WSL/Docker restart)
+#   check-backup- fail if the newest dump is stale (default >= 26h old)
 #   down        - stop the stack (DOES NOT delete volumes; SACRED Postgres data)
 #   status      - docker compose ps
 #
@@ -105,6 +108,12 @@ up() {
   [[ "$ISOLATED" == "1" ]] && log "  isolation ON — no host ports published (access via tunnel URLs or 'docker exec')"
   dc up -d --remove-orphans
   dc ps
+  # Self-heal the backup schedule on every up (issue #121): WSL/Docker-Desktop
+  # restarts drop the cron daemon and today's incident (a WSL restart) left the
+  # daily pg_dump silently not running. Re-asserting the cron here means the
+  # normal "bring the stack back up after a restart" path also restores backups.
+  log "reconciling backup cron (survive-WSL-restart)"
+  install_cron
 }
 
 restore() {
@@ -158,11 +167,73 @@ validate() {
 }
 
 backup()       { BACKUP_DIR="$DUMPS_DIR" bash "$REPO_ROOT/scripts/backup-host.sh"; }
+
+# A stable marker tag so we can idempotently find/replace OUR cron entry
+# regardless of how it was previously written. Prior entries (issue #121) called
+# the now-renamed scripts/backup-local.sh and had NO tag, so the old
+# `grep -v backup-host.sh` dedupe missed them and left the broken line in place.
+CRON_TAG="# nexaduo-backup (managed by run-stack.sh install-cron)"
+
+# Emit the current crontab with EVERY prior nexaduo backup entry stripped, so
+# running install-cron converges to a single correct line on any host. We match:
+#   - our tag comment (current + tagged past installs),
+#   - any line referencing our backup scripts (backup-host.sh OR the stale
+#     backup-local.sh), so untagged legacy entries are removed too.
+_strip_nexaduo_backup_cron() {
+  crontab -l 2>/dev/null \
+    | grep -vF "$CRON_TAG" \
+    | grep -vE 'backup-(host|local)\.sh' \
+    || true
+}
+
 install_cron() {
   local line="0 3 * * * BACKUP_DIR=${DUMPS_DIR} ${BACKUP_RCLONE_REMOTE:+BACKUP_RCLONE_REMOTE=${BACKUP_RCLONE_REMOTE} }${REPO_ROOT}/scripts/backup-host.sh >> ${HOME}/nexaduo-backup.log 2>&1"
-  ( crontab -l 2>/dev/null | grep -v 'backup-host.sh' ; echo "$line" ) | crontab -
-  log "installed daily 03:00 backup cron:"; echo "  $line"
+  ( _strip_nexaduo_backup_cron; echo "$CRON_TAG"; echo "$line" ) | crontab -
+  log "installed daily 03:00 backup cron (stale/duplicate nexaduo entries removed):"
+  echo "  $line"
+  # WSL/Docker-Desktop hosts (issue #121) restart often and cron may not be
+  # started on boot. reconcile-cron on every `up` re-asserts this entry, and we
+  # nudge the daemon here so it's live now without waiting for a reboot.
+  _ensure_cron_running
 }
+
+# Best-effort: make sure the cron daemon is actually running. On WSL there is no
+# systemd/init by default, so an installed crontab silently never fires after a
+# restart — the exact silent-failure class this issue is about. We start it if we
+# can; if we can't, we warn loudly so the operator knows the schedule is inert.
+_ensure_cron_running() {
+  if pgrep -x cron >/dev/null 2>&1 || pgrep -x crond >/dev/null 2>&1; then
+    return 0
+  fi
+  if command -v service >/dev/null 2>&1 && sudo -n true 2>/dev/null; then
+    sudo -n service cron start >/dev/null 2>&1 && { log "started cron daemon"; return 0; }
+  fi
+  if command -v cron >/dev/null 2>&1 && sudo -n true 2>/dev/null; then
+    sudo -n cron >/dev/null 2>&1 && { log "started cron daemon"; return 0; }
+  fi
+  warn "cron daemon is NOT running and could not be auto-started."
+  warn "  On WSL, add to /etc/wsl.conf: [boot]\\ncommand=\"service cron start\""
+  warn "  and/or run 'sudo service cron start'. Until then the backup schedule is INERT."
+}
+# Staleness gate (issue #121): fail if the newest dump is older than
+# BACKUP_MAX_AGE_HOURS (default 26h — one missed daily 03:00 run + slack). This
+# is the real guard against the silent failure this issue was about; also wired
+# into scripts/health-check-all.sh.
+check_backup() {
+  local dir="${BACKUP_DIR:-$DUMPS_DIR}"
+  local max_h="${BACKUP_MAX_AGE_HOURS:-26}"
+  [[ -d "$dir" ]] || die "backup dir not found: $dir (no dumps ever taken?)"
+  local newest; newest="$(find "$dir" -type f -name '*.sql.gz' -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -n1)"
+  [[ -n "$newest" ]] || die "STALE BACKUP: no *.sql.gz in $dir at all"
+  local epoch="${newest%% *}"; local file="${newest#* }"
+  local age_s=$(( $(date +%s) - ${epoch%.*} ))
+  local age_h=$(( age_s / 3600 ))
+  if (( age_h >= max_h )); then
+    die "STALE BACKUP: newest dump is ${age_h}h old (>= ${max_h}h): $(basename "$file"). Daily cron likely not running — see 'install-cron'."
+  fi
+  log "backup OK: newest dump ${age_h}h old ($(basename "$file")); threshold ${max_h}h"
+}
+
 down()   { warn "stopping stack — Postgres volume is preserved (no -v)"; dc down; }
 status() { dc ps; }
 
@@ -174,16 +245,20 @@ case "${1:-}" in
   validate)     validate ;;
   backup)       backup ;;
   install-cron) install_cron ;;
+  reconcile-cron) install_cron ;;
+  check-backup) check_backup ;;
   down)         down ;;
   status)       status ;;
   *) cat >&2 <<EOF
-Usage: $0 [--isolated] {preflight|up|restore|bootstrap|validate|backup|install-cron|down|status}
+Usage: $0 [--isolated] {preflight|up|restore|bootstrap|validate|backup|install-cron|reconcile-cron|check-backup|down|status}
 
   bootstrap    clean rebuild: preflight + up + restore DBs from \$DUMPS_DIR
-  up           bring up the stack (populated volume; no restore)
+  up           bring up the stack (populated volume; no restore) + reconcile cron
   validate     smoke real tunnel URLs + Playwright against them
   backup       run scripts/backup-host.sh once
-  install-cron install the daily 03:00 backup cron
+  install-cron install/converge the daily 03:00 backup cron (dedupes stale entries)
+  reconcile-cron  alias of install-cron (idempotent; run after a WSL restart)
+  check-backup verify the newest dump is fresh (< \${BACKUP_MAX_AGE_HOURS:-26}h)
   down         stop the stack (Postgres volume PRESERVED)
 
   --isolated   (or ISOLATED=1) publish NO host ports — the stack occupies zero
