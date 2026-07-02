@@ -1,6 +1,24 @@
 auth_enabled: false
 
 server:
+  # Run the query path at `warn` so Loki stops emitting a per-query INFO
+  # `caller=metrics.go ... status=500` line for EVERY query (issue #21).
+  # That 500 is a cosmetic upstream Loki 3.2.0 artifact: the querier records
+  # the internal gRPC context-cancellation that happens at the normal end of
+  # each streamed sub-query as `status=500`, while the query-frontend
+  # (`component=frontend`) returns HTTP 200 with the full result set to the
+  # caller. Proven two ways: (a) 12h of prod logs show 116/116 frontend
+  # queries = status=200 and zero client-facing 500s; (b) a clean stock
+  # `grafana/loki:3.2.0` reproduces the querier `status=500` for ANY query
+  # (even a zero-match filter), independent of limits/schema/sharding — so no
+  # `limits_config`/schema/chunk-permission change addresses it. The
+  # self-healing agent therefore always receives 200 and collects logs fine;
+  # the only real problem was log noise (and those lines embed the words
+  # "error/fatal/..." from the query string, so the self-healing agent's own
+  # error-regex scan re-ingested them as false positives). `warn` keeps
+  # genuine warnings/errors (e.g. poller.go index errors) and real operational
+  # metrics still come from Prometheus (/metrics), not these INFO log lines.
+  log_level: warn
   http_listen_port: 3100
   grpc_listen_port: 9096
 
