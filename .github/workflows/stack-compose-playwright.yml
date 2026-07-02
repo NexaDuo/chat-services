@@ -75,9 +75,15 @@ jobs:
         # cloudflared is in deploy/docker-compose.shared.yml; we scale it to 0
         # because CI doesn't have a tunnel token to register. COMPOSE_FILE is
         # set at job level so logs/down steps see the same chain.
+        #
+        # autoheal (issue #41) is also scaled to 0 in CI: on the constrained
+        # 2-core runner Dify's Alembic migrations can take up to ~15 min (issue
+        # #23), which would eventually trip dify-api's healthcheck and let
+        # autoheal restart it mid-migration, looping the boot. CI already has its
+        # own explicit readiness wait loop below, so it does not need autoheal.
         run: |
           docker network create nexaduo-network || true
-          docker compose up -d --remove-orphans --scale cloudflared=0
+          docker compose up -d --remove-orphans --scale cloudflared=0 --scale autoheal=0
 
       - name: Wait for services to be ready
         # chatwoot-rails starts only after chatwoot-init exits (~80s). The

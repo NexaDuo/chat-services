@@ -147,7 +147,15 @@ bootstrap() { preflight; up; restore; log "bootstrap done — validate with: $0 
 validate() {
   log "smoke-testing the real tunnel URLs"
   local fail=0
-  check() { local name="$1" url="$2"; local code; code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 15 "$url" || echo 000)";
+  # Retry a few times before declaring failure: a service (notably dify-api,
+  # issue #41) may be in a brief cold start / autoheal recycle right after a
+  # `run-stack.sh up`, and a single-shot probe would flake on that transient.
+  check() { local name="$1" url="$2"; local code=000 i;
+            for i in $(seq 1 12); do
+              code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 15 "$url" || echo 000)"
+              case "$code" in 2*|3*|4*) break;; esac
+              sleep 5
+            done
             case "$code" in 2*|3*|4*) log "  OK   $name -> $code ($url)";; *) warn "  FAIL $name -> $code ($url)"; fail=1;; esac; }
   check chatwoot     "$CHAT_URL/"
   check dify-web     "$DIFY_URL/"

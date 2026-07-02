@@ -43,6 +43,12 @@ test.describe('Edge routing regression (#113/#116) — no 502/404 on public host
   const edgeHosts = [
     { name: 'Chatwoot', url: CHATWOOT_URL, path: '/' },
     { name: 'Dify', url: DIFY_URL, path: '/' },
+    // Dify API specifically (issue #41): the "/" probe above hits dify-WEB
+    // (Traefik priority 10). The #41 failure is dify-API — a gunicorn master that
+    // bound :5001 with no workers, so the edge returns 502 on the /console/api
+    // route (priority 20) while dify-web stays fine. Probe /console/api/setup so
+    // the worker-less state is caught at the edge, not just dify-web being up.
+    { name: 'Dify API', url: DIFY_API_URL, path: '/console/api/setup' },
     { name: 'Evolution', url: EVOLUTION_URL, path: '/' },
     { name: 'Middleware', url: MIDDLEWARE_URL, path: '/health' },
     { name: 'Grafana', url: GRAFANA_URL, path: '/' },
