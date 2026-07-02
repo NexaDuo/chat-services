@@ -11,9 +11,10 @@
 #   script makes the host `.env` the source of truth and idempotently UPSERTs the
 #   three rows into the running Chatwoot, so a rebuild reproduces them.
 #
-#   It also drives the app-migration in #114: point the channel at Duda's OWN Meta
-#   app (2765038230562952) instead of the Cloud Humans app (1042111571516215) by
-#   simply changing the three .env values and re-running this script.
+#   NOTE (#114): INSTAGRAM_APP_ID is the tenant's Instagram App ID
+#   (Duda: 1042111571516215) — NOT the Facebook App ID 2765038230562952, which
+#   fails the Instagram Login OAuth with "Invalid platform app". To repoint the
+#   channel, change the three .env values and re-run this script.
 #
 # HOW:
 #   Uses Chatwoot's own InstallationConfig model via `rails runner` so the value
@@ -63,7 +64,7 @@ missing=()
 [[ -n "$VERIFY_TOKEN" ]] || missing+=(INSTAGRAM_VERIFY_TOKEN)
 if [[ ${#missing[@]} -gt 0 ]]; then
   die "these keys are empty/missing in $ENV_FILE: ${missing[*]}
-       Add them (Duda's own Meta app 2765038230562952) before reconciling — see #114."
+       Add them (INSTAGRAM_APP_ID=1042111571516215 + Instagram app secret + verify token) before reconciling — see #114."
 fi
 
 docker inspect "$CHATWOOT_CONTAINER" >/dev/null 2>&1 || die "container $CHATWOOT_CONTAINER not found (set CHATWOOT_CONTAINER=...)"
