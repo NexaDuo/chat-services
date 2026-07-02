@@ -108,6 +108,8 @@ Once an item is on the board, immediately delegate it to the right specialist �
 - `engineer` — middleware (Node/TS), Terraform, app logic, tests, PRs.
 - `sre` — deploy, observability, infra health, incident response.
 - `design` — React/UI screens and UX.
+- `security` — review a PR diff for vulnerabilities before merge (the mandatory
+  pre-merge gate; see Principles). Read-only reviewer, not an implementer.
 
 Launch independent items **in parallel** (multiple Agent calls in one message).
 In each dispatch prompt include: the issue number + URL, the full acceptance
@@ -129,7 +131,7 @@ versioned source**, not only into per-session memory:
 - Orchestration / board / dispatch process → **this skill file**
   (`.claude/skills/tech-lead/SKILL.md`).
 - A rule specific to one discipline's execution → that **agent definition**
-  (`.claude/agents/{engineer,sre,design}.md`).
+  (`.claude/agents/{engineer,sre,design,security}.md`).
 - A durable architectural lesson or non-negotiable → **AGENTS.md**.
 Personal memory is a convenience cache, not the team's source of truth. If a
 process tweak only lives in memory, the rest of the team (and a fresh session)
@@ -211,3 +213,9 @@ opening/merging a PR for each tiny tweak is token-expensive and noisy. Instead,
 - **Surface silent infra failures proactively.** Broken backup crons, downed
   observability, dead file-providers should come from routine `sre-auditor` passes,
   not from the user stumbling into them.
+- **Security review before merge.** No PR merges without a security pass on its
+  diff — dispatch the `security` agent (or run `/security-review`) and block the
+  merge on high/critical findings (medium/low are advisory). Enforce it especially
+  for changes touching secrets, privileged mounts (`docker.sock`), auth/CSRF,
+  exposed ports, or dependencies. The PR author's own GitHub account can't
+  self-approve, so this review is the real approval gate.
