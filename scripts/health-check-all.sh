@@ -147,4 +147,30 @@ for required_subname in postgres chatwoot-rails dify-api middleware prometheus; 
   echo "$members" | grep -qw "$required_container" || fail "nexaduo-network missing ${required_subname} (${required_container})"
 done
 
+# ---------------------------------------------------------------------------
+# 6. Backup freshness (issue #121). The daily pg_dump cron failed SILENTLY for
+#    days because it pointed at a renamed script — no dump, no alarm. Flag if the
+#    newest dump in BACKUP_DIR is older than BACKUP_MAX_AGE_HOURS (default 26h =
+#    one 03:00 run + slack). This is the guard so a broken/stale backup never
+#    goes unnoticed again. Skippable via SKIP_BACKUP_CHECK=1 (e.g. ephemeral CI
+#    where no backups are expected).
+# ---------------------------------------------------------------------------
+if [[ "${SKIP_BACKUP_CHECK:-0}" == "1" ]]; then
+  step "Skipping backup freshness check (SKIP_BACKUP_CHECK=1)"
+else
+  BACKUP_DIR="${BACKUP_DIR:-${HOME}/nexaduo-local/dumps}"
+  BACKUP_MAX_AGE_HOURS="${BACKUP_MAX_AGE_HOURS:-26}"
+  step "Checking backup freshness in ${BACKUP_DIR} (max age ${BACKUP_MAX_AGE_HOURS}h)"
+  [[ -d "$BACKUP_DIR" ]] || fail "backup dir ${BACKUP_DIR} does not exist (no dumps ever taken?)"
+  newest_dump="$(find "$BACKUP_DIR" -type f -name '*.sql.gz' -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -n1)"
+  [[ -n "$newest_dump" ]] || fail "no *.sql.gz dumps in ${BACKUP_DIR} — daily backup cron is not producing dumps"
+  dump_epoch="${newest_dump%% *}"; dump_file="${newest_dump#* }"
+  dump_age_h=$(( ( $(date +%s) - ${dump_epoch%.*} ) / 3600 ))
+  if (( dump_age_h >= BACKUP_MAX_AGE_HOURS )); then
+    echo "newest dump: $(basename "$dump_file") is ${dump_age_h}h old" >&2
+    fail "STALE BACKUP: newest dump is ${dump_age_h}h old (>= ${BACKUP_MAX_AGE_HOURS}h). Daily cron likely broken — run 'scripts/run-stack.sh install-cron'."
+  fi
+  echo "  backup OK: newest dump $(basename "$dump_file") is ${dump_age_h}h old"
+fi
+
 echo "OK all stacks healthy — shared + chatwoot + dify + nexaduo"
