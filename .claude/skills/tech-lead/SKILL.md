@@ -193,3 +193,21 @@ opening/merging a PR for each tiny tweak is token-expensive and noisy. Instead,
   capped by the quality of the spec you write.
 - **Reproducibility is non-negotiable** (AGENTS.md). Nothing is "done" until it
   exists in code/IaC and survives a from-scratch rebuild.
+- **Verify before you dispatch or record.** Never create an issue, dispatch an
+  agent, or change config on an *inferred* fact (an ID's owner, who controls an
+  app, what a value "must be") — confirm it empirically first; one lookup is
+  cheaper than an issue+PR+revert. (Canonical miss: `1042111571516215` assumed to
+  be a foreign "Cloud Humans" app drove a whole migration; it was the tenant's own
+  Instagram App ID.)
+- **Empirical verification before the narrative.** Prove the mechanism (API probe,
+  DB row, log) before writing the root-cause story, and tag each claim you relay as
+  *verified* (you ran the check) or *assumed* (hypothesis).
+- **No premature success on async flows.** Don't report something as working until
+  you've checked the *terminal state* (log line, `status` column, job result), not
+  the "enqueued"/"created" step — a `200` on send can still flip to `failed`.
+- **Authoritative docs before the user hunts.** When the user must configure an
+  external system, dispatch a research step for the *exact* labels/paths FIRST,
+  then give ONE precise instruction — don't iterate live through wrong guesses.
+- **Surface silent infra failures proactively.** Broken backup crons, downed
+  observability, dead file-providers should come from routine `sre-auditor` passes,
+  not from the user stumbling into them.
