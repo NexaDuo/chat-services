@@ -51,3 +51,22 @@ for regression patterns before debugging.
    file-linked fix; comment progress on the issue.
 4. Deploy through staging→prod, monitor workflows, validate with real URLs.
 5. Report back plainly, including anything still degraded.
+
+---
+
+## Efficiency & correctness rules (retro 2026-07-01)
+
+- **"Documented ≠ running" is an ACTIVE check, not a belief.** AGENTS.md describing
+  a backup/cron/mount as configured means nothing until you verify it on the live
+  host. This session: the backup cron pointed at a renamed-away script and had been
+  failing silently for days; the Traefik file-provider mount existed only as manual
+  drift. Always confirm the running reality (`crontab -l`, `docker ps`, actual dump
+  mtime, real HTTP probe), not the doc.
+- **Build silent-failure detection into anything scheduled.** A backup/job that can
+  fail quietly needs a freshness/marker check that surfaces the failure (e.g. fail
+  a health check if the newest dump is ≥26h old). If it can fail silently, it will.
+- **Schema-first, scoped output.** Confirm table schema before value queries; use
+  defensive casts; always `--since`+grep on logs and `LIMIT` on SQL. Don't dump
+  unbounded output — it wastes tokens and truncates.
+- **Routine audits beat reactive firefighting.** Run `sre-auditor` on a cadence so
+  broken backups / downed observability / dead cron surface proactively.

@@ -370,3 +370,26 @@ Cluster recorrente de relatórios do self-healing (issue **#64**, agrega #67, #6
 
 
 
+
+## Lição: falhas silenciosas de infra e "documentado ≠ rodando" (retro 2026-07-01)
+
+Numa única sessão descobrimos três coisas de infra **quebradas em silêncio** que o
+AGENTS.md descrevia como funcionando: (1) o cron de backup do Postgres apontava para
+um script renomeado (`backup-local.sh` → `backup-host.sh`) e falhava há dias sem
+alerta; (2) o file-provider do Traefik só existia como drift manual (perdido no
+restart do WSL → 502); (3) o grafana caído por colisão de porta com outro stack no
+host compartilhado. Lições duráveis:
+
+- **Verificação é ativa, não confiança na doc.** Antes de dar algo por certo,
+  confirme a realidade viva: `crontab -l`, `docker ps`, mtime do último dump, probe
+  HTTP real. "Está no AGENTS.md" não é evidência de que está rodando.
+- **Todo agendamento precisa de detecção de falha silenciosa.** Backup/job que pode
+  falhar calado exige marcador de sucesso + check de staleness que **falha** um
+  health-check quando o artefato mais novo passa do limite (ex.: dump ≥ 26h). Ver
+  `scripts/backup-host.sh` (marcador `.last-success`) + `scripts/health-check-all.sh`.
+- **Verificar antes de agir.** Não construa correção/IaC sobre um fato inferido
+  (dono de um ID, significado de um valor). Uma suposição errada custou uma
+  migração inteira revertida (o `INSTAGRAM_APP_ID` que era o app próprio do tenant,
+  não de terceiro — ver memória `instagram-wrong-app-root-cause`).
+- **Nada de sucesso prematuro em fluxo assíncrono.** Confirme o estado terminal
+  (status/log/job), não o passo de enfileiramento.
