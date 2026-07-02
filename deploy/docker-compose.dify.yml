@@ -11,6 +11,22 @@ services:
   dify-api:
     image: langgenius/dify-api:1.13.3
     restart: unless-stopped
+    # Healthcheck for issue #41: after a redeploy/recreate the gunicorn master
+    # sometimes binds :5001 but no workers boot ("Booting worker" never appears),
+    # so the port accepts TCP but every request hangs (0 bytes -> edge 502).
+    # /health is a Flask route SERVED BY A WORKER (returns {"pid","status","version"}),
+    # so it fails exactly in the worker-less state — unlike a bare TCP probe.
+    # NOTE: plain Compose `restart:` does NOT act on health status; the `autoheal`
+    # sidecar in docker-compose.shared.yml watches `autoheal=true` containers and
+    # restarts them when they go `unhealthy`, which recycles the worker-less master.
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "--max-time", "8", "http://localhost:5001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      # Generous cold-start grace: Dify runs Alembic migrations + gunicorn/gevent
+      # boot on start. During start_period a failing probe does not mark unhealthy.
+      start_period: 180s
     depends_on:
       dify-init:
         condition: service_completed_successfully
@@ -21,6 +37,9 @@ services:
       dify-ssrf-proxy:
         condition: service_started
     labels:
+      # Recycled by the autoheal sidecar (docker-compose.shared.yml) when the
+      # healthcheck below reports `unhealthy` — the #41 worker-less-master fix.
+      - "autoheal=true"
       - "traefik.enable=true"
       - "traefik.http.routers.dify-api.rule=Host(`${DIFY_DOMAIN}`) && (PathPrefix(`/v1`) || PathPrefix(`/console/api`) || PathPrefix(`/files`))"
       - "traefik.http.routers.dify-api.entrypoints=http"

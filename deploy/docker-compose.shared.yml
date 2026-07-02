@@ -55,6 +55,26 @@ services:
     networks:
       - chat-network
 
+  # autoheal (issue #41): plain Docker Compose `restart:` policies react to a
+  # container *exiting*, NOT to it going `unhealthy`. dify-api's failure mode is a
+  # gunicorn master that stays UP with zero workers, so its own restart policy
+  # never fires. autoheal watches every container labelled `autoheal=true` and
+  # `docker restart`s it once Docker marks it unhealthy — turning the healthcheck
+  # into an actual self-recovery loop. Only labelled containers are touched.
+  autoheal:
+    image: willfarrell/autoheal:1.2.0
+    restart: unless-stopped
+    environment:
+      AUTOHEAL_CONTAINER_LABEL: autoheal
+      AUTOHEAL_INTERVAL: "15"        # seconds between unhealthy scans
+      AUTOHEAL_START_PERIOD: "120"   # grace before autoheal starts acting
+      AUTOHEAL_DEFAULT_STOP_TIMEOUT: "30"
+      DOCKER_SOCK: /var/run/docker.sock
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - chat-network
+
 volumes:
   postgres-data:
   redis-data:

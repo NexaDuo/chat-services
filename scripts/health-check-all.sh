@@ -16,9 +16,21 @@ fail() {
 
 container_by_subname() {
   local subname="$1"
-  docker ps -a \
+  local name
+  # Coolify-managed path (legacy GCP model): match the subName label.
+  name="$(docker ps -a \
     --filter "label=coolify.service.subName=${subname}" \
-    --format '{{.Names}}' | head -n 1
+    --format '{{.Names}}' | head -n 1)"
+  # Host-local Compose runtime (current, no Coolify labels): fall back to the
+  # deterministic Compose container name `nexaduo-<subname>-1`. Without this the
+  # whole script was inert on the host-local stack (0 labelled containers), so
+  # e.g. an unhealthy dify-api would never be surfaced (issue #41).
+  if [[ -z "$name" ]]; then
+    name="$(docker ps -a \
+      --filter "name=^/nexaduo-${subname}-[0-9]+$" \
+      --format '{{.Names}}' | head -n 1)"
+  fi
+  echo "$name"
 }
 
 require_container() {
@@ -44,6 +56,10 @@ HEALTHCHECK_SUBNAMES=(
   postgres
   redis
   chatwoot-rails
+  # dify-api has a worker-served /health healthcheck (issue #41): a gunicorn
+  # master that bound :5001 with zero workers stays Running=true but goes
+  # unhealthy, so verifying `healthy` (not just running) surfaces that state.
+  dify-api
 )
 
 for subname in "${HEALTHCHECK_SUBNAMES[@]}"; do
@@ -62,7 +78,7 @@ done
 # ---------------------------------------------------------------------------
 RUNNING_SUBNAMES=(
   chatwoot-sidekiq
-  dify-api
+  # dify-api moved to HEALTHCHECK_SUBNAMES above (now has a healthcheck, #41).
   dify-web
   dify-worker
   dify-sandbox
