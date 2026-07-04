@@ -131,8 +131,12 @@ export function isInteractiveOperatorSession(service: string, message: string): 
   const svc = service || '';
   const isPostgres = /postgres|psql|pgbouncer/i.test(svc);
 
-  // Explicit client markers (present when log_line_prefix includes %a).
-  if (/application_name\s*=\s*psql|\bapp(?:lication)?\s*=\s*['"]?psql\b|\[unknown\]/i.test(message)) {
+  // Explicit psql client markers (present when log_line_prefix includes %a).
+  // NOTE: `[unknown]` is deliberately NOT a marker — it is a normal
+  // log_line_prefix artifact (unset user/db/app) that also appears on genuine
+  // Postgres errors (auth failures, `PG::ConnectionBad`, deadlocks), so keying
+  // off it would over-suppress real service failures.
+  if (/application_name\s*=\s*psql|\bapp(?:lication)?\s*=\s*['"]?psql\b/i.test(message)) {
     return true;
   }
 

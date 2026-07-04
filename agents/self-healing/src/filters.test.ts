@@ -64,6 +64,27 @@ describe('isInteractiveOperatorSession (#82)', () => {
     const msg = 'ERROR: column "value" does not exist';
     expect(isInteractiveOperatorSession('chatwoot', msg)).toBe(false);
   });
+
+  // Regression: `[unknown]` is a normal log_line_prefix artifact (unset
+  // user/db/app), NOT an interactive-session signal. A genuine app-caused
+  // Postgres error logged with `[unknown]` must NOT be treated as interactive,
+  // otherwise this filter would silently drop real failures (the over-
+  // suppression this PR exists to prevent).
+  test('genuine Postgres error containing [unknown] is NOT an operator session', () => {
+    const constraint =
+      '2026-07-04 10:00:00 UTC [12345] [unknown]@[unknown] ERROR:  duplicate key value violates unique constraint "index_users_on_email"';
+    expect(isInteractiveOperatorSession('postgres', constraint)).toBe(false);
+
+    const connBad =
+      '2026-07-04 10:00:00 UTC [12345] [unknown]@[unknown] FATAL:  PG::ConnectionBad: could not connect to server';
+    expect(isInteractiveOperatorSession('postgres', connBad)).toBe(false);
+  });
+
+  test('interactive typo still detected even with [unknown] prefix', () => {
+    const msg =
+      '2026-06-30 10:46:10 UTC [999] [unknown]@[unknown] ERROR:  column "value" does not exist at character 14 STATEMENT:  select name, value from installation_configs';
+    expect(isInteractiveOperatorSession('postgres', msg)).toBe(true);
+  });
 });
 
 describe('matchIgnoreRule (versioned allowlist)', () => {
@@ -130,6 +151,16 @@ describe('shouldFileIssue — end-to-end gate', () => {
   test('a genuine service error DOES file', () => {
     const line = 'E, [ts] ERROR -- : PG::ConnectionBad: could not connect to server: Connection refused';
     expect(shouldFileIssue('chatwoot', line, rules)).toEqual({ file: true });
+  });
+
+  test('genuine Postgres error with [unknown] prefix STILL files (not over-suppressed)', () => {
+    const constraint =
+      '2026-07-04 10:00:00 UTC [12345] [unknown]@[unknown] ERROR:  duplicate key value violates unique constraint "index_users_on_email"';
+    expect(shouldFileIssue('postgres', constraint, rules)).toEqual({ file: true });
+
+    const connBad =
+      '2026-07-04 10:00:00 UTC [12345] [unknown]@[unknown] FATAL:  PG::ConnectionBad: could not connect to server';
+    expect(shouldFileIssue('postgres', connBad, rules)).toEqual({ file: true });
   });
 
   test('an unparseable genuine error still files (fails open)', () => {
