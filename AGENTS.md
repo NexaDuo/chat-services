@@ -118,8 +118,16 @@ states, scans logs for known anomalies, and files structured GitHub issues.
   ≥26h old — silent-failure detection).
   - **`pg_dump` is NOT a full backup.** Critical state lives in Docker volumes no dump
     captures: Dify per-workspace RSA privkeys (encrypt the Azure OpenAI creds → lost =
-    `PrivkeyNotFoundError` 500s) and chatwoot-storage uploads. Periodically archive the
-    Docker volumes too.
+    `PrivkeyNotFoundError` 500s) and chatwoot-storage uploads (lost = Chatwoot
+    `ActiveStorage::FileNotFoundError` 500s on avatars/attachments — issue #61).
+    `backup-host.sh` therefore ALSO tars these critical volumes
+    (`BACKUP_VOLUME_SUFFIXES`, default `chatwoot-storage dify-api-storage`) into
+    `~/nexaduo-local/dumps` as `*<suffix>-<ts>.tar.gz`, rotates + off-host-copies them
+    with the dumps, **fails** if a required volume archive is missing/empty, and records
+    them in `.last-success`; `health-check-all.sh` staleness-checks the newest archive
+    (≥26h ⇒ fail). A DB-only restore leaves dangling `active_storage_blobs` rows whose
+    file is gone — `scripts/purge-dangling-blobs.sh` (dry-run by default, `--apply` to
+    purge) removes them safely via the ActiveStorage API.
 - **Postgres data is SACRED.** It lives in the Docker named volume
   `nexaduo_postgres-data`. **Never** `docker compose down -v` or prune it;
   `run-stack.sh down` deliberately omits `-v`. The host serves production and is shared
