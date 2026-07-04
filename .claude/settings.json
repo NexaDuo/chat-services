@@ -1,0 +1,8 @@
+{
+  "extraKnownMarketplaces": {
+    "nexaduo": {
+      "source": { "source": "github", "repo": "NexaDuo/mARC" }
+    }
+  },
+  "enabledPlugins": { "marc@nexaduo": true }
+}
