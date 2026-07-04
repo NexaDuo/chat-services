@@ -16,3 +16,12 @@ services:
   grafana:
     ports:
       - "3002:3000"
+
+  # RAILS_ASSUME_SSL=true is correct in production (Chatwoot sits behind the
+  # Cloudflare tunnel where TLS terminates at the edge — issue #95). But CI probes
+  # Chatwoot directly over plain HTTP on 127.0.0.1:3000; with assume_ssl on, Rails
+  # emits https:// redirect URLs and Stage 1 fails with a TLS "wrong version
+  # number" error against the http port. Disable it for the ephemeral CI stack.
+  chatwoot-rails:
+    environment:
+      RAILS_ASSUME_SSL: "false"
