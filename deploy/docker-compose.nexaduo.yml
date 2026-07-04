@@ -67,16 +67,18 @@ services:
     networks:
       - chat-network
   grafana:
-    # Pinned to 11.6.0 (was 11.3.0). Grafana 11.3.0–11.4.0 ships an upstream bug
+    # Pinned to 11.6.16 (was 11.3.0). Grafana 11.3.0–11.4.0 ships an upstream bug
     # where the native `xychart` core panel is registered twice at startup:
     #   plugins.registration level=error msg="Could not register plugin"
     #     pluginId=xychart error="plugin xychart is already registered"
     # It is NOT caused by our provisioning (reproduces on a vanilla image with no
     # GF_INSTALL_PLUGINS / no dashboards) and is not silenceable via
     # GF_FEATURE_TOGGLES_DISABLE=autoMigrateXYChartPanel (a GA/stable toggle).
-    # Fixed upstream by 11.6.0 — verified 0 occurrences on 11.6.0 both vanilla and
-    # with this provisioning mounted (issue #20).
-    image: grafana/grafana:11.6.0
+    # Fix requires >=11.6.0 — verified 0 occurrences on that line both vanilla and
+    # with this provisioning mounted (issue #20). Pinned to the latest 11.6.x patch
+    # (11.6.16, 2026-06-23) not the .0, to carry ~15 months of intervening security
+    # fixes (@sec MEDIUM advisory on PR #130).
+    image: grafana/grafana:11.6.16
     restart: unless-stopped
     environment:
       GF_SECURITY_ADMIN_PASSWORD: '${GRAFANA_PASSWORD}'
