@@ -187,6 +187,24 @@ else
     fail "STALE BACKUP: newest dump is ${dump_age_h}h old (>= ${BACKUP_MAX_AGE_HOURS}h). Daily cron likely broken — run 'scripts/run-stack.sh install-cron'."
   fi
   echo "  backup OK: newest dump $(basename "$dump_file") is ${dump_age_h}h old"
+
+  # Volume-archive freshness (issue #61). pg_dump does NOT capture Docker volumes
+  # (chatwoot-storage uploads, Dify RSA privkeys); backup-host.sh now tars them as
+  # *<suffix>-<ts>.tar.gz. A fresh DB dump while the volume archive is missing/stale
+  # is the exact gap that caused #61 (DB-only restore → FileNotFoundError 500s) —
+  # so gate on the volume archives too.
+  BACKUP_VOLUME_SUFFIXES="${BACKUP_VOLUME_SUFFIXES:-chatwoot-storage dify-api-storage}"
+  for suffix in $BACKUP_VOLUME_SUFFIXES; do
+    newest_vol="$(find "$BACKUP_DIR" -type f -name "*${suffix}-*.tar.gz" -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -n1)"
+    [[ -n "$newest_vol" ]] || fail "no volume archive *${suffix}-*.tar.gz in ${BACKUP_DIR} — backup is NOT capturing the '${suffix}' Docker volume (pg_dump ≠ full backup; issue #61)"
+    vol_epoch="${newest_vol%% *}"; vol_file="${newest_vol#* }"
+    vol_age_h=$(( ( $(date +%s) - ${vol_epoch%.*} ) / 3600 ))
+    if (( vol_age_h >= BACKUP_MAX_AGE_HOURS )); then
+      echo "newest ${suffix} archive: $(basename "$vol_file") is ${vol_age_h}h old" >&2
+      fail "STALE VOLUME BACKUP: newest '${suffix}' archive is ${vol_age_h}h old (>= ${BACKUP_MAX_AGE_HOURS}h). Volume archival broken — check scripts/backup-host.sh."
+    fi
+    echo "  volume backup OK: newest ${suffix} archive $(basename "$vol_file") is ${vol_age_h}h old"
+  done
 fi
 
 echo "OK all stacks healthy — shared + chatwoot + dify + nexaduo"
