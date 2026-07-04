@@ -36,7 +36,11 @@ echo "[purge-dangling-blobs] container=$RAILS apply=$APPLY"
 
 docker exec -e PURGE_APPLY="$APPLY" "$RAILS" bundle exec rails runner '
 apply = ENV["PURGE_APPLY"] == "1"
-missing = ActiveStorage::Blob.order(:id).reject { |b| b.service.exist?(b.key) rescue false }
+# FAIL-SAFE toward KEEP: deletion requires a *definitive* negative from exist?.
+# If exist? itself raises (permission error, or a future non-Disk/S3 service
+# timing out) we must treat the blob as PRESENT and KEEP it — never delete on an
+# inconclusive check. Hence `rescue true` (present), never `rescue false`.
+missing = ActiveStorage::Blob.order(:id).reject { |b| b.service.exist?(b.key) rescue true }
 if missing.empty?
   puts "[purge-dangling-blobs] no dangling blobs — every blob file is present on disk. Nothing to do."
 else
@@ -45,6 +49,20 @@ else
     atts = ActiveStorage::Attachment.where(blob_id: b.id).map { |a| "#{a.record_type}##{a.record_id}/#{a.name}" }
     puts "  - id=#{b.id} key=#{b.key} filename=#{b.filename} attached=[#{atts.join(", ")}]"
   end
+  # Mass-deletion guard: a service-wide misconfiguration (wrong bucket/prefix/
+  # path, credentials, or a mount that vanished) makes exist? return false for
+  # EVERY blob — indistinguishable here from real per-file loss. Refuse to purge
+  # when the "missing" set is an implausibly large fraction of all blobs; that is
+  # an infra problem to fix, not data to delete. Override with PURGE_MAX_FRACTION.
+  total = ActiveStorage::Blob.count
+  max_fraction = (ENV["PURGE_MAX_FRACTION"] || "0.5").to_f
+  mass = total > 0 && missing.size.to_f / total > max_fraction
+  if mass
+    msg = "#{missing.size}/#{total} blobs report MISSING (> #{(max_fraction*100).round}%) — looks like a storage-service misconfig/outage, not per-file loss. Fix the storage backend (mount/bucket/creds) first. Override with PURGE_MAX_FRACTION if certain."
+    abort "[purge-dangling-blobs] REFUSING to purge: #{msg}" if apply
+    puts "[purge-dangling-blobs] WARNING (dry-run): #{msg}"
+  end
+
   if apply
     missing.each do |b|
       puts "[purge-dangling-blobs] purging id=#{b.id} key=#{b.key}"
