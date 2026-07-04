@@ -1,0 +1,22 @@
+{
+  "_comment": "Versioned, data-driven ignore/allowlist for the self-healing agent. Each rule suppresses a class of known non-actionable log lines so the agent stops filing false/expected board issues (issue #131). A line is suppressed when its `service` label matches `service` (regex, optional) AND every regex in `patterns` matches the log message (case-insensitive). Add a new entry here to silence a new known-noise class — no code change needed.",
+  "rules": [
+    {
+      "id": "chatwoot-enterprise-controller-absent-on-ce",
+      "reason": "Enterprise-only controllers/routes are absent in our Community (CE) edition; Zeitwerk never defines the constant and the route 500s by design. The UI degrades gracefully. Not a bug in our stack (issue #63). To silence another EE controller, add its class name to the alternation below.",
+      "service": "chatwoot",
+      "patterns": [
+        "uninitialized constant (Api::V1::Accounts::)?(CustomRoles|Sla|AuditLogs?|Captain|CopilotThreads?|DashboardApps?)Controller"
+      ]
+    },
+    {
+      "id": "smtp-unconfigured-mail-delivery-epipe",
+      "reason": "SMTP is intentionally not configured in this deployment; ActionMailer falls back to a placeholder transport and MailDeliveryJob dies with Errno::EPIPE. Expected artifact of an unconfigured, out-of-scope mailer, not a transport bug (issue #94). Remove this rule if/when SMTP_* is wired in .env.",
+      "service": "chatwoot",
+      "patterns": [
+        "(MailDeliveryJob|ActionMailer)",
+        "Errno::EPIPE|Broken pipe"
+      ]
+    }
+  ]
+}
