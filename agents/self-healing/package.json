@@ -6,7 +6,9 @@
   "scripts": {
     "build": "tsc",
     "start": "node --require ./dist/telemetry.js dist/index.js",
-    "dev": "node -r ts-node/register -r ./src/telemetry.ts src/index.ts"
+    "dev": "node -r ts-node/register -r ./src/telemetry.ts src/index.ts",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@opentelemetry/api": "^1.9.1",
@@ -27,6 +29,7 @@
     "@types/node": "^20.14.0",
     "@types/pg": "^8.11.10",
     "ts-node": "^10.9.2",
-    "typescript": "^5.4.5"
+    "typescript": "^5.4.5",
+    "vitest": "^2.1.9"
   }
 }

@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { trace, isSpanContextValid } from '@opentelemetry/api';
 import { Database } from './db.js';
 import { LLMAnalysis, LokiQueryResult } from './types.js';
+import { shouldFileIssue, loadIgnoreRules, IgnoreRule } from './filters.js';
 
 const logger = pino({
   level: process.env.LOG_LEVEL || 'info',
@@ -46,6 +47,17 @@ let difyApiKey = '';
 // Log the "no Dify key" degraded mode once, not on every error/loop iteration
 // (the per-iteration spam is what polluted CI logs — issue #22).
 let warnedNoDifyKey = false;
+
+// Versioned, data-driven noise filter (issue #131). Loaded once at startup so a
+// from-scratch bootstrap reproduces the exact filtering. On failure the agent
+// still applies the severity + interactive-session gates (empty rule set).
+let ignoreRules: IgnoreRule[] = [];
+try {
+  ignoreRules = loadIgnoreRules();
+  logger.info({ count: ignoreRules.length }, 'Loaded self-healing ignore rules');
+} catch (error) {
+  logger.warn({ error: (error as Error).message }, 'Failed to load ignore-rules.json; continuing with severity/interactive gates only');
+}
 
 const AnalysisSchema = z.object({
   root_cause: z.string(),
@@ -175,8 +187,18 @@ async function mainLoop(): Promise<void> {
         const uniqueMessages = Array.from(new Set(messages));
 
         for (const message of uniqueMessages) {
+          // Noise gate (issue #131): drop INFO/DEBUG/WARN lines, operator
+          // interactive-psql errors, and known non-actionable classes
+          // (absent EE controllers on CE, unconfigured SMTP) BEFORE spending an
+          // LLM call or filing an insight. See filters.ts / ignore-rules.json.
+          const decision = shouldFileIssue(service, message, ignoreRules);
+          if (!decision.file) {
+            logger.debug({ service, reason: decision.reason }, 'Suppressed non-actionable log line');
+            continue;
+          }
+
           const fingerprint = getFingerprint(service, message);
-          
+
           if (await db.isCooldownActive(fingerprint, COOLDOWN_HOURS)) {
             continue;
           }
