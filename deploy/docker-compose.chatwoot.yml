@@ -42,6 +42,10 @@ services:
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/1
       CHATWOOT_FORCE_SSL: "false"
       FORCE_SSL: "false"
+      # Trust the tunnel/Traefik forwarded https scheme so request.base_url is
+      # https and the /super_admin CSRF Origin check passes (issue #95). This is
+      # assume_ssl (no redirect), NOT force_ssl — no Cloudflare SSL redirect loop.
+      RAILS_ASSUME_SSL: "true"
       GOOGLE_CLIENT_ID: ${GOOGLE_OAUTH_CLIENT_ID}
       GOOGLE_CLIENT_SECRET: ${GOOGLE_OAUTH_CLIENT_SECRET}
       GOOGLE_OAUTH_CALLBACK_URL: ${GOOGLE_OAUTH_CALLBACK_URL}
@@ -55,6 +59,7 @@ services:
       - chatwoot-storage:/app/storage
       - chatwoot-public:/app/public
       - ${NEXADUO_CONF_PATH}/deploy/ai_agents.rb:/app/config/initializers/ai_agents.rb:ro
+      - ${NEXADUO_CONF_PATH}/deploy/assume_ssl.rb:/app/config/initializers/assume_ssl.rb:ro
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
@@ -83,6 +88,9 @@ services:
       FRONTEND_URL: ${CHATWOOT_FRONTEND_URL}
       CHATWOOT_FORCE_SSL: "false"
       FORCE_SSL: "false"
+      # Kept in parity with chatwoot-rails (issue #95); harmless in Sidekiq (no
+      # rack requests) — background jobs derive https from FRONTEND_URL.
+      RAILS_ASSUME_SSL: "true"
       POSTGRES_HOST: postgres
       POSTGRES_USERNAME: postgres
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
@@ -92,6 +100,7 @@ services:
       - chatwoot-storage:/app/storage
       - chatwoot-public:/app/public
       - ${NEXADUO_CONF_PATH}/deploy/ai_agents.rb:/app/config/initializers/ai_agents.rb:ro
+      - ${NEXADUO_CONF_PATH}/deploy/assume_ssl.rb:/app/config/initializers/assume_ssl.rb:ro
     command: ["bundle", "exec", "sidekiq", "-C", "config/sidekiq.yml"]
     networks:
       - chat-network
