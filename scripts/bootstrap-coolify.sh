@@ -215,7 +215,7 @@ SEED_TMP="$(mktemp -d)"
 cp "${PROJECT_ROOT}/infrastructure/postgres/01-init.sql" "${SEED_TMP}/01-init.sql"
 cp -r "${PROJECT_ROOT}/observability" "${SEED_TMP}/observability"
 mkdir -p "${SEED_TMP}/deploy"
-cp "${PROJECT_ROOT}/deploy/ai_agents.rb" "${SEED_TMP}/deploy/ai_agents.rb"
+cp "${PROJECT_ROOT}/deploy/chatwoot-initializers/ai_agents.rb" "${SEED_TMP}/deploy/ai_agents.rb"
 tar -C "${SEED_TMP}" -czf "${SEED_TMP}/seed.tar.gz" 01-init.sql observability deploy
 gcloud compute scp \
   --project "$PROJECT_ID" --zone "$ZONE" --tunnel-through-iap --quiet \

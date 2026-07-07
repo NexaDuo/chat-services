@@ -226,6 +226,33 @@ Outgoing messages on `Channel::Instagram` inboxes fail with
   `\gexec`). Reapply it against the running Postgres via `docker exec psql` so any
   environment converges to the versioned schema — no manual migration.
 
+## Lesson: reboot recovery, inode-swap bind mounts & external uptime (issue #138)
+On 2026-07-07 a WSL/host reboot took production down for **~6h**: core containers
+(`nexaduo-postgres-1`, `nexaduo-chatwoot-rails-1`) came back unhealthy because
+**single-file bind mounts break on inode swap** after a reboot (the host source can
+even flip to an empty directory — we found `/opt/nexaduo/postgres/01-init.sql` had
+become a dir), so containers exited **127** with `RestartCount=0`; `restart:
+unless-stopped` could not self-heal; `cloudflared` stayed up so the tunnel still
+answered and **nothing alerted**. Fixes, all in code:
+- **Auto boot recovery.** `scripts/boot-recover.sh` waits for the Docker daemon then
+  runs `run-stack.sh up` (never `-v`; postgres volume SACRED) and verifies
+  postgres + chatwoot-rails reach `healthy` before writing `.last-boot-recover`.
+  `run-stack.sh install-cron` (run by every `up`) installs it as a **@reboot user
+  cron** (works because `/etc/wsl.conf` has `systemd=true`) and, best-effort with
+  sudo, an **`/etc/wsl.conf [boot] command`**. `health-check-all.sh` **fails** if the
+  `@reboot ... boot-recover.sh` entry is missing (documented != running).
+- **Inode-swap fragility.** Prefer **directory mounts over single-file bind mounts**
+  (same fix as loki/promtail/prometheus, #113/#116). Postgres init is now
+  `…/infrastructure/postgres:/docker-entrypoint-initdb.d:ro`; the Chatwoot
+  initializers moved to `deploy/chatwoot-initializers/`, mounted as a directory to
+  `/nexaduo-initializers:ro` and copied into `config/initializers/` at container
+  start (so the current file content is always read on (re)start).
+- **External/independent uptime probe.** `.github/workflows/uptime-probe.yml` runs
+  `scripts/uptime-probe.sh` against the public tunnel URLs every 10 min **on GitHub's
+  infra** (so it alerts even when the host is down — an on-host probe can't). On
+  downtime it opens/updates a GitHub issue (label `uptime-down`) and, if the Actions
+  secret `UPTIME_ALERT_WEBHOOK` is set, POSTs a JSON alert to it.
+
 ## Lesson: silent infra failures & "documented ≠ running" (retro 2026-07-01)
 - **Verification is active, not trust in docs.** Before assuming something works, confirm
   the live reality: `crontab -l`, `docker ps`, the newest dump's mtime, a real HTTP

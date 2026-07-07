@@ -1,0 +1,85 @@
+name: Uptime Probe (external)
+
+# Independent, OFF-host uptime watchdog for the public production tunnel URLs
+# (issue #138). On 2026-07-07 the WSL host rebooted and the stack was down ~6h,
+# but cloudflared kept the tunnel registered and there was no independent watcher,
+# so nobody was alerted. This workflow runs on GitHub's infrastructure (not the
+# WSL host), so it still fires when the host itself is down.
+#
+# ALERTING (where the alert goes):
+#   - If the repo secret UPTIME_ALERT_WEBHOOK is set, scripts/uptime-probe.sh POSTs
+#     a JSON {"text": ...} alert to it (Slack/Discord/ntfy compatible).
+#   - This workflow ALSO opens/updates a GitHub issue (label `uptime-down`) on any
+#     downtime, so there is a durable alert even without a webhook configured.
+
+on:
+  schedule:
+    - cron: '*/10 * * * *'   # every 10 minutes
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: uptime-probe
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run uptime probe
+        id: probe
+        env:
+          UPTIME_ALERT_WEBHOOK: ${{ secrets.UPTIME_ALERT_WEBHOOK }}
+        run: |
+          set +e
+          out="$(bash scripts/uptime-probe.sh 2>&1)"
+          rc=$?
+          echo "$out"
+          {
+            echo "rc=${rc}"
+            echo 'report<<REPORT'
+            echo "$out"
+            echo 'REPORT'
+          } >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Open or update downtime issue
+        if: steps.probe.outputs.rc != '0'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPORT: ${{ steps.probe.outputs.report }}
+        run: |
+          title="uptime: production tunnel endpoint DOWN"
+          body_file="${RUNNER_TEMP}/uptime-body.md"
+          {
+            echo "The external uptime probe (.github/workflows/uptime-probe.yml) detected one or"
+            echo "more production tunnel endpoints DOWN. This probe runs OFF the WSL host so it"
+            echo "fires even when the host itself is down (incident #138). Check the host and run"
+            echo "scripts/run-stack.sh up (or wait for boot-recovery)."
+            echo ""
+            echo "Probe report:"
+            echo ""
+            echo "$REPORT"
+          } > "$body_file"
+          gh label create uptime-down --color b60205 --description "External uptime probe detected downtime" 2>/dev/null || true
+          existing="$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --label uptime-down \
+            --search "$title in:title" --json number --jq '.[0].number' 2>/dev/null || true)"
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --repo "$GITHUB_REPOSITORY" --body-file "$body_file"
+          else
+            gh issue create --repo "$GITHUB_REPOSITORY" --title "$title" --label uptime-down --body-file "$body_file" \
+              || gh issue create --repo "$GITHUB_REPOSITORY" --title "$title" --body-file "$body_file"
+          fi
+
+      - name: Fail job on downtime
+        if: steps.probe.outputs.rc != '0'
+        run: |
+          echo "::error::Uptime probe reported downtime (see report above)."
+          exit 1

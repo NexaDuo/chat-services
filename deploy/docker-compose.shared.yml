@@ -12,7 +12,13 @@ services:
       PGDATA: /var/lib/postgresql/data/pgdata
     volumes:
       - /opt/nexaduo/postgres-data:/var/lib/postgresql/data
-      - /opt/nexaduo/postgres/01-init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+      # DIRECTORY mount (not single-file) — WSL stale-inode hardening (issue #138).
+      # A single-file bind mount of 01-init.sql broke on inode swap after a reboot
+      # (the host source even flipped to an empty directory), so mount the parent
+      # dir; the postgres entrypoint runs every *.sql/*.sh in it on first init.
+      # (In the run-stack.sh chain the docker-compose.yml override below wins with
+      # the repo-relative infrastructure/postgres path.)
+      - /opt/nexaduo/postgres:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d postgres"]
       interval: 10s

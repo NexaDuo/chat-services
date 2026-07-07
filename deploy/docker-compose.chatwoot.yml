@@ -11,11 +11,19 @@ services:
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/1
       SECRET_KEY_BASE: ${CHATWOOT_SECRET_KEY_BASE}
     volumes:
-      - ${NEXADUO_CONF_PATH}/deploy/ai_agents.rb:/app/config/initializers/ai_agents.rb:ro
+      # DIRECTORY mount (not single-file) — WSL stale-inode hardening (issue #138).
+      # Single-file bind mounts break on inode swap after a WSL/host reboot (the
+      # source can even flip to an empty directory), which made chatwoot exit 127
+      # and postgres skip its init on reboot. We mount the whole initializers dir
+      # to a scratch path and copy the .rb files into config/initializers at start,
+      # so the container always reads the current file content on (re)start.
+      - ${NEXADUO_CONF_PATH}/deploy/chatwoot-initializers:/nexaduo-initializers:ro
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
         set -e
+        echo "==> Loading versioned initializers";
+        cp /nexaduo-initializers/*.rb config/initializers/ 2>/dev/null || true;
         echo "==> Running db:prepare (idempotent)";
         bundle exec rails db:prepare;
         echo "==> Clearing onboarding if admin exists";
@@ -58,11 +66,13 @@ services:
     volumes:
       - chatwoot-storage:/app/storage
       - chatwoot-public:/app/public
-      - ${NEXADUO_CONF_PATH}/deploy/ai_agents.rb:/app/config/initializers/ai_agents.rb:ro
-      - ${NEXADUO_CONF_PATH}/deploy/assume_ssl.rb:/app/config/initializers/assume_ssl.rb:ro
+      # DIRECTORY mount (not single-file) — WSL stale-inode hardening (issue #138).
+      # See chatwoot-init above. Copied into config/initializers at start.
+      - ${NEXADUO_CONF_PATH}/deploy/chatwoot-initializers:/nexaduo-initializers:ro
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
+        cp /nexaduo-initializers/*.rb config/initializers/ 2>/dev/null || true
         echo "OmniAuth.config.allowed_request_methods = [:post, :get]" >> config/initializers/omniauth.rb
         exec docker/entrypoints/rails.sh bundle exec rails s -p 3000 -b 0.0.0.0
     healthcheck:
@@ -99,9 +109,17 @@ services:
     volumes:
       - chatwoot-storage:/app/storage
       - chatwoot-public:/app/public
-      - ${NEXADUO_CONF_PATH}/deploy/ai_agents.rb:/app/config/initializers/ai_agents.rb:ro
-      - ${NEXADUO_CONF_PATH}/deploy/assume_ssl.rb:/app/config/initializers/assume_ssl.rb:ro
-    command: ["bundle", "exec", "sidekiq", "-C", "config/sidekiq.yml"]
+      # DIRECTORY mount (not single-file) — WSL stale-inode hardening (issue #138).
+      # See chatwoot-init above. Copied into config/initializers at start.
+      - ${NEXADUO_CONF_PATH}/deploy/chatwoot-initializers:/nexaduo-initializers:ro
+    # Shell entrypoint so we can copy the versioned initializers before Sidekiq
+    # boots, then hand off to the image's rails.sh entrypoint (parity with
+    # chatwoot-rails; the image's default entrypoint is docker/entrypoints/rails.sh).
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        cp /nexaduo-initializers/*.rb config/initializers/ 2>/dev/null || true
+        exec docker/entrypoints/rails.sh bundle exec sidekiq -C config/sidekiq.yml
     networks:
       - chat-network
 volumes:
