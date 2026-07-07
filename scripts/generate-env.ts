@@ -16,8 +16,12 @@ if (fs.existsSync(ENV_PATH) && !force) {
 const generateSecret = (bytes: number) => crypto.randomBytes(bytes).toString('hex');
 
 const generateRobustPassword = () => {
-  const hex = crypto.randomBytes(4).toString('hex').toUpperCase();
-  return `NexaDuo@2026-${hex}`;
+  // Fully random, with NO predictable prefix (issue #135 — the old
+  // "NexaDuo@YEAR-" scheme reduced entropy to a guessable pattern). The trailing
+  // "Aa1!" only guarantees Chatwoot's required character classes (upper/lower/
+  // digit/special); it is not a secret.
+  const random = crypto.randomBytes(24).toString('base64').replace(/[^A-Za-z0-9]/g, '');
+  return `${random}Aa1!`;
 };
 
 console.log('Generating .env from .env.example...');

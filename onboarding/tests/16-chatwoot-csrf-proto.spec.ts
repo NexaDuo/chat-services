@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { requireEnv } from './helpers/creds';
 
 /**
  * Regression test for the Chatwoot CSRF / X-Forwarded-Proto bug.
@@ -29,7 +30,6 @@ import { test, expect } from '@playwright/test';
  */
 
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'alexandre@nexaduo.com';
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'NexaDuo@2026-C9E5FF39';
 const CHATWOOT_URL = process.env.CHATWOOT_URL || 'https://chat.nexaduo.com';
 
 test.describe('Chatwoot CSRF / X-Forwarded-Proto regression', () => {
@@ -68,12 +68,15 @@ test.describe('Chatwoot CSRF / X-Forwarded-Proto regression', () => {
       (await dashboard.first().isVisible().catch(() => false));
 
     if (!alreadyLoggedIn) {
+      // Login is required to exercise the CSRF-protected POST; without a real
+      // password we skip rather than fall back to a hardcoded secret (issue #135).
+      const adminPassword = requireEnv('ADMIN_PASSWORD');
       console.log('- Submitting login (CSRF-protected POST to the auth endpoint)...');
       await emailInput.fill(ADMIN_EMAIL);
       await page
         .locator('input[name="password"], input[type="password"]')
         .first()
-        .fill(ADMIN_PASSWORD);
+        .fill(adminPassword);
 
       // The submit triggers the CSRF-protected sign-in request. We wait for it
       // explicitly so we observe its status even if it fails.
