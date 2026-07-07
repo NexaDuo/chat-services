@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test';
+import { requireEnv } from './helpers/creds';
 
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'alexandre@nexaduo.com';
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
 const COOLIFY_URL = 'https://coolify.nexaduo.com';
 const GRAFANA_URL = 'https://grafana.nexaduo.com';
 
@@ -15,9 +15,10 @@ test.describe('Production Health Validation', () => {
     await page.goto(`${COOLIFY_URL}/login`, { waitUntil: 'load', timeout: 60000 });
 
     if (page.url().includes('/login') || await page.locator('input[name="email"]').isVisible()) {
+      const ADMIN_PASSWORD = requireEnv('ADMIN_PASSWORD');
       console.log('  - Coolify: Logging in...');
       await page.fill('input[name="email"]', ADMIN_EMAIL);
-      await page.fill('input[name="password"]', ADMIN_PASSWORD!);
+      await page.fill('input[name="password"]', ADMIN_PASSWORD);
       await page.click('button[type="submit"]');
       // Espera por qualquer sinal de sucesso (URL mudar ou Dashboard aparecer)
       await page.waitForFunction(() => 
@@ -53,9 +54,10 @@ test.describe('Production Health Validation', () => {
 
     const userField = page.locator('input[name="user"]');
     if (await userField.isVisible()) {
+      const GRAFANA_PASSWORD = requireEnv('GRAFANA_ADMIN_PASSWORD');
       console.log('  - Grafana: Logging in...');
       await userField.fill('admin');
-      await page.fill('input[name="password"]', 'NexaDuo_2026_Admin');
+      await page.fill('input[name="password"]', GRAFANA_PASSWORD);
       await page.click('button[type="submit"]');
       await page.waitForURL(url => url.pathname === '/' || url.pathname.includes('dashboard'), { timeout: 30000 });
     }

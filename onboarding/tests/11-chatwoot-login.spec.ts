@@ -1,10 +1,11 @@
 import { test, expect } from '@playwright/test';
+import { requireEnv } from './helpers/creds';
 
-const ADMIN_EMAIL = 'alexandre@nexaduo.com';
-const ADMIN_PASSWORD = 'NexaDuo@2026-C9E5FF39';
-const CHATWOOT_URL = 'https://chat.nexaduo.com';
+const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'alexandre@nexaduo.com';
+const CHATWOOT_URL = process.env.CHATWOOT_URL || 'https://chat.nexaduo.com';
 
 test('Chatwoot Login Test', async ({ page }) => {
+  const ADMIN_PASSWORD = requireEnv('ADMIN_PASSWORD');
   test.setTimeout(60000);
   console.log(`- Navigating to ${CHATWOOT_URL}/app/login...`);
   await page.goto(`${CHATWOOT_URL}/app/login`, { waitUntil: 'load' });

@@ -1,10 +1,11 @@
 import { test, expect } from '@playwright/test';
+import { requireEnv } from './helpers/creds';
 
-const ADMIN_EMAIL = 'alexandre@nexaduo.com';
-const ADMIN_PASSWORD = 'NexaDuo@2026-C9E5FF39';
+const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'alexandre@nexaduo.com';
 const COOLIFY_URL = 'https://coolify.nexaduo.com';
 
 test('Coolify Realtime Service Connection', async ({ page }) => {
+  const ADMIN_PASSWORD = requireEnv('ADMIN_PASSWORD');
   test.setTimeout(90000);
   
   const consoleErrors: string[] = [];

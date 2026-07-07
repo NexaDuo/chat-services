@@ -1,0 +1,33 @@
+# gitleaks config for the chat-services secret-scanning CI gate (issue #135).
+#
+# Extends the default gitleaks ruleset and adds a narrow allowlist for known
+# non-secret placeholders so the gate fails only on REAL committed credentials.
+# The scan runs on the committed working tree in CI (see the `secret-scan` job in
+# .github/workflows/stack-compose-playwright.yml); .env / deploy/.env are
+# gitignored and never present in a fresh checkout.
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Non-secret CI placeholders, docs examples, and stray CI logs"
+regexTarget = "match"
+
+# Placeholder / fixture values that appear in versioned CI config and tests.
+# These are deliberately fake and safe to commit.
+regexes = [
+  '''ci-dummy-handoff-secret-32''',
+  '''dummy-[a-z0-9-]+''',
+  '''AdminPass123!''',
+  '''test-[a-z0-9-]+''',
+]
+
+# Paths whose content is documentation, generated logs, or the regression guard
+# spec that necessarily references credential shapes by design.
+paths = [
+  '''(^|/)successful_log\.txt$''',
+  '''^docs/''',
+  '''onboarding/tests/18-no-hardcoded-secrets\.spec\.ts$''',
+  '''\.env\.example$''',
+  '''\.env\.production\.example$''',
+]
