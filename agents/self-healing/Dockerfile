@@ -12,6 +12,10 @@ ENV NODE_ENV=production
 WORKDIR /app
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/package*.json ./
+# Versioned noise-filter rules (issue #131). filters.ts resolves this at
+# /app/ignore-rules.json (../ from dist/); it must ship in the runtime image so
+# a from-scratch build reproduces the filtering.
+COPY --from=builder /app/ignore-rules.json ./ignore-rules.json
 RUN if [ -f package-lock.json ]; then npm ci --omit=dev; else npm install --omit=dev; fi
 
 # Run as non-root user

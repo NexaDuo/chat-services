@@ -65,7 +65,14 @@ Run searches across container logs or log bundles (such as `job_log.txt`) for th
 
 #### D. Grafana Built-in Plugin Registration Error
 * **Search Pattern:** `plugin xychart is already registered`
-* **Fix:** Remove the duplicate manual installation of `xychart` from the configuration environment variables.
+* **Root cause:** Upstream Grafana bug in 11.3.0–11.4.0 that double-registers the
+  native `xychart` core panel at startup. NOT caused by our provisioning — it
+  reproduces on a vanilla `grafana/grafana:11.3.0` with no `GF_INSTALL_PLUGINS`
+  and no dashboards, and is not silenceable via
+  `GF_FEATURE_TOGGLES_DISABLE=autoMigrateXYChartPanel` (a GA/stable toggle).
+* **Fix:** Bump the Grafana image to `>= 11.6.0` in
+  [deploy/docker-compose.nexaduo.yml](file:///home/ubuntu-24/repos/NexaDuo/chat-services/deploy/docker-compose.nexaduo.yml)
+  (fixed upstream by 11.6.0; verified 0 occurrences). See issue #20.
 
 #### E. Loki Querier HTTP 500 Failures
 * **Search Pattern:** `metrics.go` log line with `status=500` for Loki range queries.
