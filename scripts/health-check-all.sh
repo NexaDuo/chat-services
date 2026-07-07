@@ -207,4 +207,24 @@ else
   done
 fi
 
+# ---------------------------------------------------------------------------
+# 7. Boot-recovery installed (issue #138). After a WSL/host reboot the stack must
+#    auto-recover; the mechanism is a @reboot cron -> scripts/boot-recover.sh
+#    installed by `run-stack.sh install-cron`. "Documented != running": assert the
+#    entry is actually present so a missing/renamed-away boot hook surfaces HERE
+#    rather than during the next reboot (that gap cost ~6h of downtime on
+#    2026-07-07). Skippable via SKIP_BOOT_CHECK=1 (ephemeral CI has no persistent
+#    crontab and does not reboot).
+# ---------------------------------------------------------------------------
+if [[ "${SKIP_BOOT_CHECK:-0}" == "1" ]]; then
+  step "Skipping boot-recovery check (SKIP_BOOT_CHECK=1)"
+else
+  step "Checking boot-recovery (@reboot) hook is installed"
+  if crontab -l 2>/dev/null | grep -qE '@reboot.*boot-recover\.sh'; then
+    echo "  boot-recovery OK: '@reboot ... boot-recover.sh' present in crontab"
+  else
+    fail "BOOT RECOVERY NOT INSTALLED: no '@reboot ... boot-recover.sh' in crontab. After a WSL/host reboot the stack will NOT self-heal (issue #138 — ~6h outage on 2026-07-07). Run 'scripts/run-stack.sh install-cron' (or 'install-boot')."
+  fi
+fi
+
 echo "OK all stacks healthy — shared + chatwoot + dify + nexaduo"

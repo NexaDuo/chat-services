@@ -11,7 +11,7 @@ import { test, expect } from '@playwright/test';
  * on EVERY state-changing request in the server-rendered /super_admin panel — the
  * exact symptom the SRE audit captured on `PATCH /super_admin/users/3`.
  *
- * Fix (issue #95): deploy/assume_ssl.rb sets `config.assume_ssl = true` (wired from
+ * Fix (issue #95): deploy/chatwoot-initializers/assume_ssl.rb sets `config.assume_ssl = true` (wired from
  * RAILS_ASSUME_SSL in deploy/docker-compose.chatwoot.yml). ActionDispatch::AssumeSSL
  * normalizes the rack env to https, so `base_url` is https and the origin check
  * passes. assume_ssl inserts a middleware only and issues NO redirect, so it cannot

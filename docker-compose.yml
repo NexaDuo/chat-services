@@ -134,7 +134,10 @@ services:
       - "5432:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
-      - ${PWD}/infrastructure/postgres/01-init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+      # DIRECTORY mount (not single-file) — WSL stale-inode hardening (issue #138).
+      # Single-file bind mounts break on inode swap after a WSL/host reboot; mount
+      # the parent dir instead (postgres runs every *.sql in it on first init).
+      - ${PWD}/infrastructure/postgres:/docker-entrypoint-initdb.d:ro
 
   self-healing-agent:
     depends_on:

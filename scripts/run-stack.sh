@@ -30,6 +30,8 @@
 #   install-cron- install/converge the 03:00 daily backup cron (host); dedupes
 #                 stale/legacy entries (issue #121) so it self-heals to one line
 #   reconcile-cron - alias of install-cron (run after a WSL/Docker restart)
+#   install-boot- install/converge the @reboot boot-recovery hook (issue #138) so
+#                 the stack auto-heals after a WSL/host reboot (also run by up)
 #   check-backup- fail if the newest dump is stale (default >= 26h old)
 #   down        - stop the stack (DOES NOT delete volumes; SACRED Postgres data)
 #   status      - docker compose ps
@@ -203,6 +205,10 @@ install_cron() {
   # started on boot. reconcile-cron on every `up` re-asserts this entry, and we
   # nudge the daemon here so it's live now without waiting for a reboot.
   _ensure_cron_running
+  # Boot recovery (issue #138): a WSL/host reboot on 2026-07-07 left prod down ~6h
+  # because nothing brought the stack back and cloudflared masked the outage. Wire
+  # a @reboot hook (and, best-effort, /etc/wsl.conf) so `up` self-heals at boot.
+  install_boot_recovery
 }
 
 # Best-effort: make sure the cron daemon is actually running. On WSL there is no
@@ -223,6 +229,74 @@ _ensure_cron_running() {
   warn "  On WSL, add to /etc/wsl.conf: [boot]\\ncommand=\"service cron start\""
   warn "  and/or run 'sudo service cron start'. Until then the backup schedule is INERT."
 }
+
+# ---------------------------------------------------------------------------
+# Boot recovery (issue #138). A WSL/host reboot must bring the whole stack back
+# to healthy with ZERO manual steps. `restart: unless-stopped` cannot do this
+# (containers exited 127 on inode-swapped bind mounts and were not restarted),
+# and cloudflared staying up masked the outage. We install:
+#   1. a @reboot USER cron -> scripts/boot-recover.sh. This is the primary,
+#      sudo-free mechanism and it works because /etc/wsl.conf already has
+#      systemd=true, so systemd starts cron.service at boot and fires @reboot.
+#   2. best-effort /etc/wsl.conf [boot] command (needs sudo) as belt-and-braces.
+# Idempotent + self-converging, exactly like the backup cron above.
+# ---------------------------------------------------------------------------
+BOOT_CRON_TAG="# nexaduo-boot-recovery (managed by run-stack.sh install-cron)"
+
+# Emit the crontab with any prior nexaduo boot-recovery entry stripped (our tag
+# OR any line referencing boot-recover.sh), so install converges to one line.
+_strip_nexaduo_boot_cron() {
+  crontab -l 2>/dev/null \
+    | grep -vF "$BOOT_CRON_TAG" \
+    | grep -vE 'boot-recover\.sh' \
+    || true
+}
+
+# Idempotently converge /etc/wsl.conf's [boot] command (requires sudo). Preserves
+# any existing keys (e.g. systemd=true). No-op-safe: only runs with passwordless
+# sudo; otherwise the caller prints the exact line so it still lands FROM CODE.
+_converge_wsl_boot_command() {
+  local cmd="$1"
+  sudo -n python3 - "$cmd" <<'PY'
+import configparser, os, sys
+cmd, path = sys.argv[1], "/etc/wsl.conf"
+cp = configparser.ConfigParser()
+cp.optionxform = str  # preserve key case (systemd, command)
+if os.path.exists(path):
+    cp.read(path)
+if not cp.has_section("boot"):
+    cp.add_section("boot")
+cp.set("boot", "command", cmd)
+with open(path, "w") as fh:
+    cp.write(fh)
+print("converged /etc/wsl.conf [boot] command")
+PY
+}
+
+install_boot_recovery() {
+  local user recover rline wsl_cmd
+  user="$(id -un)"
+  recover="${REPO_ROOT}/scripts/boot-recover.sh"
+  chmod +x "$recover" 2>/dev/null || true
+  rline="@reboot ${recover} >> ${HOME}/nexaduo-local/boot-recover.log 2>&1  ${BOOT_CRON_TAG}"
+  ( _strip_nexaduo_boot_cron; echo "$BOOT_CRON_TAG"; echo "$rline" ) | crontab -
+  log "installed @reboot boot-recovery cron -> ${recover}"
+
+  # Belt-and-suspenders: /etc/wsl.conf [boot] command (runs even if cron.service
+  # is disabled). Run boot-recover.sh AS the installing user so it uses the right
+  # HOME/crontab even though wsl.conf executes the command as root.
+  wsl_cmd="su - ${user} -c '${recover}'"
+  if sudo -n true 2>/dev/null; then
+    _converge_wsl_boot_command "$wsl_cmd" && \
+      log "converged /etc/wsl.conf [boot] command (defense-in-depth)"
+  else
+    warn "no passwordless sudo — /etc/wsl.conf [boot] command NOT written automatically."
+    warn "  Boot recovery still works via the @reboot cron above (wsl.conf has systemd=true)."
+    warn "  For defense-in-depth, add under [boot] in /etc/wsl.conf:"
+    warn "    command=\"${wsl_cmd}\""
+  fi
+}
+
 # Staleness gate (issue #121): fail if the newest dump is older than
 # BACKUP_MAX_AGE_HOURS (default 26h — one missed daily 03:00 run + slack). This
 # is the real guard against the silent failure this issue was about; also wired
@@ -254,11 +328,12 @@ case "${1:-}" in
   backup)       backup ;;
   install-cron) install_cron ;;
   reconcile-cron) install_cron ;;
+  install-boot) install_boot_recovery ;;
   check-backup) check_backup ;;
   down)         down ;;
   status)       status ;;
   *) cat >&2 <<EOF
-Usage: $0 [--isolated] {preflight|up|restore|bootstrap|validate|backup|install-cron|reconcile-cron|check-backup|down|status}
+Usage: $0 [--isolated] {preflight|up|restore|bootstrap|validate|backup|install-cron|reconcile-cron|install-boot|check-backup|down|status}
 
   bootstrap    clean rebuild: preflight + up + restore DBs from \$DUMPS_DIR
   up           bring up the stack (populated volume; no restore) + reconcile cron
@@ -266,6 +341,10 @@ Usage: $0 [--isolated] {preflight|up|restore|bootstrap|validate|backup|install-c
   backup       run scripts/backup-host.sh once
   install-cron install/converge the daily 03:00 backup cron (dedupes stale entries)
   reconcile-cron  alias of install-cron (idempotent; run after a WSL restart)
+  install-boot install/converge the @reboot boot-recovery hook (scripts/boot-recover.sh)
+               + best-effort /etc/wsl.conf [boot] command, so the stack auto-heals
+               after a WSL/host reboot with zero manual steps (issue #138). Also
+               run automatically by install-cron / every 'up'.
   check-backup verify the newest dump is fresh (< \${BACKUP_MAX_AGE_HOURS:-26}h)
   down         stop the stack (Postgres volume PRESERVED)
 
