@@ -30,7 +30,7 @@ set -euo pipefail
 APPLY="${PURGE_APPLY:-0}"
 [[ "${1:-}" == "--apply" ]] && APPLY=1
 
-RAILS="${CHATWOOT_RAILS_CONTAINER:-nexaduo-chatwoot-rails-1}"
+RAILS="${CHATWOOT_RAILS_CONTAINER:-chat-services-chatwoot-rails-1}"
 
 echo "[purge-dangling-blobs] container=$RAILS apply=$APPLY"
 

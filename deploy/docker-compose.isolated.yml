@@ -28,7 +28,7 @@
 #
 # Verify: `docker ps` shows NO `0.0.0.0:*->*` mappings with this file; the base
 # alone shows them. Local debug access when isolated: use `docker exec`
-# (e.g. `docker exec -it nexaduo-postgres-1 psql -U postgres`) or drop this file
+# (e.g. `docker exec -it chat-services-postgres-1 psql -U postgres`) or drop this file
 # for the run.
 #
 # NOTE: This is NOT the CI override. CI (validate-stack) probes 127.0.0.1:PORT and

@@ -40,7 +40,7 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ENV_FILE="${ENV_FILE:-${REPO_ROOT}/.env}"
-CHATWOOT_CONTAINER="${CHATWOOT_CONTAINER:-nexaduo-chatwoot-rails-1}"
+CHATWOOT_CONTAINER="${CHATWOOT_CONTAINER:-chat-services-chatwoot-rails-1}"
 DRY_RUN=0
 [[ "${1:-}" == "--dry-run" ]] && DRY_RUN=1
 
