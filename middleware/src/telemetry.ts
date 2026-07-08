@@ -38,6 +38,15 @@ function startTelemetry(): void {
   // Surface SDK/exporter errors as diagnostics, never as thrown exceptions.
   diag.setLogger(new DiagConsoleLogger(), DiagLogLevel.ERROR);
 
+  // We only wire a traceExporter below; NodeSDK would otherwise auto-create a
+  // default metrics PeriodicExportingMetricReader that reads
+  // OTEL_EXPORTER_OTLP_ENDPOINT straight from process.env (not the local
+  // `endpoint` const below) and falls back to localhost:4318, spamming
+  // ECONNREFUSED. We export no custom metrics today, so disable it outright.
+  if (process.env.OTEL_METRICS_EXPORTER === undefined) {
+    process.env.OTEL_METRICS_EXPORTER = "none";
+  }
+
   const endpoint =
     process.env.OTEL_EXPORTER_OTLP_ENDPOINT || "http://otel-collector:4318";
 
