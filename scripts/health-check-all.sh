@@ -232,6 +232,20 @@ else
     fi
     echo "  volume backup OK: newest ${suffix} archive $(basename "$vol_file") is ${vol_age_h}h old"
   done
+
+  # .env freshness — the host .env is production secrets (TUNNEL_TOKEN, DB
+  # passwords, Azure OpenAI creds) and is NOT in git; backup-host.sh archives it
+  # as env-<ts>.tar.gz alongside the dumps/volumes. Without it a DB+volume
+  # restore alone can't reconnect or reach the tunnel, so gate on it too.
+  newest_env="$(find "$BACKUP_DIR" -type f -name 'env-*.tar.gz' -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -n1)"
+  [[ -n "$newest_env" ]] || fail "no env-*.tar.gz in ${BACKUP_DIR} — backup is NOT capturing the host .env (production secrets)."
+  env_epoch="${newest_env%% *}"; env_file_found="${newest_env#* }"
+  env_age_h=$(( ( $(date +%s) - ${env_epoch%.*} ) / 3600 ))
+  if (( env_age_h >= BACKUP_MAX_AGE_HOURS )); then
+    echo "newest .env archive: $(basename "$env_file_found") is ${env_age_h}h old" >&2
+    fail "STALE ENV BACKUP: newest .env archive is ${env_age_h}h old (>= ${BACKUP_MAX_AGE_HOURS}h). Check scripts/backup-host.sh."
+  fi
+  echo "  env backup OK: newest .env archive $(basename "$env_file_found") is ${env_age_h}h old"
 fi
 
 echo "OK all stacks healthy — shared + chatwoot + dify + nexaduo"

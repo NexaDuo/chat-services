@@ -30,6 +30,15 @@
 # dumps, and (section 6) FAILS if a required volume archive is missing/empty and
 # staleness-marks them so a silently-broken volume backup surfaces. See the
 # AGENTS.md DR runbook for the restore side.
+#
+# IMPORTANT (single-env, issue #109): the host-local .env IS production config
+# (secrets incl. TUNNEL_TOKEN, DB passwords, Azure OpenAI creds) and is
+# deliberately NOT in git (see AGENTS.md "Inputs, operator-provided"). It is the
+# one file a DB+volume restore alone can't reconstruct — without it a restored
+# stack can't reach the tunnel or decrypt anything. Section 3c archives it
+# alongside the dumps/volumes (same off-host treatment, no extra encryption —
+# the off-host remote is assumed private/trusted, same as the DB dumps already
+# shipped there) so it survives host loss.
 # =============================================================================
 set -euo pipefail
 
@@ -45,6 +54,7 @@ set -euo pipefail
 #   grafana-data        → Grafana users/custom dashboards not covered by provisioning
 : "${BACKUP_VOLUME_SUFFIXES:=chatwoot-storage dify-api-storage evolution-instances grafana-data}"
 : "${BACKUP_HELPER_IMAGE:=alpine:3.20}"  # tiny image to tar volumes read-only
+: "${ENV_FILE:=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.env}"  # production secrets, not in git
 
 log() { echo "[$(date -Is)] $*"; }
 
@@ -111,14 +121,26 @@ for suffix in $BACKUP_VOLUME_SUFFIXES; do
   fi
 done
 
-# 4. Local rotation (dumps + volume archives).
+# 3c. Archive the host .env (production secrets, not in git — see header). Same
+# tar.gz treatment as the volume archives above so it rides the existing
+# rotation/off-host-copy/coverage-check logic without a new file-type branch.
+ENV_FILE_OUT=""
+if [[ -f "$ENV_FILE" ]]; then
+  ENV_FILE_OUT="${BACKUP_DIR}/env-${TS}.tar.gz"
+  log "==> Archiving ${ENV_FILE} → ${ENV_FILE_OUT}"
+  tar czf "$ENV_FILE_OUT" -C "$(dirname "$ENV_FILE")" "$(basename "$ENV_FILE")"
+else
+  log "AVISO: ENV_FILE (${ENV_FILE}) não encontrado — .env NÃO foi arquivado neste run."
+fi
+
+# 4. Local rotation (dumps + volume archives + .env archive).
 log "==> Limpando backups locais com mais de ${BACKUP_KEEP_DAYS} dias"
 find "$BACKUP_DIR" -type f \( -name '*.sql.gz' -o -name '*.tar.gz' \) -mtime +"$BACKUP_KEEP_DAYS" -print -delete || true
 
 # 5. Off-host copy (optional but strongly recommended — host loss = data loss).
 if [[ -n "$BACKUP_RCLONE_REMOTE" ]]; then
   if command -v rclone >/dev/null 2>&1; then
-    log "==> Copiando para ${BACKUP_RCLONE_REMOTE} via rclone (dumps + volume archives)"
+    log "==> Copiando para ${BACKUP_RCLONE_REMOTE} via rclone (dumps + volume archives + .env)"
     rclone copy "$BACKUP_DIR" "$BACKUP_RCLONE_REMOTE" \
       --include '*.sql.gz' --include '*.tar.gz' --max-age 25h
   else
@@ -178,6 +200,20 @@ if [[ "$vol_missing" -ne 0 ]]; then
   exit 1
 fi
 
+# 6c. .env coverage check — losing this file is fatal for a from-scratch restore
+# (no secrets = can't reach the tunnel, decrypt nothing, reconnect no DB), so
+# treat a missing/empty archive as a hard failure like the DB/volume checks above.
+ENV_MIN_BYTES="${BACKUP_ENV_MIN_BYTES:-100}"
+if [[ -z "$ENV_FILE_OUT" || ! -f "$ENV_FILE_OUT" ]]; then
+  log "ERRO: .env NÃO foi arquivado neste run (tar.gz ausente)."
+  exit 1
+fi
+env_sz="$(stat -c%s "$ENV_FILE_OUT" 2>/dev/null || echo 0)"
+if [[ "$env_sz" -lt "$ENV_MIN_BYTES" ]]; then
+  log "ERRO: arquivo de .env suspeito (${env_sz} bytes < ${ENV_MIN_BYTES})."
+  exit 1
+fi
+
 # 7. Success marker (issue #121): write a timestamped marker ONLY on full
 # success so health-check-all.sh / self-healing can detect a stale or failed
 # backup unambiguously (a failing cron leaves this marker old). The .sql.gz
@@ -185,7 +221,8 @@ fi
 MARKER="${BACKUP_DIR}/.last-success"
 { echo "$(date -Is)";
   echo "dbs=${#FILES[@]} critical_ok=${CRITICAL_DBS[*]} rclone=${BACKUP_RCLONE_REMOTE:-none}";
-  echo "volumes=${#VOL_FILES[@]} archived=${RESOLVED_VOLS[*]:-none} required=${REQUIRED_VOL_SUFFIXES[*]}"; } > "$MARKER" || \
+  echo "volumes=${#VOL_FILES[@]} archived=${RESOLVED_VOLS[*]:-none} required=${REQUIRED_VOL_SUFFIXES[*]}";
+  echo "env=${ENV_FILE_OUT:-none}"; } > "$MARKER" || \
   log "AVISO: não consegui escrever marker de sucesso em $MARKER"
 
-log "==> Backup concluído (${#FILES[@]} DBs, ${#VOL_FILES[@]} volumes; críticos OK: DBs=${CRITICAL_DBS[*]}, vols=${REQUIRED_VOL_SUFFIXES[*]})."
+log "==> Backup concluído (${#FILES[@]} DBs, ${#VOL_FILES[@]} volumes, .env; críticos OK: DBs=${CRITICAL_DBS[*]}, vols=${REQUIRED_VOL_SUFFIXES[*]})."
