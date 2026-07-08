@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { requireEnv } from './helpers/creds';
 
 /**
  * Regression test for issue #95 — Chatwoot /super_admin CSRF 422.
@@ -30,7 +31,6 @@ import { test, expect } from '@playwright/test';
  */
 
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'alexandre@nexaduo.com';
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'NexaDuo@2026-C9E5FF39';
 const CHATWOOT_URL = process.env.CHATWOOT_URL || 'https://chat.nexaduo.com';
 
 test.describe('Chatwoot /super_admin CSRF regression (issue #95)', () => {
@@ -67,6 +67,9 @@ test.describe('Chatwoot /super_admin CSRF regression (issue #95)', () => {
       return;
     }
 
+    // Sign-in needs a real password; without one we skip rather than fall back
+    // to a hardcoded secret (issue #135).
+    const ADMIN_PASSWORD = requireEnv('ADMIN_PASSWORD');
     console.log('- Submitting super_admin sign-in (CSRF-protected POST to /super_admin/sign_in)...');
     await emailInput.fill(ADMIN_EMAIL);
     await page

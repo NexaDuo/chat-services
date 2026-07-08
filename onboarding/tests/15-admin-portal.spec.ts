@@ -20,9 +20,19 @@ const testMiddlewareUrl = 'http://127.0.0.1:4000';
 
 const targetMiddlewareUrl = liveMiddlewareUrl || testMiddlewareUrl;
 const targetUsername = process.env.ADMIN_EMAIL || 'admin';
+
+// In-process mock server fixture password. This is NOT a real credential: it is
+// generated fresh per run and only ever seeds and authenticates the local
+// Fastify instance spun up in beforeAll below. It never touches production.
+const MOCK_FIXTURE_PASSWORD = `mock-fixture-${crypto.randomBytes(12).toString('hex')}`;
+
+// Against a live middleware, the password must come from the environment. We do
+// NOT fall back to a hardcoded secret (issue #135); a live run without
+// ADMIN_PASSWORD is skipped in beforeAll instead.
+const liveAdminPassword = process.env.ADMIN_PASSWORD;
 const targetPassword = liveMiddlewareUrl
-  ? (process.env.ADMIN_PASSWORD || process.env.HANDOFF_SHARED_SECRET || 'test-admin-password')
-  : 'test-admin-password';
+  ? (liveAdminPassword || '')
+  : MOCK_FIXTURE_PASSWORD;
 
 // Load tenants.yaml to find a valid tenant slug for live testing
 let liveTenantSlug = 'nexaduo'; // fallback default
@@ -222,6 +232,13 @@ const mockAxios = {
 };
 
 test.beforeAll(async () => {
+  // A live run must supply the real admin password via env; never fall back to a
+  // hardcoded secret (issue #135). Skip the whole suite when it is absent.
+  test.skip(
+    !!liveMiddlewareUrl && !liveAdminPassword,
+    'ADMIN_PASSWORD not set for live MIDDLEWARE_URL run — refusing a hardcoded fallback (issue #135).',
+  );
+
   pg.Pool = class MockPool {
     constructor() {}
     async query(text: string, values?: any[]) {
@@ -253,7 +270,7 @@ test.beforeAll(async () => {
   });
   
   const mockConfig = {
-    adminPassword: 'test-admin-password',
+    adminPassword: MOCK_FIXTURE_PASSWORD,
     databaseUrl: 'postgresql://postgres:pass@localhost:5432/middleware',
     handoff: {
       sharedSecret: 'test-secret'

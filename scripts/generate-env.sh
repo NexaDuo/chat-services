@@ -17,7 +17,10 @@ S16=$(openssl rand -hex 16)
 S32=$(openssl rand -hex 32)
 S64=$(openssl rand -hex 64)
 # Chatwoot v4.x requires: Uppercase, Lowercase, Number, and Special Character.
-ROBUST_PASSWORD="NexaDuo@2026-$(openssl rand -hex 4 | tr '[:lower:]' '[:upper:]')"
+# Fully random, with NO predictable prefix (issue #135 — the old "NexaDuo@YEAR-"
+# scheme reduced entropy to a guessable pattern). The trailing "Aa1!" only
+# guarantees the required character classes; it is not a secret.
+ROBUST_PASSWORD="$(openssl rand -base64 24 | tr -dc 'A-Za-z0-9')Aa1!"
 
 # Replace placeholders
 sed -i "s|\${secret_hex_16}|${S16}|g" .env

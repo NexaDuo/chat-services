@@ -1,19 +1,20 @@
 import { test, expect } from '@playwright/test';
+import { requireEnv } from './helpers/creds';
 
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'alexandre@nexaduo.com';
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
 const COOLIFY_URL = 'https://coolify.nexaduo.com';
 
 test.describe('Coolify UI Audit', () => {
   
   test('Check Servers and Resources', async ({ page }) => {
+    const ADMIN_PASSWORD = requireEnv('ADMIN_PASSWORD');
     test.setTimeout(120000);
     console.log(`- Navigating to ${COOLIFY_URL}/login...`);
     await page.goto(`${COOLIFY_URL}/login`, { waitUntil: 'load' });
 
     console.log('- Logging in...');
     await page.fill('input[name="email"]', ADMIN_EMAIL);
-    await page.fill('input[name="password"]', ADMIN_PASSWORD!);
+    await page.fill('input[name="password"]', ADMIN_PASSWORD);
     await page.click('button[type="submit"]');
 
     console.log('- Waiting for dashboard...');
