@@ -134,6 +134,14 @@ states, scans logs for known anomalies, and files structured GitHub issues.
     (≥26h ⇒ fail). A DB-only restore leaves dangling `active_storage_blobs` rows whose
     file is gone — `scripts/purge-dangling-blobs.sh` (dry-run by default, `--apply` to
     purge) removes them safely via the ActiveStorage API.
+  - **The host `.env` is production config since #109** (secrets incl. `TUNNEL_TOKEN`,
+    DB passwords, Azure OpenAI creds) and is deliberately not in git — a DB+volume
+    restore alone can't reconnect or reach the tunnel without it. `backup-host.sh`
+    therefore also tars it as `env-<ts>.tar.gz` (same rotation/off-host-copy/coverage-
+    check treatment as the volume archives, no extra encryption — same trust level as
+    the DB dumps already shipped to the same remote), and `health-check-all.sh`
+    staleness-checks it the same way. Set `BACKUP_RCLONE_REMOTE` (see
+    `.env.production.example` for Google Drive setup) or it stays local-only.
 - **Postgres data is SACRED.** It lives in the Docker named volume
   `chat-services_postgres-data`. **Never** `docker compose down -v` or prune it;
   `run-stack.sh down` deliberately omits `-v`. The host serves production and is shared
@@ -155,6 +163,10 @@ Dumps: `~/nexaduo-local/dumps/<db>-<YYYY-MM-DD>-HHMM.sql.gz` (+ off-host mirror 
 7. **Remember the Docker volumes** — a dump restore alone leaves `PrivkeyNotFoundError`;
    restore the archived volumes or re-run `flask reset-encrypt-key-pair` + re-enter the
    Azure OpenAI creds.
+8. **On a fresh host, restore `.env` first** — extract the newest
+   `env-<ts>.tar.gz` (`tar xzf env-<ts>.tar.gz -C /path/to/repo`) before anything
+   else; without it there's nothing to authenticate the tunnel or reconnect the
+   restored DB/volumes with.
 
 ## Live gotchas
 - **Cloudflare SSL loops:** behind the tunnel, disabling `FORCE_SSL` in apps is often
