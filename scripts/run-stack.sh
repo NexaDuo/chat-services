@@ -47,7 +47,7 @@ cd "$REPO_ROOT"
 ENV_FILE="${ENV_FILE:-${REPO_ROOT}/.env}"
 DUMPS_DIR="${DUMPS_DIR:-${HOME}/nexaduo-local/dumps}"
 NETWORK="${NETWORK:-nexaduo-network}"
-COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-nexaduo}"
+COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-chat-services}"
 export COMPOSE_PROJECT_NAME
 
 # Isolation mode (issue #119): with --isolated / ISOLATED=1 we append

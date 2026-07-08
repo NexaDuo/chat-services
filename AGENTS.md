@@ -67,7 +67,13 @@ Reproducible bootstrap (no manual drift — issue #109):
    `deploy/docker-compose.isolated.yml`, `!reset []` merge — Compose 2.24.4+). Public
    traffic still flows via the tunnel → Traefik; service-to-service uses the Docker
    network by container name (never `localhost`/`host.docker.internal`). Local debug
-   is via `docker exec` (e.g. `docker exec -it nexaduo-postgres-1 psql -U postgres`).
+   is via `docker exec` (e.g. `docker exec -it chat-services-postgres-1 psql -U postgres`).
+7. **Compose project name:** `chat-services` (renamed from the legacy `nexaduo`
+   default on 2026-07-08 to match the multi-tenant terminology below — see
+   "Terminology"). Container names are `chat-services-<service>-1`; volumes are
+   `chat-services_<volume>` (e.g. the SACRED `chat-services_postgres-data`). The
+   Docker network stays fixed as `nexaduo-network` (external, not project-scoped).
+   Override with `COMPOSE_PROJECT_NAME` if ever needed.
 
 ## Configuration model (hybrid)
 1. **Static (.env):** infrastructure secrets (DB passwords, Redis URLs, etc.).
@@ -129,7 +135,7 @@ states, scans logs for known anomalies, and files structured GitHub issues.
     file is gone — `scripts/purge-dangling-blobs.sh` (dry-run by default, `--apply` to
     purge) removes them safely via the ActiveStorage API.
 - **Postgres data is SACRED.** It lives in the Docker named volume
-  `nexaduo_postgres-data`. **Never** `docker compose down -v` or prune it;
+  `chat-services_postgres-data`. **Never** `docker compose down -v` or prune it;
   `run-stack.sh down` deliberately omits `-v`. The host serves production and is shared
   with concurrent work — do **not** recreate the postgres container casually.
 - **Observability:** Grafana + Prometheus for queue depths and **token usage per
@@ -144,7 +150,7 @@ Dumps: `~/nexaduo-local/dumps/<db>-<YYYY-MM-DD>-HHMM.sql.gz` (+ off-host mirror 
    dump may be of an already-empty DB.
 3. Stop consumers (`docker stop` the owning containers).
 4. Recreate the DB empty (terminate connections, `DROP`+`CREATE`).
-5. `zcat <dump> | docker exec -i nexaduo-postgres-1 psql -U postgres -d <db>`.
+5. `zcat <dump> | docker exec -i chat-services-postgres-1 psql -U postgres -d <db>`.
 6. Start consumers; validate row counts + the app via the tunnel (`run-stack.sh validate`).
 7. **Remember the Docker volumes** — a dump restore alone leaves `PrivkeyNotFoundError`;
    restore the archived volumes or re-run `flask reset-encrypt-key-pair` + re-enter the
@@ -159,7 +165,7 @@ Dumps: `~/nexaduo-local/dumps/<db>-<YYYY-MM-DD>-HHMM.sql.gz` (+ off-host mirror 
   (`CHATWOOT_URL`, etc.) to support local + remote validation.
 - **Recreate a service without dragging Postgres:** when reapplying a fix to one
   service, recreate **only** that service (`docker compose up -d --no-deps <svc>`) — do
-  NOT run an ad-hoc chain that pulls in `nexaduo-postgres-1`. The host is shared and the
+  NOT run an ad-hoc chain that pulls in `chat-services-postgres-1`. The host is shared and the
   postgres data is SACRED; casual recreation risks concurrent work and the volume.
 
 ## Terminology
@@ -171,7 +177,7 @@ Services" or "Omnichannel Stack".
 There is **no** staging→prod GitHub Actions pipeline and no separate staging env — the
 host-local stack behind the tunnel **is** production (issue #109). Every change
 serializes on this live stack; **do not recreate shared containers (especially
-`nexaduo-postgres-1`)** and coordinate with concurrent work on the host.
+`chat-services-postgres-1`)** and coordinate with concurrent work on the host.
 - **CI merge gate (every PR):** `stack-compose-playwright.yml` (job `validate-stack`)
   spins the whole stack up ephemerally on the runner and runs Playwright (Stage 1
   connectivity + Stage 4 tenant resolution). It is the **real** merge gate — monitor it
@@ -180,7 +186,7 @@ serializes on this live stack; **do not recreate shared containers (especially
   stack (`scripts/run-stack.sh up`, or recreate only the affected service — never
   `down -v`, never postgres unnecessarily) → validate on the real environment
   (`scripts/run-stack.sh validate` — real tunnel URLs + Playwright) → confirm health
-  (`scripts/health-check-all.sh` + inspect the affected `nexaduo-*` containers). If a
+  (`scripts/health-check-all.sh` + inspect the affected `chat-services-*` containers). If a
   phase genuinely can't run, **say so explicitly** in the PR — don't fake it.
 - **Active monitoring:** the task is not done at PR-open — monitor `validate-stack` to
   green, then apply + validate on the live stack.
@@ -213,7 +219,7 @@ Outgoing messages on `Channel::Instagram` inboxes fail with
 - **Fix (Meta App Dashboard — not versionable here):** App Review → Advanced Access for
   `instagram_business_manage_messages`; move the app to **Live**; reconnect the channel
   (re-OAuth) so the token carries the scopes; validate by resending and checking
-  `messages.status = sent` + no `external_error 100` in `nexaduo-chatwoot-sidekiq-1`.
+  `messages.status = sent` + no `external_error 100` in `chat-services-chatwoot-sidekiq-1`.
 - **Playwright N/A:** the failure is in an async Sidekiq job; the UI POST returns 200 and
   only later flips to `failed` — not observable as an HTTP error in the web flow, and
   there's no controllable Instagram connection in CI. Verify via API/DB/logs.

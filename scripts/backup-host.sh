@@ -38,18 +38,20 @@ set -euo pipefail
 : "${POSTGRES_USER:=postgres}"
 : "${BACKUP_RCLONE_REMOTE:=}"   # e.g. onedrive:nexaduo/backups; empty = local-only
 # Critical Docker volumes to archive (NOT captured by pg_dump). Matched by name
-# SUFFIX so we tolerate the compose project prefix (nexaduo_) differing per host.
-#   chatwoot-storage  → Chatwoot uploads/avatars (issue #61 FileNotFoundError)
-#   dify-api-storage  → Dify per-workspace RSA privkeys (PrivkeyNotFoundError)
-: "${BACKUP_VOLUME_SUFFIXES:=chatwoot-storage dify-api-storage}"
+# SUFFIX so we tolerate the compose project prefix (chat-services_) differing per host.
+#   chatwoot-storage    → Chatwoot uploads/avatars (issue #61 FileNotFoundError)
+#   dify-api-storage    → Dify per-workspace RSA privkeys (PrivkeyNotFoundError)
+#   evolution-instances → WhatsApp session/auth state (loss = re-scan QR code)
+#   grafana-data        → Grafana users/custom dashboards not covered by provisioning
+: "${BACKUP_VOLUME_SUFFIXES:=chatwoot-storage dify-api-storage evolution-instances grafana-data}"
 : "${BACKUP_HELPER_IMAGE:=alpine:3.20}"  # tiny image to tar volumes read-only
 
 log() { echo "[$(date -Is)] $*"; }
 
-# 1. Locate the Postgres container (compose name nexaduo-postgres-1, or by image).
+# 1. Locate the Postgres container (compose name chat-services-postgres-1, or by image).
 PG="$(docker ps --filter 'name=postgres' --filter 'ancestor=pgvector/pgvector:pg16' --format '{{.Names}}' | head -n1)"
 if [[ -z "$PG" ]]; then
-  PG="$(docker ps --filter 'name=^/nexaduo-postgres' --format '{{.Names}}' | head -n1)"
+  PG="$(docker ps --filter 'name=^/chat-services-postgres' --format '{{.Names}}' | head -n1)"
 fi
 if [[ -z "$PG" ]]; then
   log "ERRO: container Postgres não encontrado (docker ps name=postgres)."

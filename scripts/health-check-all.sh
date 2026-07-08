@@ -8,6 +8,8 @@
 # =============================================================================
 set -euo pipefail
 
+COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-chat-services}"
+
 step() { echo "==> $*"; }
 fail() {
   echo "FAIL: $1" >&2
@@ -22,12 +24,12 @@ container_by_subname() {
     --filter "label=coolify.service.subName=${subname}" \
     --format '{{.Names}}' | head -n 1)"
   # Host-local Compose runtime (current, no Coolify labels): fall back to the
-  # deterministic Compose container name `nexaduo-<subname>-1`. Without this the
-  # whole script was inert on the host-local stack (0 labelled containers), so
-  # e.g. an unhealthy dify-api would never be surfaced (issue #41).
+  # deterministic Compose container name `${COMPOSE_PROJECT_NAME}-<subname>-1`.
+  # Without this the whole script was inert on the host-local stack (0 labelled
+  # containers), so e.g. an unhealthy dify-api would never be surfaced (issue #41).
   if [[ -z "$name" ]]; then
     name="$(docker ps -a \
-      --filter "name=^/nexaduo-${subname}-[0-9]+$" \
+      --filter "name=^/${COMPOSE_PROJECT_NAME}-${subname}-[0-9]+$" \
       --format '{{.Names}}' | head -n 1)"
   fi
   echo "$name"
@@ -42,7 +44,7 @@ require_container() {
 }
 
 # ---------------------------------------------------------------------------
-# 1. Restart-loop / unhealthy detector across all nexaduo-* containers.
+# 1. Restart-loop / unhealthy detector across all Coolify-labelled containers.
 # ---------------------------------------------------------------------------
 step "Scanning for unhealthy or restarting Coolify-managed containers"
 bad=$(docker ps --filter "label=coolify.managed=true" --format '{{.Names}} {{.Status}}' \
@@ -102,24 +104,42 @@ done
 
 # ---------------------------------------------------------------------------
 # 4. HTTP endpoint probes (sampling: one per stack tier).
+# Probed FROM INSIDE each container (docker exec), not via a host-published
+# port: since #119 the stack normally runs isolated (`run-stack.sh --isolated
+# up`), which publishes ZERO host ports, so `curl localhost:<port>` from the
+# host would always fail there. Internal probing works in both modes.
 # ---------------------------------------------------------------------------
+probe_internal() {
+  local container="$1" url="$2"
+  docker exec "$container" sh -c '
+    if command -v curl >/dev/null 2>&1; then
+      curl -s -o /dev/null -w "%{http_code}" "'"$url"'"
+    elif command -v wget >/dev/null 2>&1; then
+      wget -S -q -O /dev/null "'"$url"'" 2>&1 | awk "/^ *HTTP\// {print \$2}" | tail -1
+    else
+      echo 000
+    fi
+  ' 2>/dev/null || echo 000
+}
+
 declare -a HTTP_PROBES=(
-  "Chatwoot|http://localhost:3000/|200,301,302"
-  "Dify API|http://localhost:5001/console/api/setup|200"
-  "Middleware|http://localhost:4000/health|200"
-  "Grafana|http://localhost:3002/login|200"
-  "Prometheus|http://localhost:9090/-/healthy|200"
+  "Chatwoot|chatwoot-rails|http://127.0.0.1:3000/|200,301,302"
+  "Dify API|dify-api|http://127.0.0.1:5001/console/api/setup|200"
+  "Middleware|middleware|http://127.0.0.1:4000/health|200"
+  "Grafana|grafana|http://127.0.0.1:3000/login|200"
+  "Prometheus|prometheus|http://127.0.0.1:9090/-/healthy|200"
 )
 
 for probe in "${HTTP_PROBES[@]}"; do
-  IFS="|" read -r name url expected_codes <<< "$probe"
-  step "Probing ${name} ${url} (expect one of ${expected_codes}, up to 1 min)"
+  IFS="|" read -r name subname url expected_codes <<< "$probe"
+  container="$(require_container "$subname")"
+  step "Probing ${name} (${container}) ${url} (expect one of ${expected_codes}, up to 1 min)"
   for i in $(seq 1 12); do
-    code=$(curl -s -o /dev/null -w '%{http_code}' "$url" || true)
+    code="$(probe_internal "$container" "$url")"
     echo ",${expected_codes}," | grep -q ",${code}," && break
     sleep 5
   done
-  echo ",${expected_codes}," | grep -q ",${code}," || fail "${name} returned ${code} (expected one of ${expected_codes}) at ${url}"
+  echo ",${expected_codes}," | grep -q ",${code}," || fail "${name} returned ${code} (expected one of ${expected_codes}) at ${url} (inside ${container})"
 done
 
 # Middleware /config is the Bearer-authenticated endpoint internal agents
@@ -131,10 +151,17 @@ if [[ -z "${HANDOFF_SHARED_SECRET:-}" ]] && command -v gcloud >/dev/null 2>&1; t
     --project="${GCP_PROJECT_ID:-nexaduo-492818}" 2>/dev/null || true)"
 fi
 if [[ -n "${HANDOFF_SHARED_SECRET:-}" ]]; then
-  step "Probing Middleware /config (Bearer auth)"
-  code=$(curl -s -o /dev/null -w '%{http_code}' \
-    -H "Authorization: Bearer ${HANDOFF_SHARED_SECRET}" \
-    http://localhost:4000/config || true)
+  middleware_container="$(require_container "middleware")"
+  step "Probing Middleware /config (Bearer auth) inside ${middleware_container}"
+  code="$(docker exec "$middleware_container" sh -c '
+    if command -v curl >/dev/null 2>&1; then
+      curl -s -o /dev/null -w "%{http_code}" -H "Authorization: Bearer '"${HANDOFF_SHARED_SECRET}"'" http://127.0.0.1:4000/config
+    elif command -v wget >/dev/null 2>&1; then
+      wget -S -q -O /dev/null --header="Authorization: Bearer '"${HANDOFF_SHARED_SECRET}"'" http://127.0.0.1:4000/config 2>&1 | awk "/^ *HTTP\// {print \$2}" | tail -1
+    else
+      echo 000
+    fi
+  ' 2>/dev/null || echo 000)"
   [[ "$code" == "200" ]] || fail "Middleware /config returned ${code} (expected 200)"
 else
   echo "WARN: skipping Middleware /config probe (HANDOFF_SHARED_SECRET unavailable)"
