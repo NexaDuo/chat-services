@@ -50,16 +50,19 @@ NETWORK="${NETWORK:-nexaduo-network}"
 COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-chat-services}"
 export COMPOSE_PROJECT_NAME
 
-# Isolation mode (issue #119): with --isolated / ISOLATED=1 we append
+# Isolation mode (issue #119, default since #145): by default we append
 # deploy/docker-compose.isolated.yml, which resets every host `ports:` publish to
 # empty (`ports: !reset []`) so the stack occupies ZERO Windows/WSL host ports
 # (no collision with the operator's other dev environments). Functionality is
 # unchanged: public traffic still flows via the Cloudflare tunnel → Traefik, and
-# service-to-service still uses the Docker network by container name. WITHOUT the
-# flag the base publishes ports normally (current behavior). Access when isolated:
-# via the tunnel URLs, or `docker exec` for local debugging.
-ISOLATED="${ISOLATED:-0}"
+# service-to-service still uses the Docker network by container name. Opt out with
+# --no-isolated (or ISOLATED=0) to publish host ports normally, e.g. for local
+# debugging without the tunnel. --isolated / ISOLATED=1 remain accepted for
+# back-compat (they are now no-ops, isolation is already the default). Access when
+# isolated: via the tunnel URLs, or `docker exec` for local debugging.
+ISOLATED="${ISOLATED:-1}"
 if [[ "${1:-}" == "--isolated" ]]; then ISOLATED=1; shift; fi
+if [[ "${1:-}" == "--no-isolated" ]]; then ISOLATED=0; shift; fi
 
 # Compose chain: app stacks + cross-stack overrides + the host-local proxy/tunnel.
 COMPOSE_FILES=(
@@ -258,7 +261,7 @@ case "${1:-}" in
   down)         down ;;
   status)       status ;;
   *) cat >&2 <<EOF
-Usage: $0 [--isolated] {preflight|up|restore|bootstrap|validate|backup|install-cron|reconcile-cron|check-backup|down|status}
+Usage: $0 [--no-isolated] {preflight|up|restore|bootstrap|validate|backup|install-cron|reconcile-cron|check-backup|down|status}
 
   bootstrap    clean rebuild: preflight + up + restore DBs from \$DUMPS_DIR
   up           bring up the stack (populated volume; no restore) + reconcile cron
@@ -269,12 +272,13 @@ Usage: $0 [--isolated] {preflight|up|restore|bootstrap|validate|backup|install-c
   check-backup verify the newest dump is fresh (< \${BACKUP_MAX_AGE_HOURS:-26}h)
   down         stop the stack (Postgres volume PRESERVED)
 
-  --isolated   (or ISOLATED=1) publish NO host ports — the stack occupies zero
-               Windows/WSL host ports so it won't collide with other dev
-               environments. Everything still works via the Cloudflare tunnel +
-               Traefik; for local debug use 'docker exec' (e.g. psql). WITHOUT
-               this flag the base publishes ports normally (3000/3001/5001/8080/
-               4000/5432). See deploy/docker-compose.isolated.yml.
+  Isolated host ports is now the DEFAULT: the stack publishes NO host ports so
+  it won't collide with other dev environments. Everything still works via the
+  Cloudflare tunnel + Traefik; for local debug use 'docker exec' (e.g. psql).
+  --no-isolated (or ISOLATED=0) opts out and publishes host ports normally
+  (3000/3001/5001/8080/4000/5432), e.g. for local debugging without the tunnel.
+  --isolated (or ISOLATED=1) is still accepted for back-compat (no-op now).
+  See deploy/docker-compose.isolated.yml.
 
 Env: ENV_FILE=$ENV_FILE  DUMPS_DIR=$DUMPS_DIR  NETWORK=$NETWORK  ISOLATED=$ISOLATED
 EOF

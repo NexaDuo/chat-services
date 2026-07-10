@@ -62,12 +62,15 @@ Reproducible bootstrap (no manual drift — issue #109):
    runs the Playwright connectivity + tenant-resolution suites against them.
 5. **Backup:** `scripts/backup-host.sh` (daily 03:00 cron via `run-stack.sh
    install-cron`).
-6. **Host ports (optional isolation — #119):** `scripts/run-stack.sh --isolated up`
-   (or `ISOLATED=1`) publishes **zero** host ports (via
+6. **Host ports (isolated by default — #119, default since #145):**
+   `scripts/run-stack.sh up` publishes **zero** host ports by default (via
    `deploy/docker-compose.isolated.yml`, `!reset []` merge — Compose 2.24.4+). Public
    traffic still flows via the tunnel → Traefik; service-to-service uses the Docker
    network by container name (never `localhost`/`host.docker.internal`). Local debug
    is via `docker exec` (e.g. `docker exec -it chat-services-postgres-1 psql -U postgres`).
+   Opt out with `scripts/run-stack.sh --no-isolated up` (or `ISOLATED=0`) to publish
+   host ports normally, e.g. for local debugging without the tunnel. `--isolated`/
+   `ISOLATED=1` still work for back-compat (no-ops now that isolation is default).
 7. **Compose project name:** `chat-services` (renamed from the legacy `nexaduo`
    default on 2026-07-08 to match the multi-tenant terminology below — see
    "Terminology"). Container names are `chat-services-<service>-1`; volumes are
