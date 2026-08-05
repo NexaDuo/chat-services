@@ -26,4 +26,4 @@ health_check_command = "scripts/health-check-all.sh"
 [release]
 has_release_pipeline = false
 real_urls = ["https://chat.nexaduo.com", "https://dify.nexaduo.com", "https://middleware.nexaduo.com", "https://grafana.nexaduo.com"]
-release_notes = "Single host-local stack behind the Cloudflare tunnel = production; no separate staging. CI merge gate = stack-compose-playwright.yml (validate-stack). Apply changes via scripts/run-stack.sh up + validate. NEVER docker compose down -v; never recreate nexaduo-postgres-1 casually (SACRED data)."
+release_notes = "Single host-local stack behind the Cloudflare tunnel = production; no separate staging. CI merge gate = stack-compose-playwright.yml (validate-stack). Apply changes via scripts/run-stack.sh up + validate. NEVER docker compose down -v; never recreate chat-services-postgres-1 casually (SACRED data)."
