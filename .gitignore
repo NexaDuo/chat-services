@@ -6,7 +6,12 @@
 .ssh/
 
 # Local agent / Claude tooling
-.agents/
+# NOTE: `.agents/*`, not `.agents/` — git cannot re-include a file whose parent
+# directory is excluded, so the negation below would be inert with a dir rule.
+.agents/*
+# ...except the mARC per-repo team binding, which is team-owned config and must
+# stay versioned (it moved here from .claude/team.toml):
+!.agents/team.toml
 # Version team-owned Claude assets (.claude/agents, .claude/skills) so future
 # edits show up normally. Only keep local/env-specific state ignored:
 .claude/settings.local.json
