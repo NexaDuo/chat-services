@@ -105,6 +105,14 @@ async function fetchConfig(retries = 5, delay = 5000): Promise<void> {
         logger.info('Remote config fetched successfully');
         return;
       }
+
+      // Reachable + authenticated, but the key isn't there yet (e.g. the
+      // middleware.configs row hasn't been seeded, or middleware is still
+      // booting). Throw so this shares the SAME delay/backoff as network/auth
+      // failures below instead of looping all `retries` attempts back-to-back
+      // with no sleep (would burn the whole retry window in milliseconds and
+      // undercut the ~150s wall-clock the fail-loud exit is meant to allow).
+      throw new Error('Middleware /config responded but dify.selfHealingApiKey is missing (config not seeded yet?)');
     } catch (error) {
       const isLast = i === retries - 1;
       logger.warn({

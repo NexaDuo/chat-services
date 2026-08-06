@@ -172,19 +172,36 @@ fi
 # must have successfully exchanged it for a Dify key on boot — check
 # presence only (never echo the value) plus the boot log line, not merely
 # that the env var is non-empty.
+#
+# SELF_HEALING_ALLOW_NO_CONFIG=1 is the agent's OWN explicit escape hatch
+# (CI/dev detection-only mode, issue #152/#22) — a stack running with it set
+# legitimately has no secret and never logs "Remote config fetched
+# successfully". Read the flag from the container itself (never inferred) so
+# this check doesn't contradict the agent's documented behaviour: WARN
+# instead of FAIL in that mode, and assert the allow-mode log line instead.
+# Production (flag unset/not "1") stays fail-closed — do not weaken that path.
 self_healing_container="$(container_by_subname "self-healing-agent")"
 if [[ -n "$self_healing_container" ]]; then
-  step "Checking HANDOFF_SHARED_SECRET reaches ${self_healing_container}"
-  docker exec "$self_healing_container" sh -c '[ -n "$HANDOFF_SHARED_SECRET" ]' \
-    || fail "HANDOFF_SHARED_SECRET is empty inside ${self_healing_container} (issue #152 regression)"
+  allow_no_config="$(docker exec "$self_healing_container" sh -c 'echo "${SELF_HEALING_ALLOW_NO_CONFIG:-}"' 2>/dev/null || true)"
 
-  step "Checking ${self_healing_container} fetched remote config on boot"
-  if docker logs "$self_healing_container" 2>&1 | grep -q "Remote config fetched successfully"; then
-    :
-  elif docker logs "$self_healing_container" 2>&1 | grep -qE "FATAL: (HANDOFF_SHARED_SECRET not set|exhausted retries fetching /config)"; then
-    fail "${self_healing_container} failed loud fetching remote config — see 'docker logs ${self_healing_container}'"
+  if [[ "$allow_no_config" == "1" ]]; then
+    echo "WARN: ${self_healing_container} runs with SELF_HEALING_ALLOW_NO_CONFIG=1 (CI/dev detection-only mode) — skipping strict HANDOFF_SHARED_SECRET/config assertions"
+    step "Checking ${self_healing_container} logged the explicit detection-only degrade line"
+    docker logs "$self_healing_container" 2>&1 | grep -q "allowed via SELF_HEALING_ALLOW_NO_CONFIG" \
+      || echo "WARN: no detection-only degrade line seen yet in ${self_healing_container} logs (may still be starting)"
   else
-    echo "WARN: no 'Remote config fetched successfully' line yet in ${self_healing_container} logs (may still be retrying/starting)"
+    step "Checking HANDOFF_SHARED_SECRET reaches ${self_healing_container}"
+    docker exec "$self_healing_container" sh -c '[ -n "$HANDOFF_SHARED_SECRET" ]' \
+      || fail "HANDOFF_SHARED_SECRET is empty inside ${self_healing_container} (issue #152 regression) and SELF_HEALING_ALLOW_NO_CONFIG!=1"
+
+    step "Checking ${self_healing_container} fetched remote config on boot"
+    if docker logs "$self_healing_container" 2>&1 | grep -q "Remote config fetched successfully"; then
+      :
+    elif docker logs "$self_healing_container" 2>&1 | grep -qE "FATAL: (HANDOFF_SHARED_SECRET not set|exhausted retries fetching /config)"; then
+      fail "${self_healing_container} failed loud fetching remote config — see 'docker logs ${self_healing_container}'"
+    else
+      echo "WARN: no 'Remote config fetched successfully' line yet in ${self_healing_container} logs (may still be retrying/starting)"
+    fi
   fi
 else
   echo "WARN: skipping self-healing-agent config check (container not found)"
