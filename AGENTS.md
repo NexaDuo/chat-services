@@ -102,6 +102,16 @@ Reproducible bootstrap (no manual drift — issue #109):
 Internal agents (e.g. `self-healing`) fetch their functional config from the
 **Middleware Config API** (`GET /config`), authenticated via `Bearer` using
 `HANDOFF_SHARED_SECRET`. New keys go in the `middleware.configs` Postgres table.
+Every service block that talks to `GET /config` must receive `HANDOFF_SHARED_SECRET`
+(issue #152 — it reached `middleware` but not `self-healing-agent` for an unknown
+period, silently disabling that agent's LLM analysis). **Fail-loud by default:**
+`self-healing/src/index.ts` `process.exit(1)`s if the secret is missing/empty, or if
+`/config` never returns a usable `dify.selfHealingApiKey` after its retry/backoff
+loop — production must never run "self-healing" silently detection-only. The
+pre-#152 silent degrade (issue #22) survives only behind the explicit
+`SELF_HEALING_ALLOW_NO_CONFIG=1` opt-in, set exclusively in
+`deploy/docker-compose.ci.yml` (never inferred from `NODE_ENV`, never set in
+production compose).
 
 ## Repo layout
 ```
