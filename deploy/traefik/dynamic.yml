@@ -3,20 +3,27 @@
 #
 # Primary routing for the host-local production runtime is the Traefik Docker
 # provider (labels on the app services; see deploy/docker-compose.localproxy.yml).
-# On hosts where the Docker provider is flaky (Docker Desktop / WSL: "Error
-# response from daemon:" reaching the socket — see memory local-run-stack.md),
-# mount this file instead:
+# This file provider runs ALONGSIDE it at all times, as an intentional fallback
+# safety net — it is not a workaround for a currently-known-bad Docker provider.
 #
-#   command:
-#     - "--providers.file.directory=/etc/traefik/dynamic"
-#     - "--providers.file.watch=true"
-#     - "--entrypoints.http.address=:80"
-#   volumes:
-#     - ./deploy/traefik:/etc/traefik/dynamic:ro
+# Issue #151 (2026-08-06): the Docker provider was found permanently down
+# ("Error response from daemon: \"\"", retried forever) because of a Docker API
+# version-negotiation bug in traefik:v3.4.5 against Docker Engine 29.x — see the
+# root-cause comment on the `coolify-proxy` service in
+# deploy/docker-compose.localproxy.yml. Routing survived ONLY because this file
+# mirrored the labels, which is exactly the risk documented below: it silently
+# masked a fully dead provider for weeks (68k+ retried-forever error lines,
+# 2026-07-08..07-14) until a user-reported Docker Desktop console error
+# surfaced it. The image pin fix restores the Docker provider as the verified,
+# actually-serving source (proof: `--api=true` on an internal-only entrypoint,
+# see the compose file) — this file stays mounted as defense in depth, not as
+# the thing routing depends on. Do not let it go stale: keep it in sync with
+# deploy/docker-compose.{chatwoot,dify,nexaduo}.yml labels, and periodically
+# verify (per the SRE audit skill) that the Docker provider, not this file, is
+# the one actually serving routes.
 #
 # These routes mirror the committed traefik.* labels 1:1. Service hostnames
 # (container DNS names on nexaduo-network) and ports match the compose files.
-# Keep in sync with deploy/docker-compose.{chatwoot,dify,nexaduo}.yml labels.
 # =============================================================================
 http:
   routers:
