@@ -25,3 +25,14 @@ services:
   chatwoot-rails:
     environment:
       RAILS_ASSUME_SSL: "false"
+
+  # CI seeds a dummy HANDOFF_SHARED_SECRET (so the middleware Config API auth
+  # check passes) but does not seed a real DIFY_SELF_HEALING_API_KEY in
+  # middleware.configs, so /config never returns a usable
+  # dify.selfHealingApiKey. Without this explicit opt-in the agent would now
+  # fail loud (issue #152's production behaviour) and fail the whole stack
+  # boot. This mirrors the same detection-only degrade path issue #22
+  # intended for CI/dev — set here, and ONLY here, never in production compose.
+  self-healing-agent:
+    environment:
+      SELF_HEALING_ALLOW_NO_CONFIG: "1"

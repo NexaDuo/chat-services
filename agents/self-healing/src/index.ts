@@ -7,6 +7,7 @@ import { trace, isSpanContextValid } from '@opentelemetry/api';
 import { Database } from './db.js';
 import { LLMAnalysis, LokiQueryResult } from './types.js';
 import { shouldFileIssue, loadIgnoreRules, IgnoreRule } from './filters.js';
+import { decideMissingConfig } from './config-gate.js';
 
 const logger = pino({
   level: process.env.LOG_LEVEL || 'info',
@@ -29,6 +30,11 @@ const LOKI_URL = process.env.LOKI_URL || 'http://loki:3100';
 const DIFY_API_URL = process.env.DIFY_API_URL || 'http://dify-api:5001/v1';
 const MIDDLEWARE_URL = process.env.MIDDLEWARE_URL || 'http://middleware:4000';
 const HANDOFF_SHARED_SECRET = process.env.HANDOFF_SHARED_SECRET || '';
+// Explicit, never-inferred escape hatch (issue #152). Only CI/dev sets this to
+// keep the detection-only degrade path from issue #22 alive. Production must
+// NOT infer this (e.g. from NODE_ENV) — an operator who forgets to set it
+// gets a fail-loud agent, not a silently degraded one. Defaults to fail-loud.
+const ALLOW_NO_CONFIG = process.env.SELF_HEALING_ALLOW_NO_CONFIG === '1';
 
 if (!process.env.DATABASE_URL) {
   logger.error('FATAL: DATABASE_URL environment variable is required');
@@ -70,10 +76,19 @@ const AnalysisSchema = z.object({
  */
 async function fetchConfig(retries = 5, delay = 5000): Promise<void> {
   if (!HANDOFF_SHARED_SECRET) {
-    // Expected when running without the middleware config API (e.g. CI):
-    // the agent degrades to detection-only. Info, not warn (issue #22).
-    logger.info('HANDOFF_SHARED_SECRET not set; running without remote config (LLM analysis disabled)');
-    return;
+    if (decideMissingConfig(ALLOW_NO_CONFIG) === 'degrade') {
+      // Expected when running without the middleware config API (e.g. CI/dev,
+      // opted in explicitly via SELF_HEALING_ALLOW_NO_CONFIG=1): the agent
+      // degrades to detection-only. Info, not warn (issue #22).
+      logger.info('HANDOFF_SHARED_SECRET not set; running without remote config (LLM analysis disabled) — allowed via SELF_HEALING_ALLOW_NO_CONFIG');
+      return;
+    }
+    // Production default (issue #152): a missing secret means the agent can
+    // never authenticate against the Middleware Config API and would run
+    // "self-healing" with LLM analysis silently disabled forever. Fail loud
+    // instead of degrading in silence.
+    logger.error('FATAL: HANDOFF_SHARED_SECRET not set and SELF_HEALING_ALLOW_NO_CONFIG!=1 — refusing to run in silently-degraded mode. Set HANDOFF_SHARED_SECRET, or set SELF_HEALING_ALLOW_NO_CONFIG=1 for an explicit CI/dev detection-only run.');
+    process.exit(1);
   }
 
   for (let i = 0; i < retries; i++) {
@@ -92,18 +107,29 @@ async function fetchConfig(retries = 5, delay = 5000): Promise<void> {
       }
     } catch (error) {
       const isLast = i === retries - 1;
-      logger.warn({ 
-        attempt: i + 1, 
+      logger.warn({
+        attempt: i + 1,
         error: (error as Error).message,
-        nextRetryIn: isLast ? 0 : delay / 1000 
+        nextRetryIn: isLast ? 0 : delay / 1000
       }, 'Failed to fetch config from middleware');
-      
+
       if (!isLast) {
         await new Promise(resolve => setTimeout(resolve, delay));
         delay *= 2; // Exponential backoff
       }
     }
   }
+
+  // Retries exhausted without a usable selfHealingApiKey (issue #152): the
+  // secret WAS set, so this is not the "no config API" case above — either
+  // the middleware never returned dify.selfHealingApiKey, or every attempt
+  // errored. Same fail-loud gate applies.
+  if (decideMissingConfig(ALLOW_NO_CONFIG) === 'degrade') {
+    logger.info('Exhausted retries without a usable dify.selfHealingApiKey; running without remote config (LLM analysis disabled) — allowed via SELF_HEALING_ALLOW_NO_CONFIG');
+    return;
+  }
+  logger.error('FATAL: exhausted retries fetching /config and never received a usable dify.selfHealingApiKey, and SELF_HEALING_ALLOW_NO_CONFIG!=1 — refusing to run in silently-degraded mode.');
+  process.exit(1);
 }
 
 /**

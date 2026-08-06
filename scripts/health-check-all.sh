@@ -167,6 +167,29 @@ else
   echo "WARN: skipping Middleware /config probe (HANDOFF_SHARED_SECRET unavailable)"
 fi
 
+# self-healing-agent must have received the same secret (issue #152: it was
+# silently missing from this container while present in middleware's) and
+# must have successfully exchanged it for a Dify key on boot — check
+# presence only (never echo the value) plus the boot log line, not merely
+# that the env var is non-empty.
+self_healing_container="$(container_by_subname "self-healing-agent")"
+if [[ -n "$self_healing_container" ]]; then
+  step "Checking HANDOFF_SHARED_SECRET reaches ${self_healing_container}"
+  docker exec "$self_healing_container" sh -c '[ -n "$HANDOFF_SHARED_SECRET" ]' \
+    || fail "HANDOFF_SHARED_SECRET is empty inside ${self_healing_container} (issue #152 regression)"
+
+  step "Checking ${self_healing_container} fetched remote config on boot"
+  if docker logs "$self_healing_container" 2>&1 | grep -q "Remote config fetched successfully"; then
+    :
+  elif docker logs "$self_healing_container" 2>&1 | grep -qE "FATAL: (HANDOFF_SHARED_SECRET not set|exhausted retries fetching /config)"; then
+    fail "${self_healing_container} failed loud fetching remote config — see 'docker logs ${self_healing_container}'"
+  else
+    echo "WARN: no 'Remote config fetched successfully' line yet in ${self_healing_container} logs (may still be retrying/starting)"
+  fi
+else
+  echo "WARN: skipping self-healing-agent config check (container not found)"
+fi
+
 # Loki is not host-published in production; probe from inside the container.
 loki_container="$(require_container "loki")"
 step "Probing Loki readiness inside ${loki_container} (up to 1 min)"
