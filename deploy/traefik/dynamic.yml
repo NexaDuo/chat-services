@@ -26,7 +26,35 @@
 # (container DNS names on nexaduo-network) and ports match the compose files.
 # =============================================================================
 http:
+  middlewares:
+    # Issue #151 @sec MEDIUM: 21 containers share nexaduo-network (incl.
+    # dify-sandbox / dify-plugin-daemon, which run less-trusted plugin code)
+    # and could otherwise reach coolify-proxy:8080/api/* unauthenticated for
+    # read-only routing-topology recon. `--api.insecure` is left `false` (see
+    # the compose file); this router explicitly allow-lists 127.0.0.1 only —
+    # i.e. reachable solely via `docker exec coolify-proxy ...`, never from
+    # another container's IP on the same Docker network.
+    api-internal-only:
+      ipAllowList:
+        sourceRange:
+          - "127.0.0.1/32"
+          # `docker exec ... wget http://localhost:8080/...` resolves
+          # "localhost" to ::1 first inside the container — without this the
+          # allow-listed loopback caller itself got a spurious 403 (verified
+          # live). Both loopback forms are still "only reachable from inside
+          # this exact container", so this doesn't widen the exposure.
+          - "::1/128"
+
   routers:
+    # Restricted Traefik API/dashboard router — see the api-internal-only
+    # middleware above. Verified live by scripts/health-check-all.sh (issue
+    # #151) via `docker exec coolify-proxy wget -qO- localhost:8080/api/...`.
+    traefik-api:
+      rule: "PathPrefix(`/api`) || PathPrefix(`/dashboard`)"
+      entrypoints: traefik
+      service: api@internal
+      middlewares:
+        - api-internal-only
     chatwoot:
       rule: "Host(`chat.nexaduo.com`)"
       entrypoints: http

@@ -56,10 +56,17 @@ Reproducible bootstrap (no manual drift — issue #109):
    (`deploy/docker-compose.{shared,chatwoot,dify,nexaduo}.yml` + root
    `docker-compose.yml` + `deploy/docker-compose.localproxy.yml`).
 3. **Routing:** Traefik **Docker provider** reads the committed `traefik.*` router
-   labels — verified live via the internal-only Traefik API (`--api=true`, not
-   exposed to the host or the tunnel; `docker exec` another container and
-   `wget -qO- http://coolify-proxy:8080/api/http/routers`). `deploy/traefik/dynamic.yml`
-   is a file-provider **fallback that runs alongside it at all times**, not a
+   labels — verified live via the internal-only Traefik API (`--api=true`,
+   `--api.insecure=false`; the actual router is gated to `127.0.0.1` only via
+   an `ipAllowList` middleware in `deploy/traefik/dynamic.yml`, since 21
+   containers share `nexaduo-network` and an unauthenticated API would leak
+   routing topology to less-trusted ones like `dify-sandbox` — issue #151
+   `@sec`). Verify with `docker exec coolify-proxy wget -qO-
+   http://127.0.0.1:8080/api/http/routers` (must run *inside* the container;
+   not reachable from other containers on the network). `scripts/health-check-all.sh`
+   asserts this automatically (docker-provider routers present and `enabled`).
+   `deploy/traefik/dynamic.yml` is a file-provider **fallback that runs
+   alongside it at all times**, not a
    workaround for a known-bad provider — issue #151 found the Docker provider
    permanently down for weeks (a Docker API version-negotiation bug in
    `traefik:v3.4.5` against Docker Engine 29.x) with routing surviving only on

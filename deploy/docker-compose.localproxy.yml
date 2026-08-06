@@ -73,15 +73,23 @@ services:
       # Docker provider is actually serving routes, not just silent). Bound to
       # the default `traefik` entrypoint (:8080) only — NOT published to the
       # host (isolated-by-default, deploy/docker-compose.isolated.yml) and NOT
-      # in the Cloudflare tunnel ingress, so it never becomes internet-facing.
-      # `--api.insecure=true` is what auto-creates the unauthenticated router
-      # for api@internal on that entrypoint (with it =false, no router exists
-      # at all and every /api/* path 404s, defeating the point) — safe here
-      # because :8080 never leaves the container's own network namespace.
-      # Verify with: docker exec <any-container-on-nexaduo-network> \
-      #   wget -qO- http://coolify-proxy:8080/api/http/routers | jq
+      # in the Cloudflare tunnel ingress, so it never becomes internet-facing
+      # from outside the host. `--api.insecure` is left `false` on purpose
+      # (issue #151 @sec MEDIUM): 21 containers share nexaduo-network,
+      # including dify-sandbox/dify-plugin-daemon which run less-trusted
+      # plugin code, and `insecure=true` would let any of them read the full
+      # routing topology unauthenticated via coolify-proxy:8080/api/*. The
+      # actual router is declared in deploy/traefik/dynamic.yml
+      # (`traefik-api`), gated by an `ipAllowList` middleware to 127.0.0.1
+      # only — reachable exclusively via `docker exec coolify-proxy ...`,
+      # never from another container's network IP.
+      # Verify with: docker exec coolify-proxy \
+      #   wget -qO- http://127.0.0.1:8080/api/http/routers | jq
+      # (use 127.0.0.1, not "localhost" — it resolves to ::1 first inside the
+      # container and the ipAllowList allows both loopback forms, but 127.0.0.1
+      # avoids the extra IPv6 lookup)
       - "--api=true"
-      - "--api.insecure=true"
+      - "--api.insecure=false"
     healthcheck:
       test: ["CMD", "traefik", "healthcheck", "--ping"]
       interval: 10s

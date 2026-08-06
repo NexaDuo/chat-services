@@ -180,6 +180,32 @@ docker exec "$loki_container" wget -qO- http://127.0.0.1:3100/ready >/dev/null 2
   || fail "Loki readiness probe failed inside container ${loki_container}"
 
 # ---------------------------------------------------------------------------
+# Traefik Docker-provider routing check (issue #151). The Docker provider was
+# found permanently down for weeks — retrying "Error response from daemon: "
+# forever — while routing kept working invisibly on the file-provider
+# fallback (deploy/traefik/dynamic.yml). A check that only warns is exactly
+# how that survived undetected, so this FAILS the health check outright if
+# no docker-provider router is present/enabled, instead of just logging it.
+# Queried via the Traefik API, gated to 127.0.0.1 only (ipAllowList in
+# dynamic.yml — issue #151 @sec) — must run via `docker exec` into
+# coolify-proxy itself, not reachable from any other container.
+# Assert the invariant that matters (docker-provider routers exist and are
+# enabled), not a hardcoded exact count — the service list is expected to
+# grow and a brittle count would need updating every time a service is added.
+# ---------------------------------------------------------------------------
+# coolify-proxy has a fixed `container_name: coolify-proxy` in
+# deploy/docker-compose.localproxy.yml (not project-name-templated like the
+# other services), so look it up directly rather than via require_container.
+proxy_container="coolify-proxy"
+docker inspect "$proxy_container" >/dev/null 2>&1 || fail "container ${proxy_container} not found"
+step "Verifying Traefik Docker-provider routers inside ${proxy_container}"
+routers_json="$(docker exec "$proxy_container" wget -qO- http://127.0.0.1:8080/api/http/routers 2>/dev/null || echo "")"
+[[ -n "$routers_json" ]] || fail "Traefik API unreachable inside ${proxy_container} (http://127.0.0.1:8080/api/http/routers) — is --api enabled and the ipAllowList/dynamic.yml router in place?"
+docker_enabled_count="$(echo "$routers_json" | grep -o '"provider":"docker"[^}]*"status":"enabled"\|"status":"enabled"[^}]*"provider":"docker"' | wc -l)"
+(( docker_enabled_count > 0 )) || fail "Traefik Docker provider has ZERO enabled routers (found ${docker_enabled_count}) — it may be silently down again (issue #151); routing could be surviving on the file-provider fallback alone without anyone noticing"
+echo "  docker-provider routers OK: ${docker_enabled_count} enabled"
+
+# ---------------------------------------------------------------------------
 # 5. Cross-stack network membership: confirm at least one container per
 #    stack is attached to nexaduo-network (proves cross-stack DNS works).
 # ---------------------------------------------------------------------------
