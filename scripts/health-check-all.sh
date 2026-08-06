@@ -241,7 +241,7 @@ docker inspect "$proxy_container" >/dev/null 2>&1 || fail "container ${proxy_con
 step "Verifying Traefik Docker-provider routers inside ${proxy_container}"
 routers_json="$(docker exec "$proxy_container" wget -qO- http://127.0.0.1:8080/api/http/routers 2>/dev/null || echo "")"
 [[ -n "$routers_json" ]] || fail "Traefik API unreachable inside ${proxy_container} (http://127.0.0.1:8080/api/http/routers) — is --api enabled and the ipAllowList/dynamic.yml router in place?"
-docker_enabled_count="$(echo "$routers_json" | grep -o '"provider":"docker"[^}]*"status":"enabled"\|"status":"enabled"[^}]*"provider":"docker"' | wc -l)"
+docker_enabled_count="$(echo "$routers_json" | grep -o '"provider":"docker"[^}]*"status":"enabled"\|"status":"enabled"[^}]*"provider":"docker"' | wc -l || true)"
 (( docker_enabled_count > 0 )) || fail "Traefik Docker provider has ZERO enabled routers (found ${docker_enabled_count}) — it may be silently down again (issue #151); routing could be surviving on the file-provider fallback alone without anyone noticing"
 echo "  docker-provider routers OK: ${docker_enabled_count} enabled"
 
