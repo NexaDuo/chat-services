@@ -56,8 +56,24 @@ Reproducible bootstrap (no manual drift — issue #109):
    (`deploy/docker-compose.{shared,chatwoot,dify,nexaduo}.yml` + root
    `docker-compose.yml` + `deploy/docker-compose.localproxy.yml`).
 3. **Routing:** Traefik **Docker provider** reads the committed `traefik.*` router
-   labels. File-provider fallback (for flaky Docker-provider hosts, e.g. WSL) is at
-   `deploy/traefik/dynamic.yml` and mirrors the labels 1:1.
+   labels — verified live via the internal-only Traefik API (`--api=true`,
+   `--api.insecure=false`; the actual router is gated to `127.0.0.1` only via
+   an `ipAllowList` middleware in `deploy/traefik/dynamic.yml`, since 21
+   containers share `nexaduo-network` and an unauthenticated API would leak
+   routing topology to less-trusted ones like `dify-sandbox` — issue #151
+   `@sec`). Verify with `docker exec coolify-proxy wget -qO-
+   http://127.0.0.1:8080/api/http/routers` (must run *inside* the container;
+   not reachable from other containers on the network). `scripts/health-check-all.sh`
+   asserts this automatically (docker-provider routers present and `enabled`).
+   `deploy/traefik/dynamic.yml` is a file-provider **fallback that runs
+   alongside it at all times**, not a
+   workaround for a known-bad provider — issue #151 found the Docker provider
+   permanently down for weeks (a Docker API version-negotiation bug in
+   `traefik:v3.4.5` against Docker Engine 29.x) with routing surviving only on
+   this fallback, invisible because "documented as configured" was trusted
+   instead of verified live. Image pinned to `traefik:v3.6.25` (fixed) — see
+   the root-cause comment in `deploy/docker-compose.localproxy.yml`. Don't
+   trust "it's routing" as proof the Docker provider works; check the API.
 4. **Validate:** `scripts/run-stack.sh validate` smoke-tests the real tunnel URLs and
    runs the Playwright connectivity + tenant-resolution suites against them.
 5. **Backup:** `scripts/backup-host.sh` (daily 03:00 cron via `run-stack.sh
@@ -182,6 +198,17 @@ Dumps: `~/nexaduo-local/dumps/<db>-<YYYY-MM-DD>-HHMM.sql.gz` (+ off-host mirror 
    restored DB/volumes with.
 
 ## Live gotchas
+- **`docker logs --since` can lie on a container with a huge unrotated log buffer**
+  (issue #151): `coolify-proxy`'s log file grew to 136k+ lines (a 68k-line retried-
+  forever error burst); `docker logs --since <window>` against it returned 0 lines
+  even while `docker logs -f` streamed genuinely-current entries seconds later —
+  an @sre log sweep trusted the empty `--since` result and wrongly reported the
+  container clean. Root cause not fully isolated (suspected Docker Desktop
+  WSL2-backend log-file indexing breaking down on very large/gapped buffers); the
+  mitigation is log rotation (`logging.options.max-size`/`max-file`, now set on
+  `coolify-proxy`) so the buffer can't grow large enough to trigger it again. If a
+  container's `--since` output is empty, cross-check with `-f` for a few seconds
+  before trusting "clean" — don't rely on `--since` alone for a sweep.
 - **Cloudflare SSL loops:** behind the tunnel, disabling `FORCE_SSL` in apps is often
   necessary to prevent infinite redirect loops.
 - **Container entrypoints:** images like Chatwoot need explicit entrypoints

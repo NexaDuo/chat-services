@@ -11,9 +11,11 @@
 # together. The per-service routers are declared both as `traefik.*` labels on
 # each service in deploy/docker-compose.{chatwoot,dify,nexaduo}.yml AND, mirrored
 # 1:1, in deploy/traefik/dynamic.yml (mounted at /etc/traefik/dynamic). The file
-# provider is what keeps *.nexaduo.com routable on Docker Desktop / WSL, where
-# the Docker provider intermittently can't reach the socket. Bringing this file
-# up reproduces working edge routing from code on any host — no hand-editing.
+# provider stays mounted as a documented, intentional fallback (see issue #151
+# and the header of deploy/traefik/dynamic.yml) — Docker provider is the primary
+# route source and is proven working (image pin below), but keeping the file
+# provider running costs nothing and protects a future regression from going
+# unnoticed again.
 #
 # Usage (see scripts/run-stack.sh, which chains all compose files):
 #   docker compose \
@@ -32,17 +34,31 @@ services:
   #
   # Routing uses TWO providers simultaneously, for resilience across hosts:
   #   1. Docker provider — primary; reads the traefik.* labels on the app
-  #      containers. Works on normal Docker hosts.
+  #      containers.
   #   2. File provider — mounts deploy/traefik/dynamic.yml (routes mirror the
-  #      labels 1:1). REQUIRED on Docker Desktop / WSL, where the Docker
-  #      provider intermittently fails to reach the socket ("Error response
-  #      from daemon:") and discovers zero routers → every *.nexaduo.com 404s.
+  #      labels 1:1). Kept as a documented fallback safety net (issue #151).
   # Running both means a fresh, code-driven `run-stack.sh up` reproduces working
   # edge routing on any host with no hand-editing (which previously drifted and
   # was lost on container recreate — 2026-07-01 incident). Traefik merges
-  # providers; the file provider supplies the routes when Docker yields none.
+  # providers.
+  #
+  # Image pin — issue #151: traefik:v3.4 (3.4.5, built 2025-07-23, vendors
+  # docker/docker client v27.1.1) does NOT perform Docker API version
+  # negotiation on its docker provider client: it issues a hardcoded
+  # `GET /v1.24/version` with no prior `/_ping`, verified via a socat MITM on
+  # the docker.sock. Docker Engine 29.6.2 (MinAPIVersion 1.40, shipped via a
+  # Docker Desktop upgrade around 2026-07-08) rejects that with HTTP 400, and
+  # Docker Desktop's socket-proxy layer ("dockerSocketProxied" bind source)
+  # returns a malformed body for that rejection (a zero-value Version struct,
+  # not the standard `{"message": "..."}` error) — the Go docker client
+  # renders that as the empty `Error response from daemon: ""` seen in the
+  # logs. Setting DOCKER_API_VERSION does NOT fix it (verified) — the vendored
+  # client ignores it and always sends v1.24 first. traefik:v3.6 (3.6.25)
+  # vendors a newer docker client that pings first (`HEAD /_ping`, negotiates
+  # to v1.54) and was confirmed error-free against the same socket. Pinning an
+  # exact tag (not the `v3.6` floating minor) for reproducibility.
   coolify-proxy:
-    image: traefik:v3.4
+    image: traefik:v3.6.25
     container_name: coolify-proxy
     restart: unless-stopped
     command:
@@ -53,11 +69,42 @@ services:
       - "--providers.file.watch=true"
       - "--entrypoints.http.address=:80"
       - "--ping=true"
+      # Internal-only API/dashboard (issue #151 acceptance criteria: prove the
+      # Docker provider is actually serving routes, not just silent). Bound to
+      # the default `traefik` entrypoint (:8080) only — NOT published to the
+      # host (isolated-by-default, deploy/docker-compose.isolated.yml) and NOT
+      # in the Cloudflare tunnel ingress, so it never becomes internet-facing
+      # from outside the host. `--api.insecure` is left `false` on purpose
+      # (issue #151 @sec MEDIUM): 21 containers share nexaduo-network,
+      # including dify-sandbox/dify-plugin-daemon which run less-trusted
+      # plugin code, and `insecure=true` would let any of them read the full
+      # routing topology unauthenticated via coolify-proxy:8080/api/*. The
+      # actual router is declared in deploy/traefik/dynamic.yml
+      # (`traefik-api`), gated by an `ipAllowList` middleware to 127.0.0.1
+      # only — reachable exclusively via `docker exec coolify-proxy ...`,
+      # never from another container's network IP.
+      # Verify with: docker exec coolify-proxy \
+      #   wget -qO- http://127.0.0.1:8080/api/http/routers | jq
+      # (use 127.0.0.1, not "localhost" — it resolves to ::1 first inside the
+      # container and the ipAllowList allows both loopback forms, but 127.0.0.1
+      # avoids the extra IPv6 lookup)
+      - "--api=true"
+      - "--api.insecure=false"
     healthcheck:
       test: ["CMD", "traefik", "healthcheck", "--ping"]
       interval: 10s
       timeout: 5s
       retries: 5
+    logging:
+      # Issue #151: the log buffer grew to 136k+ unrotated lines (68k of them
+      # the same "Provider error" burst 2026-07-08..07-14), which is also what
+      # made `docker logs --since` return 0 lines for genuinely-current output
+      # (the CLI-vs-Desktop discrepancy) — rotation bounds the file so this
+      # can't recur and keeps the CLI reader's --since index sane.
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       # Directory mount (not single-file) so the WSL bind resolves to a dir and
