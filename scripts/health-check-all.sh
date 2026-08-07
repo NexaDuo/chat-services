@@ -316,7 +316,10 @@ while IFS= read -r container; do
   if [[ "$container" == "coolify-proxy" ]]; then
     subname="coolify-proxy"
   else
-    rest="${container#${COMPOSE_PROJECT_NAME}-}"
+    # Quote the prefix so a COMPOSE_PROJECT_NAME containing glob metacharacters
+    # (*, ?, []) is stripped literally, not interpreted as a pattern by the
+    # `#` removal (`@sec`/`@rev` review of #161).
+    rest="${container#"${COMPOSE_PROJECT_NAME}"-}"
     subname="${rest%-*}"
   fi
 
@@ -359,7 +362,24 @@ while IFS= read -r container; do
   # left when a value is missing — exactly the case this check most needs to
   # get right. `|` can't appear in a docker log-driver name or a max-size/
   # max-file value, so it can't be misparsed the same way.
-  log_config="$(docker inspect -f '{{.HostConfig.LogConfig.Type}}|{{index .HostConfig.LogConfig.Config "max-size"}}|{{index .HostConfig.LogConfig.Config "max-file"}}' "$container" 2>/dev/null || echo "||")"
+  # `|| echo "||"` used to swallow EVERY docker-inspect failure into the same
+  # empty driver/max-size/max-file triple, which the branch below reports as
+  # UNBOUNDED — correct for a container whose policy is genuinely missing, but
+  # wrong for one that simply no longer exists (removed in the race between
+  # the `docker ps` snapshot above and this inspect). Distinguish the two: if
+  # the container is gone, skip it (not a log-policy fact to assert) rather
+  # than fail the whole check on a container we can no longer even see
+  # (`@sec`/`@rev` review of #161). Any OTHER inspect failure (still present,
+  # some other error) still falls through to the existing UNBOUNDED/DRIFT
+  # branches instead of being masked.
+  if ! log_config="$(docker inspect -f '{{.HostConfig.LogConfig.Type}}|{{index .HostConfig.LogConfig.Config "max-size"}}|{{index .HostConfig.LogConfig.Config "max-file"}}' "$container" 2>/dev/null)"; then
+    if ! docker ps --format '{{.Names}}' | grep -qx "$container"; then
+      echo "  WARN: skipping ${container} (removed mid-scan, no longer inspectable — not a log-policy fact to assert)" >&2
+      containers_checked=$((containers_checked - 1))
+      continue
+    fi
+    log_config="||"
+  fi
   IFS='|' read -r driver max_size max_file <<< "$log_config"
   if [[ "$driver" != "json-file" || -z "$max_size" ]]; then
     echo "  UNBOUNDED: ${container} (driver=${driver:-none} max-size=${max_size:-unset})" >&2
