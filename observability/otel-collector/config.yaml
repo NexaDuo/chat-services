@@ -14,6 +14,18 @@ processors:
     send_batch_size: 512
     send_batch_max_size: 1024
 
+# health_check extension (issue #158): the otelcol-contrib image is
+# distroless — no shell/curl/wget inside it for a Docker-native
+# `healthcheck:` to exec (verified: every exec attempt fails with
+# "executable file not found"). This exposes a real :13133/health HTTP
+# endpoint on chat-network instead; health-check-all.sh probes it from a
+# sibling container that does have curl/wget, so a wedged collector is
+# still detected even without a Docker `(healthy)` status on this one
+# service.
+extensions:
+  health_check:
+    endpoint: "0.0.0.0:13133"
+
 exporters:
   # Dify (and any OTLP-metrics source) → Prometheus scrape endpoint on :8889.
   prometheus:
@@ -30,6 +42,7 @@ exporters:
     verbosity: basic
 
 service:
+  extensions: [health_check]
   pipelines:
     metrics:
       receivers: [otlp]

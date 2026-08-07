@@ -62,6 +62,21 @@ HEALTHCHECK_SUBNAMES=(
   # master that bound :5001 with zero workers stays Running=true but goes
   # unhealthy, so verifying `healthy` (not just running) surfaces that state.
   dify-api
+  # issue #158: these 9 moved from RUNNING_SUBNAMES below now that they carry
+  # real liveness healthchecks (queue-liveness probe for chatwoot-sidekiq,
+  # celery inspect ping for dify-worker, app-level HTTP probes for the rest —
+  # see the compose files for each probe's rationale).
+  chatwoot-sidekiq
+  dify-worker
+  dify-web
+  evolution-api
+  middleware
+  loki
+  promtail
+  grafana
+  prometheus
+  tempo
+  cloudflared
 )
 
 for subname in "${HEALTHCHECK_SUBNAMES[@]}"; do
@@ -79,19 +94,16 @@ done
 # 3. Containers without healthchecks: must exist and be running.
 # ---------------------------------------------------------------------------
 RUNNING_SUBNAMES=(
-  chatwoot-sidekiq
   # dify-api moved to HEALTHCHECK_SUBNAMES above (now has a healthcheck, #41).
-  dify-web
-  dify-worker
+  # chatwoot-sidekiq/dify-web/dify-worker/evolution-api/middleware/loki/
+  # promtail/grafana/prometheus/tempo/cloudflared moved there too (#158).
+  # otel-collector deliberately stays here: its image has no exec tool for a
+  # Docker-native healthcheck (see deploy/docker-compose.nexaduo.yml) — it's
+  # probed separately below via a sibling container's curl/wget instead.
   dify-sandbox
   dify-plugin-daemon
   dify-ssrf-proxy
-  evolution-api
-  middleware
-  loki
-  promtail
-  grafana
-  prometheus
+  otel-collector
   self-healing-agent
 )
 
@@ -218,6 +230,26 @@ for i in $(seq 1 12); do
 done
 docker exec "$loki_container" wget -qO- http://127.0.0.1:3100/ready >/dev/null 2>&1 \
   || fail "Loki readiness probe failed inside container ${loki_container}"
+
+# otel-collector (issue #158): its image is distroless (no shell/curl/wget
+# inside it — verified, every exec attempt fails with "executable file not
+# found"), so it can't carry a Docker-native `healthcheck:` and was left in
+# RUNNING_SUBNAMES above (running-only, not health-status). The
+# `health_check` extension it now exposes (:13133/health,
+# observability/otel-collector/config.yaml) is still verified live here, by
+# reaching it FROM a sibling container that does have wget — same
+# cross-container network the rest of this script already relies on.
+otel_container="$(require_container "otel-collector")"
+middleware_probe_container="$(require_container "middleware")"
+step "Probing otel-collector health_check extension (:13133/health) from inside ${middleware_probe_container} (up to 1 min)"
+for i in $(seq 1 12); do
+  if docker exec "$middleware_probe_container" wget -qO- http://otel-collector:13133/health >/dev/null 2>&1; then
+    break
+  fi
+  sleep 5
+done
+docker exec "$middleware_probe_container" wget -qO- http://otel-collector:13133/health >/dev/null 2>&1 \
+  || fail "otel-collector health_check extension unreachable at http://otel-collector:13133/health (probed from ${middleware_probe_container}, container ${otel_container}) — collector may be wedged"
 
 # ---------------------------------------------------------------------------
 # Traefik Docker-provider routing check (issue #151). The Docker provider was
@@ -588,6 +620,100 @@ done < <(docker ps --format '{{.Names}}')
 (( mem_limit_bad == 0 )) || fail "one or more containers have no memory limit, an undeclared one, or a limit drifted from the compose file (issue #157 regression) — see UNBOUNDED/DRIFT/FAIL-ITEM lines above"
 echo "  memory-limit coverage OK (${mem_containers_checked} checked, ${mem_containers_found} found, postgres deliberately excluded)"
 
+# ---------------------------------------------------------------------------
+# 4d. Healthcheck coverage (issue #158). Before this, 11 running services
+# (chatwoot-sidekiq, dify-worker, dify-web, middleware, evolution-api,
+# cloudflared, grafana, loki, prometheus, tempo, otel-collector) had NO
+# healthcheck at all — Docker's `restart: unless-stopped` only reacts to a
+# process EXITING, so a wedged-but-alive process (a sidekiq that stops
+# draining jobs, a wedged tunnel) was invisible to Docker, to `autoheal`,
+# and to section 3 above (which only asserts "exists and is running").
+# Same three-outcome discipline as the log-policy/mem-limit checks above
+# (issue #156/#157): a container with no configured healthcheck AND not on
+# the skip list below is a coverage gap and FAILS this check — never a
+# silent pass. A container WITH a healthcheck must also report `healthy`
+# (not `starting`/`unhealthy`), catching the case where the healthcheck
+# exists but is currently failing.
+#
+# The skip list is a fixed bash array, NOT an env-var-overridable string
+# (issue #157 review history, `@rev` on #164): an earlier version of the
+# mem-limit check let ANY env var silence the entire assertion, which is
+# exactly the failure mode this whole file exists to catch (issue #156's own
+# lesson). If this list ever needs to change, that's a source-code diff and
+# a reviewed PR, not a runtime knob.
+# ---------------------------------------------------------------------------
+step "Verifying every running chat-services-*/coolify-proxy container has a healthcheck AND reports healthy"
+# otel-collector: distroless image, no exec tool for a Docker-native
+# healthcheck (see deploy/docker-compose.nexaduo.yml and the otel-collector
+# probe above, which covers it via a sibling container instead).
+# dify-sandbox/dify-plugin-daemon/dify-ssrf-proxy/self-healing-agent/autoheal:
+# out of scope for issue #158 (not in its affected-surface list); left for a
+# follow-up rather than folded in here undocumented.
+HEALTHCHECK_COVERAGE_SKIP_SUBNAMES=(otel-collector dify-sandbox dify-plugin-daemon dify-ssrf-proxy self-healing-agent autoheal)
+
+hc_bad=0
+hc_containers_found=0
+hc_containers_checked=0
+while IFS= read -r container; do
+  [[ -n "$container" ]] || continue
+  case "$container" in
+    "${COMPOSE_PROJECT_NAME}-"*-[0-9]*|"coolify-proxy") ;;
+    *) continue ;;
+  esac
+  hc_containers_found=$((hc_containers_found + 1))
+
+  if [[ "$container" == "coolify-proxy" ]]; then
+    subname="coolify-proxy"
+  else
+    rest="${container#"${COMPOSE_PROJECT_NAME}"-}"
+    subname="${rest%-*}"
+  fi
+
+  skip=0
+  for skip_subname in "${HEALTHCHECK_COVERAGE_SKIP_SUBNAMES[@]}"; do
+    if [[ "$subname" == "$skip_subname" ]]; then
+      skip=1
+      break
+    fi
+  done
+  if [[ "$skip" == "1" ]]; then
+    echo "  WARN: skipping ${container} (documented exception — issue #158, see deploy compose comment for ${subname})"
+    continue
+  fi
+
+  hc_containers_checked=$((hc_containers_checked + 1))
+  # Same "three explicit states" discipline as log-policy/mem-limit above: a
+  # container gone mid-scan is skipped (not a fact to assert), any OTHER
+  # docker-inspect failure FAILS loud (never silently treated as compliant),
+  # and only a successful inspect is evaluated. `.State.Health.Status` on a
+  # container with NO configured healthcheck renders as an empty string
+  # (there is no `.State.Health` key at all), which is exactly the
+  # NO-HEALTHCHECK case this check needs to catch.
+  if health_status="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{end}}' "$container" 2>&1)"; then
+    :
+  else
+    if [[ "${health_status,,}" == *"no such object"* ]]; then
+      echo "  WARN: skipping ${container} (removed mid-scan — docker inspect: ${health_status})" >&2
+      hc_containers_checked=$((hc_containers_checked - 1))
+      continue
+    fi
+    echo "  FAIL-ITEM: could not determine health status for ${container} (docker inspect error, not a confirmed removal): ${health_status}" >&2
+    hc_bad=1
+    continue
+  fi
+  if [[ -z "$health_status" ]]; then
+    echo "  NO-HEALTHCHECK: ${container} (subname=${subname}) has no healthcheck configured (issue #158 regression)" >&2
+    hc_bad=1
+  elif [[ "$health_status" != "healthy" ]]; then
+    echo "  UNHEALTHY: ${container} (subname=${subname}) healthcheck status=${health_status}" >&2
+    hc_bad=1
+  fi
+done < <(docker ps --format '{{.Names}}')
+
+(( hc_containers_found > 0 )) || fail "no chat-services-*/coolify-proxy containers found — is the stack up, and does COMPOSE_PROJECT_NAME (currently '${COMPOSE_PROJECT_NAME}') match the running project?"
+(( hc_containers_checked > 0 )) || fail "${hc_containers_found} container(s) matched but ALL were skipped (fixed skip list: ${HEALTHCHECK_COVERAGE_SKIP_SUBNAMES[*]}) — no healthcheck coverage was actually asserted this run."
+(( hc_bad == 0 )) || fail "one or more containers have no healthcheck configured or are not reporting healthy (issue #158 regression) — see NO-HEALTHCHECK/UNHEALTHY lines above"
+echo "  healthcheck coverage OK (${hc_containers_checked} checked, ${hc_containers_found} found)"
 
 # ---------------------------------------------------------------------------
 # 5. Cross-stack network membership: confirm at least one container per

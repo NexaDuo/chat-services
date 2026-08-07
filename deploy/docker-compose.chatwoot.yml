@@ -156,6 +156,36 @@ services:
       - ${NEXADUO_CONF_PATH}/deploy/ai_agents.rb:/app/config/initializers/ai_agents.rb:ro
       - ${NEXADUO_CONF_PATH}/deploy/assume_ssl.rb:/app/config/initializers/assume_ssl.rb:ro
     command: ["bundle", "exec", "sidekiq", "-C", "config/sidekiq.yml"]
+    # Queue-liveness probe, not a `pgrep` (issue #158): `sidekiqmon processes`
+    # queries Sidekiq's own Redis-backed process registry, which a wedged
+    # process (Ruby event loop stuck, still `Up` in Docker) stops
+    # heartbeating to and drops out of within its TTL — a `pgrep sidekiq`
+    # would still show the process and never catch that. Asserting our OWN
+    # container's hostname is present in that registry (not just "some
+    # process exists") catches the wedge. Verified inside the running
+    # container: `bundle exec sidekiqmon processes` lists
+    # `<hostname>:<pid>:<id> [app]`, completes in ~1s (no full Rails boot
+    # needed), and $HOSTNAME (Docker's own container-id hostname) is a
+    # substring of that line.
+    healthcheck:
+      test: ["CMD-SHELL", "cd /app && bundle exec sidekiqmon processes 2>&1 | grep -qF \"$$HOSTNAME\""]
+      interval: 30s
+      timeout: 15s
+      retries: 5
+      # Chatwoot's Rails boot is the same codebase as chatwoot-rails
+      # (start_period: 90s there); Sidekiq boots the same Rails app, so
+      # mirror that grace to avoid flapping unhealthy during a slow cold
+      # start.
+      start_period: 90s
+    labels:
+      # autoheal=true (issue #158): Sidekiq's job model is designed to
+      # tolerate a restart — a job in flight during SIGTERM either finishes
+      # within the graceful-shutdown window or is re-enqueued (Sidekiq's
+      # at-least-once semantics; this is the same restart path an ordinary
+      # deploy already exercises). A queue that stops draining while the
+      # process stays `Up` (the exact case a `pgrep`-style check would miss)
+      # is worse than a brief restart, so autoheal is warranted here.
+      - "autoheal=true"
     networks:
       - chat-network
 volumes:
