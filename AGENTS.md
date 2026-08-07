@@ -230,7 +230,8 @@ There is **no** staging→prod GitHub Actions pipeline and no separate staging e
 host-local stack behind the tunnel **is** production (issue #109). Every change
 serializes on this live stack; **do not recreate shared containers (especially
 `chat-services-postgres-1`)** and coordinate with concurrent work on the host.
-- **CI merge gates (every PR, both required):**
+- **CI merge gates (every PR, treated as required by team convention — see caveat
+  below):**
   - `stack-compose-playwright.yml` (job `validate-stack`) spins the whole stack up
     ephemerally on the runner and runs Playwright (Stage 1 connectivity + Stage 4
     tenant resolution).
@@ -242,6 +243,14 @@ serializes on this live stack; **do not recreate shared containers (especially
     middleware `^4.1.6`) and neither should wait on the ephemeral stack spin-up
     (nor have a stack flake mask a unit failure or vice versa).
   Monitor both to green (`gh run watch`).
+  - **Caveat — no platform enforcement (issue #162):** `main` has **no branch
+    protection** (`GET /branches/main/protection` → 404), so GitHub does not
+    actually block a merge on either workflow failing; "required" above describes
+    team practice, not something the platform enforces. Don't repeat the #151
+    mistake of a doc claiming a guarantee reality doesn't back — until #162 lands
+    branch protection with these as required status checks, treat both as
+    convention-enforced only and verify status by hand (`gh run watch`) before
+    merging, not by trusting a merge button that would let a red PR through.
 - **Mandatory phases (single env):** CI green → apply the merged change to the live
   stack (`scripts/run-stack.sh up`, or recreate only the affected service — never
   `down -v`, never postgres unnecessarily) → validate on the real environment

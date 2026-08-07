@@ -12,6 +12,16 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# Explicit least-privilege token (matches deploy.yml/power.yml/publish-images.yml).
+# Both jobs only checkout + npm ci + npm test, so read-only contents access is
+# enough. Declared at workflow level since it's the same scope for both jobs.
+# The repo's default_workflow_permissions is already `read`, but issue #162
+# found main has no branch protection at all — platform enforcement here is
+# weak, so this isn't left to an implicit repo default that could change
+# unnoticed.
+permissions:
+  contents: read
+
 jobs:
   self-healing:
     runs-on: ubuntu-latest
