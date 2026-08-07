@@ -230,10 +230,18 @@ There is **no** staging→prod GitHub Actions pipeline and no separate staging e
 host-local stack behind the tunnel **is** production (issue #109). Every change
 serializes on this live stack; **do not recreate shared containers (especially
 `chat-services-postgres-1`)** and coordinate with concurrent work on the host.
-- **CI merge gate (every PR):** `stack-compose-playwright.yml` (job `validate-stack`)
-  spins the whole stack up ephemerally on the runner and runs Playwright (Stage 1
-  connectivity + Stage 4 tenant resolution). It is the **real** merge gate — monitor it
-  to green (`gh run watch`).
+- **CI merge gates (every PR, both required):**
+  - `stack-compose-playwright.yml` (job `validate-stack`) spins the whole stack up
+    ephemerally on the runner and runs Playwright (Stage 1 connectivity + Stage 4
+    tenant resolution).
+  - `unit-tests.yml` (jobs `self-healing` and `middleware`, issue #155) runs each
+    package's vitest suite (`npm test`) — `agents/self-healing/**` and
+    `middleware/**` unit tests were previously green locally but never executed by
+    any workflow, so a broken test could merge undetected. Split into two jobs
+    because the packages pin different vitest majors (self-healing `^2.1.9`,
+    middleware `^4.1.6`) and neither should wait on the ephemeral stack spin-up
+    (nor have a stack flake mask a unit failure or vice versa).
+  Monitor both to green (`gh run watch`).
 - **Mandatory phases (single env):** CI green → apply the merged change to the live
   stack (`scripts/run-stack.sh up`, or recreate only the affected service — never
   `down -v`, never postgres unnecessarily) → validate on the real environment

@@ -1,0 +1,58 @@
+name: Unit Tests
+
+# Runs the vitest unit suites for agents/self-healing and middleware on every PR
+# and on push to main. Kept separate from stack-compose-playwright.yml (issue
+# #155): the unit suites are fast (no ephemeral stack spin-up) and a stack
+# flake there must not mask a unit failure here, nor vice versa. The two
+# packages pin different vitest majors (self-healing ^2.1.9, middleware
+# ^4.1.6), so each gets its own job/install rather than a shared runner.
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  self-healing:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: agents/self-healing/package-lock.json
+
+      - name: Install dependencies
+        working-directory: agents/self-healing
+        run: npm ci
+
+      - name: Run vitest (self-healing)
+        working-directory: agents/self-healing
+        run: npm test
+
+  middleware:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: middleware/package-lock.json
+
+      - name: Install dependencies
+        working-directory: middleware
+        run: npm ci
+
+      - name: Run vitest (middleware)
+        working-directory: middleware
+        run: npm test
