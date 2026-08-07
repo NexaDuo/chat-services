@@ -242,7 +242,10 @@ serializes on this live stack; **do not recreate shared containers (especially
     middleware `^4.1.6`) and neither should wait on the ephemeral stack spin-up
     (nor have a stack flake mask a unit failure or vice versa).
   Monitor both to green (`gh run watch`).
-  - **Platform enforcement (issue #162, enabled 2026-08-07).** `main` carries branch
+  - **Platform enforcement (issue #162 — configuration and proof recorded in that
+    issue's comments; verify current state with
+    `gh api repos/NexaDuo/chat-services/branches/main/protection`, which is the only
+    authority here since repo settings live outside git).** `main` carries branch
     protection with four **required status checks** — `validate-stack`, `secret-scan`,
     `middleware`, `self-healing`. Force pushes and branch deletion are blocked.
     `enforce_admins: true`, so the rule binds the repo owner too. There is **no**
@@ -252,10 +255,15 @@ serializes on this live stack; **do not recreate shared containers (especially
     merge path. `strict` (require-branch-up-to-date) is **off**; re-running CI on every
     intervening merge costs more than the semantic conflicts it would catch at this
     volume.
-    - **Both bypasses were observed refusing**, not assumed (the criterion this issue was
-      filed on): a merge attempt with a red required check returned *"the base branch
-      policy prohibits the merge"* (`mergeStateStatus=BLOCKED`), and a real direct push to
-      `main` was rejected with `GH006 ... protected branch hook declined`.
+    - **All three bypasses were observed refusing**, not assumed (the criterion this issue
+      was filed on): a merge attempt with a red required check returned *"the base branch
+      policy prohibits the merge"* (`mergeStateStatus=BLOCKED`); a real direct push to
+      `main` was rejected with `GH006 ... protected branch hook declined`; and
+      `gh pr merge --admin` was refused (see below). Each was run against a throwaway PR
+      with a deliberately harmless payload, so that "it merged" would also have been a safe
+      outcome — design the experiment so either result is survivable, then you can actually
+      run it. Evidence trail: issue #162 comments; scratch PRs #168 and #170, both closed
+      unmerged.
     - **`git push --dry-run` is NOT a valid oracle for this** — it reports success whether
       `enforce_admins` is on or off. A check that returns the same answer in both states
       measures nothing; use a real push (an empty commit is harmless) or a real merge
@@ -264,9 +272,18 @@ serializes on this live stack; **do not recreate shared containers (especially
       stays `MERGEABLE` on a policy-blocked PR. Read `mergeStateStatus`.
     - The `@sec` + `@rev` dual review gate remains **convention, not platform-enforced**;
       nothing in GitHub checks for those markers.
-    - **Incident escape hatch:** `gh pr merge --admin`, which leaves a record in the PR
-      trail — deliberately preferred over a direct push, which would leave none. Record who
-      authorized it and why.
+    - **`gh pr merge --admin` does NOT bypass this** — verified, don't reach for it in an
+      incident expecting it to work: `enforce_admins: true` binds admins to the required
+      checks, and the attempt fails with `GraphQL: N of N required status checks are in
+      progress. (mergePullRequest)`. The mARC playbook describes `--admin` as the override
+      of last resort; that applies to a *review* requirement, which this repo does not
+      have, not to required status checks under admin enforcement.
+    - **The only real escape hatch is toggling `enforce_admins` off** in repo settings
+      (`gh api -X DELETE repos/NexaDuo/chat-services/branches/main/protection/enforce_admins`),
+      merging, then re-enabling it. That is deliberately more friction than a flag: it is
+      visible in the org audit log, and it forces the decision to be explicit. Re-enable in
+      the same session — an "off" that outlives the incident is how a repo ends up back at
+      #162.
     - Repo settings live outside git, so this paragraph is the audit record. If the
       settings change, change it here in the same breath — the #151 lesson is that a doc
       claiming a guarantee reality doesn't back is worse than no doc.
