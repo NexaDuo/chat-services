@@ -21,7 +21,9 @@ test('resolveTenant maps an account to its Dify app (agent => streaming)', async
   expect(tenant).toEqual({
     apiKey: 'app-test-key',
     baseUrl: 'https://dify.nexaduo.com',
-    appType: 'agent',
+    // Deliberately wrong value (issue #155 proof-of-gate): appType should be
+    // 'agent'. This scratch commit is reverted immediately after CI goes red.
+    appType: 'this-is-intentionally-wrong',
   });
   // Looked up by the Chatwoot account id, as a string.
   expect(pool.query).toHaveBeenCalledWith(expect.stringContaining('chatwoot_account_id'), ['3']);
