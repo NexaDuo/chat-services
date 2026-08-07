@@ -28,9 +28,13 @@ jobs:
 
   validate-stack:
     runs-on: ubuntu-latest
-    # Raised from 30: the Dify readiness wait alone can use up to 15 min on a
-    # cold boot (issue #23); leave headroom for the Playwright run after it.
-    timeout-minutes: 45
+    # Raised from 30, then from 45 (issue #23 follow-up, 2026-08-07): the Dify
+    # readiness wait alone can now use up to ~20 min on a cold boot, plus
+    # observed cases where the runner itself was so CPU-starved that the
+    # curl-based poll loop ran at roughly half its nominal cadence (a 15 min
+    # budget elapsed in ~30 min of wall time — see the 180-attempt loop
+    # comment below). Leave headroom for the Playwright run after it.
+    timeout-minutes: 55
     # Compose v2.30+ on ubuntu-latest forbids redefining services imported via
     # `include:`. The root docker-compose.yml carries cross-stack `depends_on`
     # overrides, so we chain compose files via -f / COMPOSE_FILE instead.
@@ -120,12 +124,27 @@ jobs:
           [[ "${code}" =~ ^[234] ]] || { echo "::error::Chatwoot did not become ready in time."; exit 1; }
 
           # Dify runs dozens of Alembic migrations on boot and competes for the
-          # runner's limited CPU/RAM, so it can take a while. Allow up to 15 min
-          # (180 x 5s) before failing (issue #23).
+          # runner's limited CPU/RAM, so it can take a while. issue #23
+          # originally allowed 15 min (180 x 5s). Raised to 20 min (240 x 5s)
+          # on 2026-08-07 after an investigation (issue #157/#158 PRs, see PR
+          # discussion) found this is a pre-existing, purely runner-contention
+          # flake unrelated to those PRs' mem/cpu limits or healthchecks: the
+          # identical timeout reproduced on a commit that predates both, with
+          # dify-api never OOM-killed/restarted (docker ps showed it simply
+          # still mid-migration and "unhealthy" at the deadline), and an
+          # immediate rerun of the exact same commit passed with Dify ready on
+          # the very first poll. One observed failure even blew through the
+          # nominal 15 min budget in ~30 min of wall time, i.e. the runner was
+          # so CPU-starved that this lightweight curl/sleep loop itself ran at
+          # roughly half cadence — the underlying variance is GitHub-hosted
+          # shared-runner noisy-neighbor CPU steal, not something this repo's
+          # compose files control. This bump reduces (does not eliminate) the
+          # flake rate; a rerun remains the correct response if it still times
+          # out (tracked in issue #23).
           echo "Waiting for Dify API (127.0.0.1:5001)..."
-          for i in $(seq 1 180); do
+          for i in $(seq 1 240); do
             code=$(curl -sS -o /dev/null -w "%{http_code}" --max-time 5 http://127.0.0.1:5001/console/api/setup 2>/dev/null || echo "000")
-            echo "  attempt ${i}/180: 127.0.0.1:5001 -> ${code}"
+            echo "  attempt ${i}/240: 127.0.0.1:5001 -> ${code}"
             case "${code}" in 2*|3*|4*) echo "Dify API ready."; break ;; esac
             sleep 5
           done
