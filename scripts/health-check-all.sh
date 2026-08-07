@@ -274,7 +274,15 @@ echo "  docker-provider routers OK: ${docker_enabled_count} enabled"
 # same review).
 # ---------------------------------------------------------------------------
 step "Verifying every running chat-services-*/coolify-proxy container has a bounded log policy"
-LOG_POLICY_SKIP_SUBNAMES="${LOG_POLICY_SKIP_SUBNAMES:-postgres}"
+# `postgres` was skipped pending explicit user sign-off to recreate the
+# SACRED `chat-services_postgres-data` volume (issue #156). Signed off and
+# recreated 2026-08-07 with `--no-deps` (never `down -v`); verified
+# before/after via `docker volume inspect chat-services_postgres-data`
+# (identical CreatedAt/Mountpoint) and a `SELECT count(*) FROM conversations`
+# row count (3 -> 3, unchanged) — the volume survived and the policy is now
+# live (`docker inspect` confirms `json-file max-size=10m max-file=3`). No
+# skip needed anymore; default to checking everything.
+LOG_POLICY_SKIP_SUBNAMES="${LOG_POLICY_SKIP_SUBNAMES:-}"
 # Per-tier expected max-size (issue #156 `@rev` review item 3): the anchor is
 # necessarily replicated across 4 compose files (shared/chatwoot/dify/
 # nexaduo — YAML anchors don't cross `-f` files), so a value can drift
