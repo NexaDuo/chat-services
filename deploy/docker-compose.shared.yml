@@ -153,9 +153,41 @@ services:
     logging: *default-logging
     # Measured ~22MiB RSS; 4x rounds under the 128m floor.
     mem_limit: 128m
-    command: tunnel run
+    # Pin the metrics listener to a fixed loopback address/port (issue #158):
+    # without an explicit --metrics, cloudflared still binds one from its
+    # default port list (verified empirically: `cloudflared tunnel ready`
+    # against the unpinned default succeeded), but pinning removes the
+    # ambiguity of "whichever of 20241-20245 happened to be free" and gives
+    # the healthcheck below a stable target. Loopback-only — not published as
+    # a host port (host ports are isolated by default, #119/#145) and not
+    # reachable from other containers on nexaduo-network either.
+    command: tunnel --metrics 127.0.0.1:20241 run
     environment:
       TUNNEL_TOKEN: ${TUNNEL_TOKEN}
+    # cloudflared's image is distroless (verified: no /bin/sh, no wget/curl —
+    # `docker exec ... sh` fails with "executable file not found"), so the
+    # healthcheck can't shell out to a probe tool. cloudflared ships its own
+    # readiness subcommand for exactly this: `tunnel ready` calls the local
+    # /ready endpoint on the metrics listener and returns a real exit code
+    # (verified: exit 0 against the live metrics port, exit 1 + "connection
+    # refused" against a wrong port) — this is the sole path available.
+    healthcheck:
+      test: ["CMD", "cloudflared", "tunnel", "--metrics", "127.0.0.1:20241", "ready"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    labels:
+      # autoheal=true (issue #158): cloudflared is the ONLY path for all
+      # public *.nexaduo.com traffic, so a tunnel that wedges (stays `Up`
+      # while no longer proxying) is a total outage indistinguishable from
+      # "fine" without this healthcheck. A `docker restart` reconnects the
+      # tunnel in a few seconds — far cheaper than a wedge going unnoticed
+      # until someone reports the site down. The probe above hits its own
+      # /ready endpoint (not a bare TCP check), and retries=3/interval=30s
+      # give ~90s of grace before autoheal acts, so a brief edge blip
+      # doesn't trigger a restart loop.
+      - "autoheal=true"
     networks:
       - chat-network
 
