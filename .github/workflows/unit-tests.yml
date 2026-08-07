@@ -29,6 +29,12 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # The job only reads the repo (npm ci + npm test); it never pushes
+          # or otherwise needs git credentials after checkout. Don't leave
+          # GITHUB_TOKEN sitting in .git/config while npm ci runs PR-controlled
+          # lockfile lifecycle scripts (qodo finding on PR #159).
+          persist-credentials: false
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -51,6 +57,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # See self-healing job: no git credentials needed after checkout.
+          persist-credentials: false
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
