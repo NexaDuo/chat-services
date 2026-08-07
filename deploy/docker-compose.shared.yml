@@ -25,6 +25,31 @@ x-logging: &default-logging
     max-size: "10m"
     max-file: "3"
 
+# Issue #157: mem_limit is deliberately NOT set on postgres in this file/PR.
+# It holds the SACRED chat-services_postgres-data volume and a limit sized
+# below what shared_buffers/work_mem can demand OOM-kills the DB under load —
+# AGENTS.md/the issue both require postgres to get its own change with its
+# own validation, not be folded into this bulk sweep. Every other service in
+# this file gets mem_limit below.
+#
+# Sizing method (issue #157): measured via `docker stats --no-stream` across
+# two samples ~ (2026-08-07, live host, 22 vCPU / 31GB RAM, 22 containers,
+# stack up ~15-24h, zero OOM kills/restarts at baseline). Limit = ceil(4x
+# measured RSS to the next 128MiB) for steady-state services — the 3-4x
+# headroom multiple the issue asks for, rounded up for a "clean" number
+# rather than an invented round figure. A 128MiB floor is applied to tiny
+# idle services (autoheal/cloudflared) so a legitimate transient allocation
+# (glibc arena growth, TLS handshake buffers, etc.) doesn't get OOM-killed
+# over a baseline that was only ever measured in the single digits of MiB.
+# Verified which Compose attribute actually takes effect on this host rather
+# than assumed (issue's own instruction): both top-level `mem_limit` and
+# `deploy.resources.limits.memory` were empirically confirmed to set
+# HostConfig.Memory under `docker compose up` on this host's Compose v5.3.1 /
+# Docker 29.7.1 (a disposable two-service test compose file, inspected via
+# `docker inspect -f '{{.HostConfig.Memory}}'` on both, both non-zero) — this
+# repo standardizes on top-level `mem_limit`/`cpus` anyway per the issue's own
+# preference, since it doesn't rely on a Compose version new enough to
+# translate `deploy.resources` outside Swarm.
 services:
   postgres:
     image: pgvector/pgvector:pg16
@@ -65,14 +90,50 @@ services:
     image: redis:7.2.4-alpine
     restart: unless-stopped
     logging: *default-logging
+    # Measured ~9MiB RSS. Given floor of 256m (not the bare 4x/128m floor
+    # every other tiny service gets) because redis is the shared broker for
+    # BOTH Sidekiq (chatwoot) and Celery (dify) plus a cache — a
+    # single-tenant idle sample undersells its role under multi-tenant load.
+    mem_limit: 256m
     command:
       - redis-server
       - --requirepass
       - ${REDIS_PASSWORD}
       - --appendonly
       - yes
+      # `@sec` BLOCK on PR #164 (issue #157, comment
+      # github.com/NexaDuo/chat-services/pull/164#issuecomment-5213565299):
+      # mem_limit alone with no --maxmemory is worse than no limit at all
+      # for this container specifically — verified live (`redis-cli config
+      # get maxmemory` -> 0), Redis's own eviction never engages, so the
+      # ONLY enforcement of the 256m ceiling is the kernel OOM-killer against
+      # the whole process. On a broker shared by Sidekiq (chatwoot) AND
+      # Celery (dify), that means one burst kills both queue systems at
+      # once instead of Redis gracefully rejecting writes.
+      #
+      # --maxmemory 150mb, not a rounder/larger fraction of the 256m
+      # ceiling: Redis needs headroom BELOW maxmemory for things maxmemory
+      # itself doesn't account for — allocator (jemalloc) fragmentation,
+      # per-client output/input buffers, and, with `--appendonly yes`
+      # active here, the fork()'d BGREWRITEAOF child's copy-on-write pages
+      # during a rewrite. 150mb/256m = ~59% used, leaving ~106MB (~41%) of
+      # slack so a rewrite-time COW spike or buffer growth hits Redis's own
+      # maxmemory ceiling (which degrades gracefully under noeviction, see
+      # below) well before it reaches the container's hard mem_limit (which
+      # does not degrade gracefully — it's a SIGKILL).
+      - --maxmemory
+      - 150mb
+      # noeviction, NOT allkeys-lru: this Redis is a QUEUE BROKER
+      # (Sidekiq/Celery), not a pure cache. Under allkeys-lru, hitting
+      # maxmemory silently EVICTS an enqueued-but-not-yet-processed job —
+      # that's data loss with no error raised anywhere. Under noeviction,
+      # a write against a full Redis instead returns an explicit
+      # "OOM command not allowed" error to the caller (Sidekiq/Celery
+      # client), which is a visible, retryable failure rather than a
+      # silently vanished job — the correct trade for a broker, even though
+      # it means writes can be rejected instead of always succeeding.
       - --maxmemory-policy
-      - allkeys-lru
+      - noeviction
     environment:
       TZ: ${TZ:-UTC}
     volumes:
@@ -90,6 +151,8 @@ services:
     image: cloudflare/cloudflared:latest
     restart: unless-stopped
     logging: *default-logging
+    # Measured ~22MiB RSS; 4x rounds under the 128m floor.
+    mem_limit: 128m
     command: tunnel run
     environment:
       TUNNEL_TOKEN: ${TUNNEL_TOKEN}
@@ -106,6 +169,8 @@ services:
     image: willfarrell/autoheal:1.2.0
     restart: unless-stopped
     logging: *default-logging
+    # Measured ~4MiB RSS; 4x rounds under the 128m floor.
+    mem_limit: 128m
     environment:
       AUTOHEAL_CONTAINER_LABEL: autoheal
       AUTOHEAL_INTERVAL: "15"        # seconds between unhealthy scans

@@ -32,6 +32,8 @@ services:
     image: alpine:3.19
     restart: "no"
     logging: *default-logging
+    # One-shot chown; negligible footprint. 128m floor (issue #157).
+    mem_limit: 128m
     volumes:
       - dify-api-storage:/app/api/storage
     command: chown -R 1001:1001 /app/api/storage
@@ -41,6 +43,9 @@ services:
     image: langgenius/dify-api:1.13.3
     restart: unless-stopped
     logging: *default-logging
+    # Issue #157 "everything else" tier: measured ~396MiB RSS; limit = 4x
+    # rounded up to the next 128MiB.
+    mem_limit: 1664m
     # Healthcheck for issue #41: after a redeploy/recreate the gunicorn master
     # sometimes binds :5001 but no workers boot ("Booting worker" never appears),
     # so the port accepts TCP but every request hangs (0 bytes -> edge 502).
@@ -119,6 +124,19 @@ services:
     image: langgenius/dify-api:1.13.3
     restart: unless-stopped
     logging: *default-logging
+    # Issue #157 priority group 2 (background job runner, likeliest to
+    # leak). Originally sized off a ~316MiB RSS sample taken on an idle
+    # host (4x -> 1280m). `@rev` review on PR #164 caught that the LIVE
+    # container had since grown to ~538MiB under real traffic — the actual
+    # headroom over the 1280m limit had fallen to ~2.4x, not the intended
+    # 4x, exactly the risk the idle-baseline sizing method warns about
+    # (see shared.yml header). Re-measured and re-sized off the corrected
+    # figure instead of just noting the drift: 538MiB x4 = 2152, rounded up
+    # to the next 128MiB = 2176m. Longer-term detection for this class of
+    # drift (idle-sized limit, real load grows past the multiple) is
+    # tracked in issue #165 (OOMKilled/RestartCount alerting), since a
+    # point-in-time re-measurement here doesn't prevent it recurring.
+    mem_limit: 2176m
     environment:
       MODE: worker
       SECRET_KEY: ${DIFY_SECRET_KEY}
@@ -137,6 +155,9 @@ services:
     image: langgenius/dify-web:1.13.3
     restart: unless-stopped
     logging: *default-logging
+    # Issue #157 "everything else" tier: measured ~86MiB RSS; limit = 4x
+    # rounded up to the next 128MiB.
+    mem_limit: 384m
     environment:
       CONSOLE_API_URL: ${DIFY_CONSOLE_API_URL}
       APP_API_URL: ${DIFY_APP_API_URL}
@@ -154,6 +175,16 @@ services:
     restart: unless-stopped
     # Forensic tier — see x-logging-forensic rationale above (issue #156).
     logging: *forensic-logging
+    # Issue #157 priority group 1 (highest blast-radius: executes
+    # user-submitted, less-trusted workflow code). Measured baseline ~58MiB
+    # RSS is a poor predictor of peak — a single code execution can spike
+    # well above steady-state idle — so this gets an explicit floor (512m)
+    # instead of the bare 4x-of-measured figure every other service uses,
+    # plus a CPU cap (`cpus`) so a runaway/malicious execution can't spin the
+    # host's CPU either, matching the same trust-boundary reasoning AGENTS.md
+    # already applies to this container for the Traefik API exposure (#151).
+    mem_limit: 512m
+    cpus: "2"
     environment:
       API_KEY: ${DIFY_SANDBOX_API_KEY}
     networks:
@@ -163,6 +194,12 @@ services:
     restart: unless-stopped
     # Forensic tier — see x-logging-forensic rationale above (issue #156).
     logging: *forensic-logging
+    # Issue #157 priority group 1 (executes third-party plugin code, the
+    # same less-trusted boundary as dify-sandbox above). Measured ~145MiB
+    # RSS; limit = 4x rounded up to the next 128MiB, plus the same CPU cap
+    # rationale as dify-sandbox.
+    mem_limit: 640m
+    cpus: "2"
     environment:
       SERVER_KEY: ${DIFY_PLUGIN_DAEMON_KEY}
       DIFY_INNER_API_URL: http://dify-api:5001
@@ -188,6 +225,8 @@ services:
     image: ubuntu/squid:latest
     restart: unless-stopped
     logging: *default-logging
+    # Measured ~26MiB RSS; 4x rounds under the 128m floor.
+    mem_limit: 128m
     networks:
       - chat-network
 volumes:

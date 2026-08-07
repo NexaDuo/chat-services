@@ -34,6 +34,19 @@ services:
     image: chatwoot/chatwoot:v4.13.0-ce
     restart: "no"
     logging: *default-logging
+    # `@rev` LOW finding on PR #164: this figure is a deliberate floor, NOT
+    # a measured-RSS x4 figure like every other line in this file — this
+    # container is one-shot (db:prepare + a migration `rails r`) and had
+    # already exited by the time this audit ran, so there was nothing to
+    # sample with `docker stats`. Re-running the migration just to get an
+    # idle-adjacent RSS number for a low-priority one-shot container wasn't
+    # judged worth it. 1024m is set below chatwoot-rails' 1536m (same image/
+    # boot path, so its steady-state figure is a reasonable ceiling) and
+    # above what a Rails migration process typically needs (a few hundred
+    # MiB) — a conservative, explicitly-arbitrary floor, not a formula
+    # output. If this container is ever observed OOMing, that's the signal
+    # to actually measure it and replace this floor with real data.
+    mem_limit: 1024m
     environment:
       RAILS_ENV: production
       POSTGRES_HOST: postgres
@@ -59,6 +72,9 @@ services:
     image: chatwoot/chatwoot:v4.13.0-ce
     restart: unless-stopped
     logging: *default-logging
+    # Issue #157: measured ~363MiB RSS (docker stats, 2026-08-07); limit =
+    # 4x rounded up to the next 128MiB.
+    mem_limit: 1536m
     depends_on:
       chatwoot-init:
         condition: service_completed_successfully
@@ -111,6 +127,9 @@ services:
     restart: unless-stopped
     # Noisy tier — see the x-logging-noisy rationale above (issue #156).
     logging: *noisy-logging
+    # Issue #157 priority group 2 (background job runner, likeliest to
+    # leak): measured ~495MiB RSS; limit = 4x rounded up to the next 128MiB.
+    mem_limit: 2048m
     environment:
       RAILS_ENV: production
       INSTALLATION_ENV: docker

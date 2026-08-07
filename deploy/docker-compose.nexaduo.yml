@@ -16,6 +16,9 @@ services:
     image: evoapicloud/evolution-api:v2.1.1
     restart: unless-stopped
     logging: *default-logging
+    # Issue #157 "everything else" tier: measured ~97MiB RSS; limit = 4x
+    # rounded up to the next 128MiB.
+    mem_limit: 512m
     environment:
       SERVER_TYPE: http
       SERVER_PORT: 8080
@@ -36,6 +39,9 @@ services:
     image: '${MIDDLEWARE_IMAGE}'
     restart: unless-stopped
     logging: *default-logging
+    # Issue #157 "everything else" tier: measured ~51MiB RSS; limit = 4x
+    # rounded up to the next 128MiB.
+    mem_limit: 256m
     environment:
       PORT: 4000
       CHATWOOT_BASE_URL: http://chatwoot-rails:3000
@@ -59,6 +65,10 @@ services:
     image: grafana/loki:3.2.0
     restart: unless-stopped
     logging: *default-logging
+    # Issue #157 priority group 3 (observability, grows with ingest volume
+    # by design — given 6x headroom instead of the default 4x). Measured
+    # ~69MiB RSS; limit = 6x rounded up to the next 128MiB.
+    mem_limit: 512m
     user: "0"
     command: -config.file=/etc/loki/loki.yaml
     volumes:
@@ -72,6 +82,9 @@ services:
     image: grafana/promtail:3.1.0
     restart: unless-stopped
     logging: *default-logging
+    # Issue #157 priority group 3 (observability, 6x headroom — see loki
+    # above). Measured ~53MiB RSS; limit = 6x rounded up to the next 128MiB.
+    mem_limit: 384m
     command: -config.file=/etc/promtail/promtail.yaml
     volumes:
       # Directory mount (not single-file) — WSL stale-inode hardening (#113/#116).
@@ -96,6 +109,9 @@ services:
     image: grafana/grafana:11.6.16
     restart: unless-stopped
     logging: *default-logging
+    # Issue #157 priority group 3 (observability, 6x headroom — see loki
+    # above). Measured ~98MiB RSS; limit = 6x rounded up to the next 128MiB.
+    mem_limit: 640m
     environment:
       GF_SECURITY_ADMIN_PASSWORD: '${GRAFANA_PASSWORD}'
       GF_AUTH_GOOGLE_ENABLED: "true"
@@ -127,6 +143,9 @@ services:
     image: prom/prometheus:v2.55.0
     restart: unless-stopped
     logging: *default-logging
+    # Issue #157 priority group 3 (observability, 6x headroom — see loki
+    # above). Measured ~49MiB RSS; limit = 6x rounded up to the next 128MiB.
+    mem_limit: 384m
     command:
       - --config.file=/etc/prometheus/prometheus.yml
       - --storage.tsdb.retention.time=30d
@@ -142,6 +161,9 @@ services:
     image: '${SELF_HEALING_IMAGE}'
     restart: unless-stopped
     logging: *default-logging
+    # Issue #157 "everything else" tier: measured ~31MiB RSS; 4x rounds
+    # under the 128m floor.
+    mem_limit: 128m
     environment:
       DATABASE_URL: 'postgresql://postgres:${POSTGRES_PASSWORD}@postgres:5432/self_healing'
       LOKI_URL: http://loki:3100
@@ -164,6 +186,9 @@ services:
     image: otel/opentelemetry-collector-contrib:0.111.0
     restart: unless-stopped
     logging: *default-logging
+    # Issue #157 priority group 3 (observability, 6x headroom — see loki
+    # above). Measured ~49MiB RSS; limit = 6x rounded up to the next 128MiB.
+    mem_limit: 384m
     command: ["--config=/etc/otelcol-contrib/config.yaml"]
     volumes:
       # Directory mount (not single-file) — WSL stale-inode hardening (#113/#116).
@@ -174,6 +199,10 @@ services:
     image: grafana/tempo:2.6.1
     restart: unless-stopped
     logging: *default-logging
+    # Issue #157 priority group 3 (observability, 6x headroom — see loki
+    # above). Measured ~128MiB RSS; limit = 6x rounded up to the next
+    # 128MiB (already an exact multiple).
+    mem_limit: 768m
     user: "0"
     command: ["-config.file=/etc/tempo/tempo.yaml"]
     volumes:
