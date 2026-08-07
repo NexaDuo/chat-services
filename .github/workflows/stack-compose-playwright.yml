@@ -28,13 +28,28 @@ jobs:
 
   validate-stack:
     runs-on: ubuntu-latest
-    # Raised from 30, then from 45 (issue #23 follow-up, 2026-08-07): the Dify
-    # readiness wait alone can now use up to ~20 min on a cold boot, plus
-    # observed cases where the runner itself was so CPU-starved that the
-    # curl-based poll loop ran at roughly half its nominal cadence (a 15 min
-    # budget elapsed in ~30 min of wall time — see the 180-attempt loop
-    # comment below). Leave headroom for the Playwright run after it.
-    timeout-minutes: 55
+    # issue #23 follow-up, 2026-08-07 (revised same day after a qodo bot review
+    # caught a math error in the first revision): this budget is derived, not
+    # picked. It has to cover the "Wait for services to be ready" step's own
+    # wall-clock budget (now deadline-based, see that step) plus every other
+    # step around it:
+    #   - readiness deadlines: Chatwoot 300s + Dify 1200s + Middleware 150s
+    #     = 1650s = 27.5 min. These are now real deadlines (SECONDS-based
+    #     loops, not attempt counts), so this is the true worst case for that
+    #     step regardless of how slow/fast each curl+sleep cycle runs on a
+    #     contended runner — the previous revision of this PR sized the
+    #     timeout off the *nominal* 240-attempt/5s figure (20 min) without
+    #     accounting for the fact that our own measurement (15 nominal min
+    #     that took ~30 real min under contention) means an attempt-count loop
+    #     has no fixed wall-clock bound at all.
+    #   - Checkout/Setup Node/Install deps/Build images/Start Stack/Sync
+    #     tenants/Stage 1/Stage 4/Teardown: measured ~220s (3.7 min) combined
+    #     on a fast run (run 92880871238); budgeted generously at 15 min to
+    #     absorb slower npm/playwright-install/docker-build under the same
+    #     runner contention this whole investigation is about.
+    #   27.5 + 15 = 42.5 min, rounded up to 45 for a clean number with a
+    #   little extra headroom.
+    timeout-minutes: 45
     # Compose v2.30+ on ubuntu-latest forbids redefining services imported via
     # `include:`. The root docker-compose.yml carries cross-stack `depends_on`
     # overrides, so we chain compose files via -f / COMPOSE_FILE instead.
@@ -113,48 +128,74 @@ jobs:
         # container starts immediately but Rails needs ~30s more to boot.
         # Poll until localhost:3000 returns a non-empty HTTP response.
         # Dify and Middleware also need time for migrations and boot.
+        #
+        # issue #23 follow-up, 2026-08-07: these loops used to count attempts
+        # (e.g. "240 x 5s = 20 min"), which is only a real wall-clock bound if
+        # every curl+sleep cycle actually takes ~5s. Our own evidence says it
+        # doesn't: on a contended runner a 180-attempt/5s (nominally 15 min)
+        # loop took ~30 min of wall time to exhaust (each cycle ran at ~10s,
+        # not 5s), because `curl --max-time 5` itself can burn its full
+        # timeout under CPU starvation. An attempt-count loop therefore has NO
+        # fixed wall-clock ceiling, which both undermines the timeout math
+        # above (a bot review caught this in the first revision of this PR)
+        # and, worse, risks the *job* timeout killing the step before its own
+        # `::error::` fires — losing "Capture logs on failure" and Teardown
+        # exactly when the flake happens. Switched to real elapsed-time
+        # deadlines (bash `SECONDS`) so each loop's wall-clock budget is what
+        # it says, independent of per-request latency. `--connect-timeout 3`
+        # is added alongside `--max-time 5` so a hung TCP handshake can't
+        # silently eat the whole per-request timeout either.
         run: |
           echo "Waiting for Chatwoot Rails (127.0.0.1:3000)..."
-          for i in $(seq 1 60); do
-            code=$(curl -sS -o /dev/null -w "%{http_code}" --max-time 5 http://127.0.0.1:3000/ 2>/dev/null || echo "000")
-            echo "  attempt ${i}/60: 127.0.0.1:3000 -> ${code}"
+          chatwoot_deadline=300  # 5 min
+          start=$SECONDS
+          while true; do
+            code=$(curl -sS -o /dev/null -w "%{http_code}" --connect-timeout 3 --max-time 5 http://127.0.0.1:3000/ 2>/dev/null || echo "000")
+            elapsed=$((SECONDS - start))
+            echo "  t+${elapsed}s/${chatwoot_deadline}s: 127.0.0.1:3000 -> ${code}"
             case "${code}" in 2*|3*|4*) echo "Chatwoot ready."; break ;; esac
+            (( elapsed >= chatwoot_deadline )) && break
             sleep 5
           done
           [[ "${code}" =~ ^[234] ]] || { echo "::error::Chatwoot did not become ready in time."; exit 1; }
 
           # Dify runs dozens of Alembic migrations on boot and competes for the
           # runner's limited CPU/RAM, so it can take a while. issue #23
-          # originally allowed 15 min (180 x 5s). Raised to 20 min (240 x 5s)
-          # on 2026-08-07 after an investigation (issue #157/#158 PRs, see PR
-          # discussion) found this is a pre-existing, purely runner-contention
-          # flake unrelated to those PRs' mem/cpu limits or healthchecks: the
-          # identical timeout reproduced on a commit that predates both, with
-          # dify-api never OOM-killed/restarted (docker ps showed it simply
-          # still mid-migration and "unhealthy" at the deadline), and an
-          # immediate rerun of the exact same commit passed with Dify ready on
-          # the very first poll. One observed failure even blew through the
-          # nominal 15 min budget in ~30 min of wall time, i.e. the runner was
-          # so CPU-starved that this lightweight curl/sleep loop itself ran at
-          # roughly half cadence — the underlying variance is GitHub-hosted
-          # shared-runner noisy-neighbor CPU steal, not something this repo's
-          # compose files control. This bump reduces (does not eliminate) the
-          # flake rate; a rerun remains the correct response if it still times
-          # out (tracked in issue #23).
+          # originally allowed 15 min. Raised to 20 min on 2026-08-07 after an
+          # investigation (issue #157/#158 PRs, see PR discussion) found this
+          # is a pre-existing, purely runner-contention flake unrelated to
+          # those PRs' mem/cpu limits or healthchecks: the identical timeout
+          # reproduced on a commit that predates both, with dify-api never
+          # OOM-killed/restarted (docker ps showed it simply still
+          # mid-migration and "unhealthy" at the deadline), and an immediate
+          # rerun of the exact same commit passed with Dify ready on the very
+          # first poll. The underlying variance is GitHub-hosted shared-runner
+          # noisy-neighbor CPU steal, not something this repo's compose files
+          # control. This reduces (does not eliminate) the flake rate; a
+          # rerun remains the correct response if it still times out (tracked
+          # in issue #23).
           echo "Waiting for Dify API (127.0.0.1:5001)..."
-          for i in $(seq 1 240); do
-            code=$(curl -sS -o /dev/null -w "%{http_code}" --max-time 5 http://127.0.0.1:5001/console/api/setup 2>/dev/null || echo "000")
-            echo "  attempt ${i}/240: 127.0.0.1:5001 -> ${code}"
+          dify_deadline=1200  # 20 min
+          start=$SECONDS
+          while true; do
+            code=$(curl -sS -o /dev/null -w "%{http_code}" --connect-timeout 3 --max-time 5 http://127.0.0.1:5001/console/api/setup 2>/dev/null || echo "000")
+            elapsed=$((SECONDS - start))
+            echo "  t+${elapsed}s/${dify_deadline}s: 127.0.0.1:5001 -> ${code}"
             case "${code}" in 2*|3*|4*) echo "Dify API ready."; break ;; esac
+            (( elapsed >= dify_deadline )) && break
             sleep 5
           done
           [[ "${code}" =~ ^[234] ]] || { echo "::error::Dify API did not become ready in time."; exit 1; }
 
           echo "Waiting for Middleware (/health at 127.0.0.1:4000)..."
-          for i in $(seq 1 30); do
-            code=$(curl -sS -o /dev/null -w "%{http_code}" --max-time 5 http://127.0.0.1:4000/health 2>/dev/null || echo "000")
-            echo "  attempt ${i}/30: 127.0.0.1:4000/health -> ${code}"
+          middleware_deadline=150  # 2.5 min
+          start=$SECONDS
+          while true; do
+            code=$(curl -sS -o /dev/null -w "%{http_code}" --connect-timeout 3 --max-time 5 http://127.0.0.1:4000/health 2>/dev/null || echo "000")
+            elapsed=$((SECONDS - start))
+            echo "  t+${elapsed}s/${middleware_deadline}s: 127.0.0.1:4000/health -> ${code}"
             [[ "${code}" == "200" ]] && { echo "Middleware ready."; break; }
+            (( elapsed >= middleware_deadline )) && break
             sleep 5
           done
           [[ "${code}" == "200" ]] || { echo "::error::Middleware did not become ready in time."; exit 1; }
@@ -186,7 +227,15 @@ jobs:
         run: npx playwright test tests/07-hybrid-tenants.spec.ts
 
       - name: Capture logs on failure
-        if: failure()
+        # if: always() (not failure()) since 2026-08-07 (issue #23 follow-up):
+        # a job-level timeout cancellation does not satisfy failure() in
+        # GitHub Actions, so if the readiness-wait deadlines above ever run
+        # long enough to hit the job's own timeout-minutes, failure() would
+        # skip this step and Teardown both — losing exactly the diagnostic
+        # evidence needed to tell a hard cancellation apart from a clean
+        # `::error::` exit. always() runs it either way; Teardown already
+        # used always() before this change.
+        if: always()
         run: |
           docker compose logs --tail=100
           docker ps -a
