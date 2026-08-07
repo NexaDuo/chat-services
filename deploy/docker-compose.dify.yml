@@ -125,8 +125,18 @@ services:
     restart: unless-stopped
     logging: *default-logging
     # Issue #157 priority group 2 (background job runner, likeliest to
-    # leak): measured ~316MiB RSS; limit = 4x rounded up to the next 128MiB.
-    mem_limit: 1280m
+    # leak). Originally sized off a ~316MiB RSS sample taken on an idle
+    # host (4x -> 1280m). `@rev` review on PR #164 caught that the LIVE
+    # container had since grown to ~538MiB under real traffic — the actual
+    # headroom over the 1280m limit had fallen to ~2.4x, not the intended
+    # 4x, exactly the risk the idle-baseline sizing method warns about
+    # (see shared.yml header). Re-measured and re-sized off the corrected
+    # figure instead of just noting the drift: 538MiB x4 = 2152, rounded up
+    # to the next 128MiB = 2176m. Longer-term detection for this class of
+    # drift (idle-sized limit, real load grows past the multiple) is
+    # tracked in issue #165 (OOMKilled/RestartCount alerting), since a
+    # point-in-time re-measurement here doesn't prevent it recurring.
+    mem_limit: 2176m
     environment:
       MODE: worker
       SECRET_KEY: ${DIFY_SECRET_KEY}
@@ -139,31 +149,6 @@ services:
       CELERY_BROKER_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
     volumes:
       - dify-api-storage:/app/api/storage
-    # Real liveness, not process existence (issue #158): `celery inspect
-    # ping` round-trips through the broker to the worker's OWN event loop and
-    # gets `pong` back — verified inside the running container (`celery -A
-    # app.celery inspect ping --timeout 5` → "celery@<host>: OK / pong"). A
-    # wedged worker (event loop stuck, process still `Up`) stops answering
-    # this within the timeout, unlike a `pgrep celery` which would still see
-    # the process.
-    healthcheck:
-      test: ["CMD", "celery", "-A", "app.celery", "inspect", "ping", "--timeout", "5"]
-      interval: 30s
-      timeout: 15s
-      retries: 5
-      # Mirrors dify-api's 180s start_period (same image/boot path — Alembic
-      # migration wait + Flask app init before the Celery app is importable).
-      start_period: 180s
-    # No autoheal=true (issue #158 — deliberate, not blanket): dify-worker
-    # runs Dify's Celery tasks (document/RAG ingestion, dataset processing).
-    # This session did not verify those tasks are safe to interrupt and
-    # redeliver (acks_late/idempotency), and AGENTS.md is explicit that
-    # restarting a worker mid-job can duplicate or lose work. Unlike
-    # chatwoot-sidekiq (Sidekiq's at-least-once contract is well-established
-    # in this codebase) or cloudflared (a stateless reconnect), the safer
-    # default here is detection-only: the healthcheck above still surfaces a
-    # wedge to `docker ps`/`health-check-all.sh`/an operator, who can decide
-    # whether a restart is safe for whatever's mid-flight.
     networks:
       - chat-network
   dify-web:
@@ -177,30 +162,12 @@ services:
       CONSOLE_API_URL: ${DIFY_CONSOLE_API_URL}
       APP_API_URL: ${DIFY_APP_API_URL}
       NEXT_PUBLIC_COOKIE_DOMAIN: ${NEXT_PUBLIC_COOKIE_DOMAIN:-}
-    # dify-web's Next.js server binds only to its own container IP, not
-    # 127.0.0.1/0.0.0.0 (verified inside the running container: `netstat -tlnp`
-    # shows `LISTEN` on the container's eth0 address only) — a bare
-    # `wget http://127.0.0.1:3000/` therefore always connection-refuses even
-    # when the app is fine. $$HOSTNAME resolves via Docker's own /etc/hosts
-    # to that same address (verified: `wget http://$HOSTNAME:3000/` returns
-    # the app's HTML). Root path is a real Next.js page render, not a TCP
-    # accept-only check.
-    healthcheck:
-      test: ["CMD-SHELL", "wget -qO- -T 5 http://$$HOSTNAME:3000/ >/dev/null"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 60s
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.dify.rule=Host(`${DIFY_DOMAIN}`)"
       - "traefik.http.routers.dify.entrypoints=http"
       - "traefik.http.routers.dify.priority=10"
       - "traefik.http.services.dify.loadbalancer.server.port=3000"
-      # autoheal=true (issue #158): dify-web is a stateless Next.js frontend
-      # with no job/queue state to duplicate or lose — a restart just drops
-      # in-flight page loads, which the browser retries.
-      - "autoheal=true"
     networks:
       - chat-network
   dify-sandbox:
