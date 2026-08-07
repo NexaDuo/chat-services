@@ -92,9 +92,8 @@ services:
     logging: *default-logging
     # Measured ~9MiB RSS. Given floor of 256m (not the bare 4x/128m floor
     # every other tiny service gets) because redis is the shared broker for
-    # BOTH Sidekiq (chatwoot) and Celery (dify) plus a cache with
-    # --maxmemory-policy allkeys-lru — a single-tenant idle sample
-    # undersells its role under multi-tenant load.
+    # BOTH Sidekiq (chatwoot) and Celery (dify) plus a cache — a
+    # single-tenant idle sample undersells its role under multi-tenant load.
     mem_limit: 256m
     command:
       - redis-server
@@ -102,8 +101,39 @@ services:
       - ${REDIS_PASSWORD}
       - --appendonly
       - yes
+      # `@sec` BLOCK on PR #164 (issue #157, comment
+      # github.com/NexaDuo/chat-services/pull/164#issuecomment-5213565299):
+      # mem_limit alone with no --maxmemory is worse than no limit at all
+      # for this container specifically — verified live (`redis-cli config
+      # get maxmemory` -> 0), Redis's own eviction never engages, so the
+      # ONLY enforcement of the 256m ceiling is the kernel OOM-killer against
+      # the whole process. On a broker shared by Sidekiq (chatwoot) AND
+      # Celery (dify), that means one burst kills both queue systems at
+      # once instead of Redis gracefully rejecting writes.
+      #
+      # --maxmemory 150mb, not a rounder/larger fraction of the 256m
+      # ceiling: Redis needs headroom BELOW maxmemory for things maxmemory
+      # itself doesn't account for — allocator (jemalloc) fragmentation,
+      # per-client output/input buffers, and, with `--appendonly yes`
+      # active here, the fork()'d BGREWRITEAOF child's copy-on-write pages
+      # during a rewrite. 150mb/256m = ~59% used, leaving ~106MB (~41%) of
+      # slack so a rewrite-time COW spike or buffer growth hits Redis's own
+      # maxmemory ceiling (which degrades gracefully under noeviction, see
+      # below) well before it reaches the container's hard mem_limit (which
+      # does not degrade gracefully — it's a SIGKILL).
+      - --maxmemory
+      - 150mb
+      # noeviction, NOT allkeys-lru: this Redis is a QUEUE BROKER
+      # (Sidekiq/Celery), not a pure cache. Under allkeys-lru, hitting
+      # maxmemory silently EVICTS an enqueued-but-not-yet-processed job —
+      # that's data loss with no error raised anywhere. Under noeviction,
+      # a write against a full Redis instead returns an explicit
+      # "OOM command not allowed" error to the caller (Sidekiq/Celery
+      # client), which is a visible, retryable failure rather than a
+      # silently vanished job — the correct trade for a broker, even though
+      # it means writes can be rejected instead of always succeeding.
       - --maxmemory-policy
-      - allkeys-lru
+      - noeviction
     environment:
       TZ: ${TZ:-UTC}
     volumes:
