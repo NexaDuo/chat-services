@@ -1,7 +1,39 @@
+# Issue #156: bounded logging is the default for every service (see the
+# longer rationale in deploy/docker-compose.shared.yml — YAML anchors don't
+# cross compose files, so each file carries its own copy of this block).
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+# Noisy tier: chatwoot-sidekiq is the service that motivated this issue
+# (measured ~54,810 lines / ~14.0MB in 15h ≈ 22MB/day — larger and faster
+# than the #151 incident that forced rotation onto coolify-proxy in the first
+# place). At the default 10m x 3 = 30MB, that's only ~1.4 days of local
+# `docker logs` debugging window before rotation drops the oldest chunk.
+# Bumped to 20m x 4 = 80MB ≈ 3.6 days: still bounded (never unrotated again),
+# but keeps a useful multi-day local window for `docker logs`/`--since`
+# debugging without relying solely on a Loki query. Loki/Promtail retains the
+# FULL history regardless of this local buffer size — Promtail's docker_sd
+# scrape streams each line to Loki as it's written (the same continuous-tail
+# mechanism as `docker logs -f`), so rotation dropping old on-disk chunks
+# does not shorten what's already been forwarded and indexed in Loki. Sized
+# up specifically for this one noisy service rather than raising the
+# stack-wide default, since every other service in this file/repo is 1-2
+# orders of magnitude quieter (dify-plugin-daemon ~5.4MB/day, evolution-api
+# ~1.3MB/day — the default 30MB already covers days-to-weeks for those).
+x-logging-noisy: &noisy-logging
+  driver: json-file
+  options:
+    max-size: "20m"
+    max-file: "4"
+
 services:
   chatwoot-init:
     image: chatwoot/chatwoot:v4.13.0-ce
     restart: "no"
+    logging: *default-logging
     environment:
       RAILS_ENV: production
       POSTGRES_HOST: postgres
@@ -26,6 +58,7 @@ services:
   chatwoot-rails:
     image: chatwoot/chatwoot:v4.13.0-ce
     restart: unless-stopped
+    logging: *default-logging
     depends_on:
       chatwoot-init:
         condition: service_completed_successfully
@@ -76,6 +109,8 @@ services:
   chatwoot-sidekiq:
     image: chatwoot/chatwoot:v4.13.0-ce
     restart: unless-stopped
+    # Noisy tier — see the x-logging-noisy rationale above (issue #156).
+    logging: *noisy-logging
     environment:
       RAILS_ENV: production
       INSTALLATION_ENV: docker

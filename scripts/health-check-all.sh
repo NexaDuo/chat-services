@@ -246,6 +246,144 @@ docker_enabled_count="$(echo "$routers_json" | grep -o '"provider":"docker"[^}]*
 echo "  docker-provider routers OK: ${docker_enabled_count} enabled"
 
 # ---------------------------------------------------------------------------
+# 4b. Log rotation coverage (issue #156). Only coolify-proxy had a bounded
+# log policy (json-file + max-size + max-file, #151/#153); every other
+# service accrued logs unbounded — chatwoot-sidekiq measured ~22MB/day, faster
+# than the 136k-line #151 incident that motivated rotation in the first
+# place. This asserts the *class* of regression (any chat-services-* /
+# coolify-proxy container missing a bounded json-file policy AND at its
+# documented tier's expected max-size — see below), the same pattern as the
+# #153 router-count check, so a future service that forgets to reference the
+# shared `x-logging` anchor, OR whose anchor copy silently drifts from the
+# other 3 files it's replicated in, is caught here instead of silently
+# accruing unrotated logs again.
+#
+# `@rev`/`@sec` review (issue #156 PR #161) reproduced a false-"OK" in an
+# earlier version of this check: filtering `docker ps` through
+# `grep -E "^(${COMPOSE_PROJECT_NAME}-|...)"` piped into `while read` means a
+# zero-match grep (stack down, or COMPOSE_PROJECT_NAME overridden per
+# AGENTS.md #7) makes the loop execute zero times and fall through to the
+# same "OK" echo with nothing actually checked — `set -euo pipefail` does NOT
+# catch this, because the pipeline's exit status is grep's (1 on no match,
+# but `|| true`-equivalent behavior isn't even needed here: the loop body
+# just never runs and the script marches on). Fixed the same way the Traefik
+# router check above guards against zero enabled routers: count what was
+# actually checked and `fail` if that count is zero. Matching is done with
+# bash glob `case`, not `grep -E`, so a COMPOSE_PROJECT_NAME containing
+# regex metacharacters can't silently break the match (also flagged in the
+# same review).
+# ---------------------------------------------------------------------------
+step "Verifying every running chat-services-*/coolify-proxy container has a bounded log policy"
+LOG_POLICY_SKIP_SUBNAMES="${LOG_POLICY_SKIP_SUBNAMES:-postgres}"
+# Per-tier expected max-size (issue #156 `@rev` review item 3): the anchor is
+# necessarily replicated across 4 compose files (shared/chatwoot/dify/
+# nexaduo — YAML anchors don't cross `-f` files), so a value can drift
+# unnoticed in one of them. Asserting the effective value against what each
+# tier is DOCUMENTED to be (not just "non-empty") catches that drift, not
+# just a missing policy.
+LOG_POLICY_DEFAULT_MAX_SIZE="${LOG_POLICY_DEFAULT_MAX_SIZE:-10m}"
+LOG_POLICY_FORENSIC_MAX_SIZE="${LOG_POLICY_FORENSIC_MAX_SIZE:-20m}"
+# max-file per tier (issue #156 second review round, qodo/@techlead item 2):
+# the comment above says the policy is "json-file + max-size + max-file", but
+# only max-size was ever asserted — a container with max-size set and NO
+# max-file passes silently. Severity note (confirmed by reasoning about the
+# dockerd default, not measured against a live drifted container): a missing
+# max-file does NOT make the container unbounded — dockerd defaults max-file
+# to 1 when max-size is set, so the log stays size-bounded — it just loses
+# the retained-history depth the tier intends (3 or 4 rotated files instead
+# of 1). Treated as the same DRIFT class as max-size, not upgraded to
+# UNBOUNDED, so the failure message doesn't overstate the risk.
+LOG_POLICY_DEFAULT_MAX_FILE="${LOG_POLICY_DEFAULT_MAX_FILE:-3}"
+LOG_POLICY_FORENSIC_MAX_FILE="${LOG_POLICY_FORENSIC_MAX_FILE:-4}"
+# chatwoot-sidekiq: byte-heavy noisy tier (deploy/docker-compose.chatwoot.yml).
+# dify-sandbox/dify-plugin-daemon: forensic tier for less-trusted code
+# execution, independent of measured volume (deploy/docker-compose.dify.yml).
+LOG_POLICY_FORENSIC_SUBNAMES="${LOG_POLICY_FORENSIC_SUBNAMES:-chatwoot-sidekiq dify-sandbox dify-plugin-daemon}"
+
+log_policy_bad=0
+containers_found=0
+containers_checked=0
+while IFS= read -r container; do
+  [[ -n "$container" ]] || continue
+  case "$container" in
+    "${COMPOSE_PROJECT_NAME}-"*-[0-9]*|"coolify-proxy") ;;
+    *) continue ;;
+  esac
+  containers_found=$((containers_found + 1))
+
+  # Derive the subname via string ops (not a regex match) so a
+  # COMPOSE_PROJECT_NAME with glob/regex metacharacters can't misparse it.
+  if [[ "$container" == "coolify-proxy" ]]; then
+    subname="coolify-proxy"
+  else
+    rest="${container#${COMPOSE_PROJECT_NAME}-}"
+    subname="${rest%-*}"
+  fi
+
+  skip=0
+  for skip_subname in $LOG_POLICY_SKIP_SUBNAMES; do
+    if [[ "$subname" == "$skip_subname" ]]; then
+      skip=1
+      break
+    fi
+  done
+  if [[ "$skip" == "1" ]]; then
+    echo "  WARN: skipping ${container} (pending sign-off — issue #156, SACRED volume recreate)"
+    continue
+  fi
+
+  expected_max_size="$LOG_POLICY_DEFAULT_MAX_SIZE"
+  expected_max_file="$LOG_POLICY_DEFAULT_MAX_FILE"
+  for forensic_subname in $LOG_POLICY_FORENSIC_SUBNAMES; do
+    if [[ "$subname" == "$forensic_subname" ]]; then
+      expected_max_size="$LOG_POLICY_FORENSIC_MAX_SIZE"
+      expected_max_file="$LOG_POLICY_FORENSIC_MAX_FILE"
+      break
+    fi
+  done
+
+  containers_checked=$((containers_checked + 1))
+  # NOTE (issue #156 second review round, qodo/@techlead item 1): `index` on a
+  # Go template map for a MISSING key renders as an EMPTY string, not
+  # "<no value>" (that placeholder is a dot-notation/field-lookup artifact,
+  # not an `index`-on-map one) — verified empirically against the real live
+  # (unbounded) chat-services-postgres-1: `docker inspect -f
+  # '{{index .HostConfig.LogConfig.Config "max-size"}}'` printed nothing
+  # (confirmed byte-for-byte with `od -c`), so `-z "$max_size"` below DOES
+  # correctly catch a missing max-size as UNBOUNDED, not misroute it into the
+  # DRIFT branch. Re-verify with `od -c` if the docker/template version ever
+  # changes this behavior — don't assume it holds forever.
+  # Pipe-delimited, not space-delimited: max-size/max-file are legitimately
+  # EMPTY when unset, and whitespace-based field splitting (awk/read with
+  # default IFS) collapses consecutive delimiters, silently shifting fields
+  # left when a value is missing — exactly the case this check most needs to
+  # get right. `|` can't appear in a docker log-driver name or a max-size/
+  # max-file value, so it can't be misparsed the same way.
+  log_config="$(docker inspect -f '{{.HostConfig.LogConfig.Type}}|{{index .HostConfig.LogConfig.Config "max-size"}}|{{index .HostConfig.LogConfig.Config "max-file"}}' "$container" 2>/dev/null || echo "||")"
+  IFS='|' read -r driver max_size max_file <<< "$log_config"
+  if [[ "$driver" != "json-file" || -z "$max_size" ]]; then
+    echo "  UNBOUNDED: ${container} (driver=${driver:-none} max-size=${max_size:-unset})" >&2
+    log_policy_bad=1
+  elif [[ "$max_size" != "$expected_max_size" || -z "$max_file" || "$max_file" != "$expected_max_file" ]]; then
+    echo "  DRIFT: ${container} (subname=${subname}) has max-size=${max_size} max-file=${max_file:-unset}, expected max-size=${expected_max_size} max-file=${expected_max_file} for its tier — an anchor copy has diverged (issue #156). This is a retention-depth drift, not a disk-unbounded one: dockerd defaults max-file to 1 when only max-size is set, so the log stays size-bounded either way." >&2
+    log_policy_bad=1
+  fi
+done < <(docker ps --format '{{.Names}}')
+
+(( containers_found > 0 )) || fail "no chat-services-*/coolify-proxy containers found — is the stack up, and does COMPOSE_PROJECT_NAME (currently '${COMPOSE_PROJECT_NAME}') match the running project? A zero-match here previously produced a false 'OK' (issue #156 @rev/@sec review) — this now fails loud instead."
+# issue #156 second review round item 3: if EVERY matched container fell into
+# the skip list, nothing was actually asserted this run. The skip list is
+# operator-configurable and documented to grow (currently just `postgres`,
+# pending its live sign-off) — the day it grows to cover everything running,
+# a WARN-only outcome would let this exact "check that doesn't check" class
+# of regression back in silently, which is the whole premise of #156. FAIL
+# instead: a health check that can't prove it checked anything is not a
+# passing health check.
+(( containers_checked > 0 )) || fail "${containers_found} container(s) matched but ALL were skipped (LOG_POLICY_SKIP_SUBNAMES='${LOG_POLICY_SKIP_SUBNAMES}') — no log policy was actually asserted this run. If this is expected (e.g. a deliberate temporary skip), it must not be the ONLY outcome of a health check; narrow the skip list or add a compliant container to check."
+(( log_policy_bad == 0 )) || fail "one or more containers have an unbounded/non-json-file/drifted log policy (issue #156 regression) — see UNBOUNDED/DRIFT lines above"
+echo "  log rotation coverage OK (${containers_checked} checked, ${containers_found} found)"
+
+# ---------------------------------------------------------------------------
 # 5. Cross-stack network membership: confirm at least one container per
 #    stack is attached to nexaduo-network (proves cross-stack DNS works).
 # ---------------------------------------------------------------------------
