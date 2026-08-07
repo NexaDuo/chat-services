@@ -251,27 +251,66 @@ echo "  docker-provider routers OK: ${docker_enabled_count} enabled"
 # service accrued logs unbounded — chatwoot-sidekiq measured ~22MB/day, faster
 # than the 136k-line #151 incident that motivated rotation in the first
 # place. This asserts the *class* of regression (any chat-services-* /
-# coolify-proxy container missing a bounded json-file policy), the same
-# pattern as the #153 router-count check, so a future service that forgets to
-# reference the shared `x-logging` anchor is caught here instead of silently
+# coolify-proxy container missing a bounded json-file policy AND at its
+# documented tier's expected max-size — see below), the same pattern as the
+# #153 router-count check, so a future service that forgets to reference the
+# shared `x-logging` anchor, OR whose anchor copy silently drifts from the
+# other 3 files it's replicated in, is caught here instead of silently
 # accruing unrotated logs again.
 #
-# `chat-services-postgres-1` is deliberately EXCLUDED from this hard-fail set:
-# the compose files DO carry the policy for it now, but the live production
-# container has intentionally not been recreated to pick it up yet (SACRED
-# volume — AGENTS.md requires explicit sign-off before recreating it). A
-# fresh `run-stack.sh bootstrap` creates it compliant from the start; this
-# skip only applies to the already-running production container pending that
-# sign-off. WARN instead of silently passing so the gap stays visible.
+# `@rev`/`@sec` review (issue #156 PR #161) reproduced a false-"OK" in an
+# earlier version of this check: filtering `docker ps` through
+# `grep -E "^(${COMPOSE_PROJECT_NAME}-|...)"` piped into `while read` means a
+# zero-match grep (stack down, or COMPOSE_PROJECT_NAME overridden per
+# AGENTS.md #7) makes the loop execute zero times and fall through to the
+# same "OK" echo with nothing actually checked — `set -euo pipefail` does NOT
+# catch this, because the pipeline's exit status is grep's (1 on no match,
+# but `|| true`-equivalent behavior isn't even needed here: the loop body
+# just never runs and the script marches on). Fixed the same way the Traefik
+# router check above guards against zero enabled routers: count what was
+# actually checked and `fail` if that count is zero. Matching is done with
+# bash glob `case`, not `grep -E`, so a COMPOSE_PROJECT_NAME containing
+# regex metacharacters can't silently break the match (also flagged in the
+# same review).
 # ---------------------------------------------------------------------------
 step "Verifying every running chat-services-*/coolify-proxy container has a bounded log policy"
 LOG_POLICY_SKIP_SUBNAMES="${LOG_POLICY_SKIP_SUBNAMES:-postgres}"
+# Per-tier expected max-size (issue #156 `@rev` review item 3): the anchor is
+# necessarily replicated across 4 compose files (shared/chatwoot/dify/
+# nexaduo — YAML anchors don't cross `-f` files), so a value can drift
+# unnoticed in one of them. Asserting the effective value against what each
+# tier is DOCUMENTED to be (not just "non-empty") catches that drift, not
+# just a missing policy.
+LOG_POLICY_DEFAULT_MAX_SIZE="${LOG_POLICY_DEFAULT_MAX_SIZE:-10m}"
+LOG_POLICY_FORENSIC_MAX_SIZE="${LOG_POLICY_FORENSIC_MAX_SIZE:-20m}"
+# chatwoot-sidekiq: byte-heavy noisy tier (deploy/docker-compose.chatwoot.yml).
+# dify-sandbox/dify-plugin-daemon: forensic tier for less-trusted code
+# execution, independent of measured volume (deploy/docker-compose.dify.yml).
+LOG_POLICY_FORENSIC_SUBNAMES="${LOG_POLICY_FORENSIC_SUBNAMES:-chatwoot-sidekiq dify-sandbox dify-plugin-daemon}"
+
 log_policy_bad=0
+containers_found=0
+containers_checked=0
 while IFS= read -r container; do
   [[ -n "$container" ]] || continue
+  case "$container" in
+    "${COMPOSE_PROJECT_NAME}-"*-[0-9]*|"coolify-proxy") ;;
+    *) continue ;;
+  esac
+  containers_found=$((containers_found + 1))
+
+  # Derive the subname via string ops (not a regex match) so a
+  # COMPOSE_PROJECT_NAME with glob/regex metacharacters can't misparse it.
+  if [[ "$container" == "coolify-proxy" ]]; then
+    subname="coolify-proxy"
+  else
+    rest="${container#${COMPOSE_PROJECT_NAME}-}"
+    subname="${rest%-*}"
+  fi
+
   skip=0
   for skip_subname in $LOG_POLICY_SKIP_SUBNAMES; do
-    if [[ "$container" == "${COMPOSE_PROJECT_NAME}-${skip_subname}-1" ]]; then
+    if [[ "$subname" == "$skip_subname" ]]; then
       skip=1
       break
     fi
@@ -280,16 +319,32 @@ while IFS= read -r container; do
     echo "  WARN: skipping ${container} (pending sign-off — issue #156, SACRED volume recreate)"
     continue
   fi
+
+  expected_max_size="$LOG_POLICY_DEFAULT_MAX_SIZE"
+  for forensic_subname in $LOG_POLICY_FORENSIC_SUBNAMES; do
+    if [[ "$subname" == "$forensic_subname" ]]; then
+      expected_max_size="$LOG_POLICY_FORENSIC_MAX_SIZE"
+      break
+    fi
+  done
+
+  containers_checked=$((containers_checked + 1))
   log_config="$(docker inspect -f '{{.HostConfig.LogConfig.Type}} {{index .HostConfig.LogConfig.Config "max-size"}}' "$container" 2>/dev/null || echo "")"
   driver="${log_config%% *}"
   max_size="${log_config#* }"
   if [[ "$driver" != "json-file" || -z "$max_size" ]]; then
     echo "  UNBOUNDED: ${container} (driver=${driver:-none} max-size=${max_size:-unset})" >&2
     log_policy_bad=1
+  elif [[ "$max_size" != "$expected_max_size" ]]; then
+    echo "  DRIFT: ${container} (subname=${subname}) has max-size=${max_size}, expected ${expected_max_size} for its tier — an anchor copy has diverged (issue #156)" >&2
+    log_policy_bad=1
   fi
-done < <(docker ps --format '{{.Names}}' | grep -E "^(${COMPOSE_PROJECT_NAME}-|coolify-proxy$)")
-(( log_policy_bad == 0 )) || fail "one or more containers have an unbounded/non-json-file log policy (issue #156 regression) — see UNBOUNDED lines above"
-echo "  log rotation coverage OK"
+done < <(docker ps --format '{{.Names}}')
+
+(( containers_found > 0 )) || fail "no chat-services-*/coolify-proxy containers found — is the stack up, and does COMPOSE_PROJECT_NAME (currently '${COMPOSE_PROJECT_NAME}') match the running project? A zero-match here previously produced a false 'OK' (issue #156 @rev/@sec review) — this now fails loud instead."
+(( containers_checked > 0 )) || echo "  WARN: ${containers_found} container(s) matched but all were skipped (${LOG_POLICY_SKIP_SUBNAMES}) — no policy actually asserted this run"
+(( log_policy_bad == 0 )) || fail "one or more containers have an unbounded/non-json-file/drifted log policy (issue #156 regression) — see UNBOUNDED/DRIFT lines above"
+echo "  log rotation coverage OK (${containers_checked} checked, ${containers_found} found)"
 
 # ---------------------------------------------------------------------------
 # 5. Cross-stack network membership: confirm at least one container per
