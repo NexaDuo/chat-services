@@ -260,14 +260,19 @@ serializes on this live stack; **do not recreate shared containers (especially
       policy prohibits the merge"* (`mergeStateStatus=BLOCKED`); a real direct push to
       `main` was rejected with `GH006 ... protected branch hook declined`; and
       `gh pr merge --admin` was refused (see below). Each was run against a throwaway PR
-      with a deliberately harmless payload, so that "it merged" would also have been a safe
-      outcome — design the experiment so either result is survivable, then you can actually
-      run it. Evidence trail: issue #162 comments; scratch PRs #168 and #170, both closed
-      unmerged.
+      whose payload was chosen so that the *unexpected* outcome would also be recoverable —
+      an empty commit rather than a broken one. That is what made the experiments runnable
+      at all: with a failing test as the payload, the cost of "it merged" would have been a
+      red `main`, and the claim would have gone untested again. Design the experiment so
+      either result is survivable. Evidence trail: issue #162 comments; scratch PRs #168 and
+      #170, both closed unmerged.
     - **`git push --dry-run` is NOT a valid oracle for this** — it reports success whether
       `enforce_admins` is on or off. A check that returns the same answer in both states
-      measures nothing; use a real push (an empty commit is harmless) or a real merge
-      attempt.
+      measures nothing; use a real push or a real merge attempt. An **empty** commit is the
+      right payload for a real push test — it is *recoverable*, not free: it would still
+      advance `main`, appear in history, and trigger push-triggered workflows. Prefer the
+      merge-attempt form when you only need to test the merge path, since a refused merge
+      mutates nothing at all.
     - **`mergeable` is not the field to read** — it reports textual conflicts only and
       stays `MERGEABLE` on a policy-blocked PR. Read `mergeStateStatus`.
     - The `@sec` + `@rev` dual review gate remains **convention, not platform-enforced**;
@@ -275,9 +280,9 @@ serializes on this live stack; **do not recreate shared containers (especially
     - **`gh pr merge --admin` does NOT bypass this** — verified, don't reach for it in an
       incident expecting it to work: `enforce_admins: true` binds admins to the required
       checks, and the attempt fails with `GraphQL: N of N required status checks are in
-      progress. (mergePullRequest)`. The mARC playbook describes `--admin` as the override
-      of last resort; that applies to a *review* requirement, which this repo does not
-      have, not to required status checks under admin enforcement.
+      progress. (mergePullRequest)`. Where `--admin` *is* described as the override of last
+      resort, that applies to a *review* requirement — which this repo deliberately does not
+      have — not to required status checks under admin enforcement.
     - **The only real escape hatch is toggling `enforce_admins` off** in repo settings
       (`gh api -X DELETE repos/NexaDuo/chat-services/branches/main/protection/enforce_admins`),
       merging, then re-enabling it. That is deliberately more friction than a flag: it is
