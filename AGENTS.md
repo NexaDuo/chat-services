@@ -230,8 +230,7 @@ There is **no** staging→prod GitHub Actions pipeline and no separate staging e
 host-local stack behind the tunnel **is** production (issue #109). Every change
 serializes on this live stack; **do not recreate shared containers (especially
 `chat-services-postgres-1`)** and coordinate with concurrent work on the host.
-- **CI merge gates (every PR, treated as required by team convention — see caveat
-  below):**
+- **CI merge gates (every PR, enforced by branch protection — issue #162):**
   - `stack-compose-playwright.yml` (job `validate-stack`) spins the whole stack up
     ephemerally on the runner and runs Playwright (Stage 1 connectivity + Stage 4
     tenant resolution).
@@ -243,14 +242,56 @@ serializes on this live stack; **do not recreate shared containers (especially
     middleware `^4.1.6`) and neither should wait on the ephemeral stack spin-up
     (nor have a stack flake mask a unit failure or vice versa).
   Monitor both to green (`gh run watch`).
-  - **Caveat — no platform enforcement (issue #162):** `main` has **no branch
-    protection** (`GET /branches/main/protection` → 404), so GitHub does not
-    actually block a merge on either workflow failing; "required" above describes
-    team practice, not something the platform enforces. Don't repeat the #151
-    mistake of a doc claiming a guarantee reality doesn't back — until #162 lands
-    branch protection with these as required status checks, treat both as
-    convention-enforced only and verify status by hand (`gh run watch`) before
-    merging, not by trusting a merge button that would let a red PR through.
+  - **Platform enforcement (issue #162 — configuration and proof recorded in that
+    issue's comments; verify current state with
+    `gh api repos/NexaDuo/chat-services/branches/main/protection`, which is the only
+    authority here since repo settings live outside git).** `main` carries branch
+    protection with four **required status checks** — `validate-stack`, `secret-scan`,
+    `middleware`, `self-healing`. Force pushes and branch deletion are blocked.
+    `enforce_admins: true`, so the rule binds the repo owner too. There is **no**
+    required-review rule (`required_pull_request_reviews: null`) — deliberate: this repo's
+    PRs are authored by a single human with agent assistance, and requiring a non-author
+    approval would park every PR at `REVIEW_REQUIRED` and turn `--admin` into the normal
+    merge path. `strict` (require-branch-up-to-date) is **off**; re-running CI on every
+    intervening merge costs more than the semantic conflicts it would catch at this
+    volume.
+    - **All three bypasses were observed refusing**, not assumed (the criterion this issue
+      was filed on): a merge attempt with a red required check returned *"the base branch
+      policy prohibits the merge"* (`mergeStateStatus=BLOCKED`); a real direct push to
+      `main` was rejected with `GH006 ... protected branch hook declined`; and
+      `gh pr merge --admin` was refused (see below). Each was run against a throwaway PR
+      whose payload was chosen so that the *unexpected* outcome would also be recoverable —
+      an empty commit rather than a broken one. That is what made the experiments runnable
+      at all: with a failing test as the payload, the cost of "it merged" would have been a
+      red `main`, and the claim would have gone untested again. Design the experiment so
+      either result is survivable. Evidence trail: issue #162 comments; scratch PRs #168 and
+      #170, both closed unmerged.
+    - **`git push --dry-run` is NOT a valid oracle for this** — it reports success whether
+      `enforce_admins` is on or off. A check that returns the same answer in both states
+      measures nothing; use a real push or a real merge attempt. An **empty** commit is the
+      right payload for a real push test — it is *recoverable*, not free: it would still
+      advance `main`, appear in history, and trigger push-triggered workflows. Prefer the
+      merge-attempt form when you only need to test the merge path, since a refused merge
+      mutates nothing at all.
+    - **`mergeable` is not the field to read** — it reports textual conflicts only and
+      stays `MERGEABLE` on a policy-blocked PR. Read `mergeStateStatus`.
+    - The `@sec` + `@rev` dual review gate remains **convention, not platform-enforced**;
+      nothing in GitHub checks for those markers.
+    - **`gh pr merge --admin` does NOT bypass this** — verified, don't reach for it in an
+      incident expecting it to work: `enforce_admins: true` binds admins to the required
+      checks, and the attempt fails with `GraphQL: N of N required status checks are in
+      progress. (mergePullRequest)`. Where `--admin` *is* described as the override of last
+      resort, that applies to a *review* requirement — which this repo deliberately does not
+      have — not to required status checks under admin enforcement.
+    - **The only real escape hatch is toggling `enforce_admins` off** in repo settings
+      (`gh api -X DELETE repos/NexaDuo/chat-services/branches/main/protection/enforce_admins`),
+      merging, then re-enabling it. That is deliberately more friction than a flag: it is
+      visible in the org audit log, and it forces the decision to be explicit. Re-enable in
+      the same session — an "off" that outlives the incident is how a repo ends up back at
+      #162.
+    - Repo settings live outside git, so this paragraph is the audit record. If the
+      settings change, change it here in the same breath — the #151 lesson is that a doc
+      claiming a guarantee reality doesn't back is worse than no doc.
 - **Mandatory phases (single env):** CI green → apply the merged change to the live
   stack (`scripts/run-stack.sh up`, or recreate only the affected service — never
   `down -v`, never postgres unnecessarily) → validate on the real environment
