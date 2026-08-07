@@ -436,6 +436,99 @@ done < <(docker ps --format '{{.Names}}')
 echo "  log rotation coverage OK (${containers_checked} checked, ${containers_found} found)"
 
 # ---------------------------------------------------------------------------
+# 4c. Memory-limit coverage (issue #157). Before this, `grep -rn
+# "mem_limit\|cpus:\|deploy:\|resources:"` across the whole compose chain
+# returned zero matches — every container ran with the full host RAM
+# (`docker stats` showed `<X>MiB / 30.97GiB` on all 22 running containers).
+# On a shared production host with no staging, a runaway container had
+# nothing at the code level stopping it from triggering a host-level OOM,
+# and the kernel OOM-killer picks a victim by heuristic, not by culprit — it
+# could just as easily pick `chat-services-postgres-1` (SACRED data) as the
+# actual offender. mem_limit is now set per service across the compose
+# chain (deploy/docker-compose.{shared,chatwoot,dify,nexaduo}.yml,
+# docker-compose.yml, deploy/docker-compose.localproxy.yml), sized from
+# measured `docker stats` baselines with a 4x-6x headroom multiple (see the
+# per-service comments in those files for the exact figure and its origin).
+#
+# `postgres` is DELIBERATELY EXCLUDED from this check (and from the compose
+# change) — see deploy/docker-compose.shared.yml: a mem_limit sized below
+# what shared_buffers/work_mem can demand OOM-kills the database under load,
+# and AGENTS.md requires it to get its own change with its own validation,
+# not be folded into a bulk sweep. Skipping it here is a deliberate, named
+# exception (one subname), not a growable list that could quietly swallow
+# the whole check the way LOG_POLICY_SKIP_SUBNAMES could — see the
+# containers_checked==0 guard below for why that distinction matters.
+#
+# Same three-outcome shape as the log-policy check above (issue #156):
+# "found" (matched the naming pattern), "checked" (found AND not the
+# excluded postgres subname), and a hard `fail` if either count comes back
+# zero — a health check that can't prove it checked anything is not a
+# passing health check (issue #156's own lesson, applied here too).
+# ---------------------------------------------------------------------------
+step "Verifying every running chat-services-*/coolify-proxy container (except postgres) has a memory limit"
+MEM_LIMIT_SKIP_SUBNAMES="${MEM_LIMIT_SKIP_SUBNAMES:-postgres}"
+
+mem_limit_bad=0
+mem_containers_found=0
+mem_containers_checked=0
+while IFS= read -r container; do
+  [[ -n "$container" ]] || continue
+  case "$container" in
+    "${COMPOSE_PROJECT_NAME}-"*-[0-9]*|"coolify-proxy") ;;
+    *) continue ;;
+  esac
+  mem_containers_found=$((mem_containers_found + 1))
+
+  if [[ "$container" == "coolify-proxy" ]]; then
+    subname="coolify-proxy"
+  else
+    rest="${container#"${COMPOSE_PROJECT_NAME}"-}"
+    subname="${rest%-*}"
+  fi
+
+  skip=0
+  for skip_subname in $MEM_LIMIT_SKIP_SUBNAMES; do
+    if [[ "$subname" == "$skip_subname" ]]; then
+      skip=1
+      break
+    fi
+  done
+  if [[ "$skip" == "1" ]]; then
+    echo "  WARN: skipping ${container} (issue #157 — postgres deferred to its own change/validation, never a mem_limit lower than its configured shared_buffers/work_mem can demand)"
+    continue
+  fi
+
+  mem_containers_checked=$((mem_containers_checked + 1))
+  # Same "three explicit states" discipline as the log-policy check above:
+  # a container that vanished mid-scan is skipped (not a fact to assert), a
+  # docker-inspect error for any OTHER reason must fail loud (never silently
+  # pass as "has a limit"), and only a successful inspect is evaluated.
+  if mem_limit_bytes="$(docker inspect -f '{{.HostConfig.Memory}}' "$container" 2>&1)"; then
+    :
+  else
+    if [[ "${mem_limit_bytes,,}" == *"no such object"* ]]; then
+      echo "  WARN: skipping ${container} (removed mid-scan — docker inspect: ${mem_limit_bytes})" >&2
+      mem_containers_checked=$((mem_containers_checked - 1))
+      continue
+    fi
+    echo "  FAIL-ITEM: could not determine memory limit for ${container} (docker inspect error, not a confirmed removal): ${mem_limit_bytes}" >&2
+    mem_limit_bad=1
+    continue
+  fi
+  # HostConfig.Memory is 0 when no mem_limit/--memory was set (unbounded —
+  # the container's ceiling is the full host RAM, exactly the #157 gap).
+  if [[ -z "$mem_limit_bytes" || "$mem_limit_bytes" == "0" ]]; then
+    echo "  UNBOUNDED: ${container} has no memory limit (HostConfig.Memory=0 — full host RAM is its ceiling)" >&2
+    mem_limit_bad=1
+  fi
+done < <(docker ps --format '{{.Names}}')
+
+(( mem_containers_found > 0 )) || fail "no chat-services-*/coolify-proxy containers found — is the stack up, and does COMPOSE_PROJECT_NAME (currently '${COMPOSE_PROJECT_NAME}') match the running project?"
+(( mem_containers_checked > 0 )) || fail "${mem_containers_found} container(s) matched but ALL were skipped (MEM_LIMIT_SKIP_SUBNAMES='${MEM_LIMIT_SKIP_SUBNAMES}') — no memory-limit coverage was actually asserted this run."
+(( mem_limit_bad == 0 )) || fail "one or more containers have no memory limit set (issue #157 regression) — see UNBOUNDED lines above"
+echo "  memory-limit coverage OK (${mem_containers_checked} checked, ${mem_containers_found} found, postgres deliberately excluded)"
+
+# ---------------------------------------------------------------------------
 # 5. Cross-stack network membership: confirm at least one container per
 #    stack is attached to nexaduo-network (proves cross-stack DNS works).
 # ---------------------------------------------------------------------------

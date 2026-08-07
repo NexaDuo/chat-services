@@ -25,6 +25,31 @@ x-logging: &default-logging
     max-size: "10m"
     max-file: "3"
 
+# Issue #157: mem_limit is deliberately NOT set on postgres in this file/PR.
+# It holds the SACRED chat-services_postgres-data volume and a limit sized
+# below what shared_buffers/work_mem can demand OOM-kills the DB under load —
+# AGENTS.md/the issue both require postgres to get its own change with its
+# own validation, not be folded into this bulk sweep. Every other service in
+# this file gets mem_limit below.
+#
+# Sizing method (issue #157): measured via `docker stats --no-stream` across
+# two samples ~ (2026-08-07, live host, 22 vCPU / 31GB RAM, 22 containers,
+# stack up ~15-24h, zero OOM kills/restarts at baseline). Limit = ceil(4x
+# measured RSS to the next 128MiB) for steady-state services — the 3-4x
+# headroom multiple the issue asks for, rounded up for a "clean" number
+# rather than an invented round figure. A 128MiB floor is applied to tiny
+# idle services (autoheal/cloudflared) so a legitimate transient allocation
+# (glibc arena growth, TLS handshake buffers, etc.) doesn't get OOM-killed
+# over a baseline that was only ever measured in the single digits of MiB.
+# Verified which Compose attribute actually takes effect on this host rather
+# than assumed (issue's own instruction): both top-level `mem_limit` and
+# `deploy.resources.limits.memory` were empirically confirmed to set
+# HostConfig.Memory under `docker compose up` on this host's Compose v5.3.1 /
+# Docker 29.7.1 (a disposable two-service test compose file, inspected via
+# `docker inspect -f '{{.HostConfig.Memory}}'` on both, both non-zero) — this
+# repo standardizes on top-level `mem_limit`/`cpus` anyway per the issue's own
+# preference, since it doesn't rely on a Compose version new enough to
+# translate `deploy.resources` outside Swarm.
 services:
   postgres:
     image: pgvector/pgvector:pg16
@@ -65,6 +90,12 @@ services:
     image: redis:7.2.4-alpine
     restart: unless-stopped
     logging: *default-logging
+    # Measured ~9MiB RSS. Given floor of 256m (not the bare 4x/128m floor
+    # every other tiny service gets) because redis is the shared broker for
+    # BOTH Sidekiq (chatwoot) and Celery (dify) plus a cache with
+    # --maxmemory-policy allkeys-lru — a single-tenant idle sample
+    # undersells its role under multi-tenant load.
+    mem_limit: 256m
     command:
       - redis-server
       - --requirepass
@@ -90,9 +121,43 @@ services:
     image: cloudflare/cloudflared:latest
     restart: unless-stopped
     logging: *default-logging
-    command: tunnel run
+    # Measured ~22MiB RSS; 4x rounds under the 128m floor.
+    mem_limit: 128m
+    # Pin the metrics listener to a fixed loopback address/port (issue #158):
+    # without an explicit --metrics, cloudflared still binds one from its
+    # default port list (verified empirically: `cloudflared tunnel ready`
+    # against the unpinned default succeeded), but pinning removes the
+    # ambiguity of "whichever of 20241-20245 happened to be free" and gives
+    # the healthcheck below a stable target. Loopback-only — not published as
+    # a host port (host ports are isolated by default, #119/#145) and not
+    # reachable from other containers on nexaduo-network either.
+    command: tunnel --metrics 127.0.0.1:20241 run
     environment:
       TUNNEL_TOKEN: ${TUNNEL_TOKEN}
+    # cloudflared's image is distroless (verified: no /bin/sh, no wget/curl —
+    # `docker exec ... sh` fails with "executable file not found"), so the
+    # healthcheck can't shell out to a probe tool. cloudflared ships its own
+    # readiness subcommand for exactly this: `tunnel ready` calls the local
+    # /ready endpoint on the metrics listener and returns a real exit code
+    # (verified: exit 0 against the live metrics port, exit 1 + "connection
+    # refused" against a wrong port) — this is the sole path available.
+    healthcheck:
+      test: ["CMD", "cloudflared", "tunnel", "--metrics", "127.0.0.1:20241", "ready"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    labels:
+      # autoheal=true (issue #158): cloudflared is the ONLY path for all
+      # public *.nexaduo.com traffic, so a tunnel that wedges (stays `Up`
+      # while no longer proxying) is a total outage indistinguishable from
+      # "fine" without this healthcheck. A `docker restart` reconnects the
+      # tunnel in a few seconds — far cheaper than a wedge going unnoticed
+      # until someone reports the site down. The probe above hits its own
+      # /ready endpoint (not a bare TCP check), and retries=3/interval=30s
+      # give ~90s of grace before autoheal acts, so a brief edge blip
+      # doesn't trigger a restart loop.
+      - "autoheal=true"
     networks:
       - chat-network
 
@@ -106,6 +171,8 @@ services:
     image: willfarrell/autoheal:1.2.0
     restart: unless-stopped
     logging: *default-logging
+    # Measured ~4MiB RSS; 4x rounds under the 128m floor.
+    mem_limit: 128m
     environment:
       AUTOHEAL_CONTAINER_LABEL: autoheal
       AUTOHEAL_INTERVAL: "15"        # seconds between unhealthy scans

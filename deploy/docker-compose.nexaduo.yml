@@ -16,6 +16,9 @@ services:
     image: evoapicloud/evolution-api:v2.1.1
     restart: unless-stopped
     logging: *default-logging
+    # Issue #157 "everything else" tier: measured ~97MiB RSS; limit = 4x
+    # rounded up to the next 128MiB.
+    mem_limit: 512m
     environment:
       SERVER_TYPE: http
       SERVER_PORT: 8080
@@ -25,17 +28,35 @@ services:
       CACHE_REDIS_URI: 'redis://:${REDIS_PASSWORD}@redis:6379/2'
     volumes:
       - 'evolution-instances:/evolution/instances'
+    # Root path is Evolution's own app-level status response (JSON:
+    # status/message/version), served by its request router — not just a
+    # TCP accept (verified: no dedicated /health route exists, it 404s;
+    # "/" is the real app-served endpoint, same one health-check-all.sh
+    # already probes).
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "-T", "5", "http://127.0.0.1:8080/"]
+      interval: 20s
+      timeout: 10s
+      retries: 5
+      start_period: 45s
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.evolution.rule=Host(`${EVOLUTION_DOMAIN}`)"
       - "traefik.http.routers.evolution.entrypoints=http"
       - "traefik.http.services.evolution.loadbalancer.server.port=8080"
+      # autoheal=true (issue #158): evolution-api is a stateless HTTP bridge
+      # to WhatsApp; a restart reconnects its session, which the WhatsApp
+      # client handles routinely (no in-flight job state to lose).
+      - "autoheal=true"
     networks:
       - chat-network
   middleware:
     image: '${MIDDLEWARE_IMAGE}'
     restart: unless-stopped
     logging: *default-logging
+    # Issue #157 "everything else" tier: measured ~51MiB RSS; limit = 4x
+    # rounded up to the next 128MiB.
+    mem_limit: 256m
     environment:
       PORT: 4000
       CHATWOOT_BASE_URL: http://chatwoot-rails:3000
@@ -48,19 +69,52 @@ services:
       CHATWOOT_PLATFORM_TOKEN: '${CHATWOOT_PLATFORM_TOKEN}'
       EVOLUTION_AUTHENTICATION_API_KEY: '${EVOLUTION_API_KEY}'
       EVOLUTION_BASE_URL: http://evolution-api:8080
+    # Reuses the /health route health-check-all.sh already probes (issue
+    # #158: "endpoints already scraped/probed can back the healthcheck;
+    # reuse rather than invent") — a real Express route response, not a
+    # bare TCP check.
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "-T", "5", "http://127.0.0.1:4000/health"]
+      interval: 20s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.middleware.rule=Host(`${MIDDLEWARE_DOMAIN}`)"
       - "traefik.http.routers.middleware.entrypoints=http"
       - "traefik.http.services.middleware.loadbalancer.server.port=4000"
+      # autoheal=true (issue #158): middleware is a stateless webhook
+      # adapter (Chatwoot -> Dify), no queue/job state of its own to
+      # duplicate or lose on restart — Chatwoot/Dify retry on failure.
+      - "autoheal=true"
     networks:
       - chat-network
   loki:
     image: grafana/loki:3.2.0
     restart: unless-stopped
     logging: *default-logging
+    # Issue #157 priority group 3 (observability, grows with ingest volume
+    # by design — given 6x headroom instead of the default 4x). Measured
+    # ~69MiB RSS; limit = 6x rounded up to the next 128MiB.
+    mem_limit: 512m
     user: "0"
     command: -config.file=/etc/loki/loki.yaml
+    # /ready is Loki's own real readiness endpoint (already reused by
+    # health-check-all.sh's Loki probe). No autoheal=true on any
+    # observability service in this file (issue #158, deliberate, not an
+    # oversight): they're off the user-facing critical path (a wedge here
+    # degrades visibility, not the product), and loki/tempo both flush
+    # buffered chunks/blocks to disk on their own schedule — an
+    # auto-restart mid-flush risks losing that in-flight data for no
+    # user-facing gain. Detection (this healthcheck + health-check-all.sh)
+    # is the goal here, not auto-remediation.
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "-T", "5", "http://127.0.0.1:3100/ready"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 45s
     volumes:
       # Directory mount (not single-file) to survive the WSL stale-inode OCI
       # failure that killed the proxy/observability on host restart (#113/#116).
@@ -72,7 +126,18 @@ services:
     image: grafana/promtail:3.1.0
     restart: unless-stopped
     logging: *default-logging
+    # Issue #157 priority group 3 (observability, 6x headroom — see loki
+    # above). Measured ~53MiB RSS; limit = 6x rounded up to the next 128MiB.
+    mem_limit: 384m
     command: -config.file=/etc/promtail/promtail.yaml
+    # /ready is Promtail's own real readiness endpoint (verified: returns
+    # "Ready" 200). No autoheal — see the loki comment above (issue #158).
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "-T", "5", "http://127.0.0.1:9080/ready"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
     volumes:
       # Directory mount (not single-file) — WSL stale-inode hardening (#113/#116).
       - ${NEXADUO_CONF_PATH}/observability/promtail:/etc/promtail:ro
@@ -96,6 +161,9 @@ services:
     image: grafana/grafana:11.6.16
     restart: unless-stopped
     logging: *default-logging
+    # Issue #157 priority group 3 (observability, 6x headroom — see loki
+    # above). Measured ~98MiB RSS; limit = 6x rounded up to the next 128MiB.
+    mem_limit: 640m
     environment:
       GF_SECURITY_ADMIN_PASSWORD: '${GRAFANA_PASSWORD}'
       GF_AUTH_GOOGLE_ENABLED: "true"
@@ -113,6 +181,16 @@ services:
       GF_DATABASE_NAME: grafana
       GF_DATABASE_USER: postgres
       GF_DATABASE_PASSWORD: '${POSTGRES_PASSWORD}'
+    # /api/health checks Grafana's own DB connectivity (already reused by
+    # health-check-all.sh's /login probe for a lighter-weight route; this
+    # one also proves the Postgres-backed session store is reachable). No
+    # autoheal — see the loki comment above (issue #158).
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "-T", "5", "http://127.0.0.1:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.grafana.rule=Host(`${GRAFANA_DOMAIN}`)"
@@ -127,9 +205,21 @@ services:
     image: prom/prometheus:v2.55.0
     restart: unless-stopped
     logging: *default-logging
+    # Issue #157 priority group 3 (observability, 6x headroom — see loki
+    # above). Measured ~49MiB RSS; limit = 6x rounded up to the next 128MiB.
+    mem_limit: 384m
     command:
       - --config.file=/etc/prometheus/prometheus.yml
       - --storage.tsdb.retention.time=30d
+    # /-/healthy is Prometheus's own real health endpoint (already reused by
+    # health-check-all.sh). No autoheal — see the loki comment above (issue
+    # #158).
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "-T", "5", "http://127.0.0.1:9090/-/healthy"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
     volumes:
       # Directory mount (not single-file) — WSL stale-inode hardening (#113/#116).
       # The command only references --config.file (no default consoles), so
@@ -142,6 +232,9 @@ services:
     image: '${SELF_HEALING_IMAGE}'
     restart: unless-stopped
     logging: *default-logging
+    # Issue #157 "everything else" tier: measured ~31MiB RSS; 4x rounds
+    # under the 128m floor.
+    mem_limit: 128m
     environment:
       DATABASE_URL: 'postgresql://postgres:${POSTGRES_PASSWORD}@postgres:5432/self_healing'
       LOKI_URL: http://loki:3100
@@ -164,7 +257,23 @@ services:
     image: otel/opentelemetry-collector-contrib:0.111.0
     restart: unless-stopped
     logging: *default-logging
+    # Issue #157 priority group 3 (observability, 6x headroom — see loki
+    # above). Measured ~49MiB RSS; limit = 6x rounded up to the next 128MiB.
+    mem_limit: 384m
     command: ["--config=/etc/otelcol-contrib/config.yaml"]
+    # No Docker-native `healthcheck:` here (issue #158, deliberate — not an
+    # oversight): the otelcol-contrib image is distroless (verified: no
+    # /bin/sh, no wget/curl/nc/busybox at all inside the running container —
+    # every `docker exec` attempt fails with "executable file not found"),
+    # so there is no tool inside the container a HEALTHCHECK could exec.
+    # Vendoring a static probe binary via an extra bind-mount just for this
+    # was judged out of proportion to this ticket (a real infra change, not
+    # a healthcheck). The `health_check` extension is now enabled
+    # (observability/otel-collector/config.yaml) exposing a real
+    # :13133/health endpoint on chat-network; health-check-all.sh probes it
+    # from a sibling container that DOES have curl/wget instead, achieving
+    # the same wedge-detection goal without a Docker HEALTHCHECK/`(healthy)`
+    # column for this one service.
     volumes:
       # Directory mount (not single-file) — WSL stale-inode hardening (#113/#116).
       - ${NEXADUO_CONF_PATH}/observability/otel-collector:/etc/otelcol-contrib:ro
@@ -174,8 +283,29 @@ services:
     image: grafana/tempo:2.6.1
     restart: unless-stopped
     logging: *default-logging
+    # Issue #157 priority group 3 (observability, 6x headroom — see loki
+    # above). Measured ~128MiB RSS; limit = 6x rounded up to the next
+    # 128MiB (already an exact multiple).
+    mem_limit: 768m
     user: "0"
     command: ["-config.file=/etc/tempo/tempo.yaml"]
+    # NOT /ready (issue #158, verified empirically): this single-binary
+    # Tempo deployment has no `memberlist`/ring config
+    # (observability/tempo/tempo.yaml), and Tempo's /ready gates on
+    # ring-based component membership — /ready returned a bare 503 on the
+    # live, functioning container (logs showed normal compaction/flush
+    # activity throughout) — a known single-binary-without-ring quirk, not a
+    # real problem. Using it would make this container permanently
+    # `unhealthy`, exactly the false-positive-flap risk called out in the
+    # issue. /metrics is a genuine HTTP round-trip through Tempo's own
+    # server + Prometheus registry (verified: 200 OK) and is the same
+    # endpoint already scraped by Prometheus.
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "-T", "5", "http://127.0.0.1:3200/metrics"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
     volumes:
       # Directory mount (not single-file) — WSL stale-inode hardening (#113/#116).
       - ${NEXADUO_CONF_PATH}/observability/tempo:/etc/tempo:ro

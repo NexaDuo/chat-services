@@ -61,6 +61,12 @@ services:
     image: traefik:v3.6.25
     container_name: coolify-proxy
     restart: unless-stopped
+    # Issue #157 "everything else" tier: measured ~44MiB RSS; limit = 4x
+    # rounded up to the next 128MiB. This is the single edge proxy for every
+    # *.nexaduo.com hostname, so it's on the "rest" tier by measured
+    # footprint but not something to starve — 256m is generous relative to
+    # its idle usage without approaching the host ceiling.
+    mem_limit: 256m
     command:
       - "--providers.docker=true"
       - "--providers.docker.exposedbydefault=false"
