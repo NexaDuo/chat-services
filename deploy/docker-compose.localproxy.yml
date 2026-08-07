@@ -101,6 +101,17 @@ services:
       # made `docker logs --since` return 0 lines for genuinely-current output
       # (the CLI-vs-Desktop discrepancy) — rotation bounds the file so this
       # can't recur and keeps the CLI reader's --since index sane.
+      #
+      # This was, for a long time, the ONLY service in the whole compose chain
+      # with a bounded log policy — issue #156 generalized this same
+      # driver/max-size/max-file shape to every other service via a
+      # per-file `x-logging: &default-logging` anchor (see
+      # deploy/docker-compose.shared.yml for why the anchor can't literally
+      # be shared across files — YAML anchors don't cross `-f` files in
+      # Compose). Not folded into an anchor here because this file has a
+      # single service; kept as an inline block matching the shared shape
+      # exactly so all ~21 services stay on one 10m/3 default (or the
+      # chatwoot-sidekiq noisy-tier override) with no drift.
       driver: json-file
       options:
         max-size: "10m"

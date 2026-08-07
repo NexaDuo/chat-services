@@ -1,7 +1,46 @@
+# Issue #156: bounded logging is now the DEFAULT for every service, not a
+# per-service afterthought (the failure mode #151/#153 fixed only for
+# coolify-proxy). YAML anchors are resolved per-file at parse time — Compose
+# merges the *parsed* configs of each `-f` file, so an anchor defined in one
+# compose file is NOT visible from another (verified empirically: referencing
+# a cross-file anchor throws "unknown anchor referenced"). Each compose file
+# that defines services therefore carries its OWN copy of this
+# `x-logging`/`&default-logging` block; every service in the file references
+# it with `logging: *default-logging` — one line, not a copied 5-line block.
+# Adding a new service to this file means the same one-line opt-in; forgetting
+# it is now the only way to regress, and the health-check-all.sh assertion
+# (issue #156) catches that class of gap automatically.
+#
+# Sizing: 10m x 3 files = 30MB/service. This mirrors the already-proven
+# coolify-proxy pattern (deploy/docker-compose.localproxy.yml, #151/#153) and
+# comfortably covers this file's low-volume services (postgres/redis/
+# cloudflared/autoheal measured at 200-2,000 lines/15h in the #156 audit).
+# Loki (via Promtail, which streams container logs continuously and is
+# unaffected by local rotation — see docker-compose.chatwoot.yml for the
+# noisy-tier override and rationale) retains the full searchable history
+# regardless of this local on-disk buffer size.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   postgres:
     image: pgvector/pgvector:pg16
     restart: unless-stopped
+    logging: *default-logging
+    # NOTE (issue #156): the line above IS committed (a from-scratch bootstrap
+    # must produce a compliant postgres container), but the LIVE production
+    # container has deliberately NOT been recreated to pick it up in this PR.
+    # Postgres holds the SACRED chat-services_postgres-data volume and
+    # AGENTS.md requires explicit sign-off before touching it, even for a
+    # non-destructive attribute like logging (`docker compose up` alone does
+    # not reconfigure a running container — only a recreate does, and a
+    # recreate of postgres is exactly the "don't fold it into a bulk
+    # recreate" case). health-check-all.sh's log-policy assertion will
+    # legitimately flag the live postgres container until this recreate is
+    # explicitly approved and performed.
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
@@ -25,6 +64,7 @@ services:
   redis:
     image: redis:7.2.4-alpine
     restart: unless-stopped
+    logging: *default-logging
     command:
       - redis-server
       - --requirepass
@@ -49,6 +89,7 @@ services:
   cloudflared:
     image: cloudflare/cloudflared:latest
     restart: unless-stopped
+    logging: *default-logging
     command: tunnel run
     environment:
       TUNNEL_TOKEN: ${TUNNEL_TOKEN}
@@ -64,6 +105,7 @@ services:
   autoheal:
     image: willfarrell/autoheal:1.2.0
     restart: unless-stopped
+    logging: *default-logging
     environment:
       AUTOHEAL_CONTAINER_LABEL: autoheal
       AUTOHEAL_INTERVAL: "15"        # seconds between unhealthy scans

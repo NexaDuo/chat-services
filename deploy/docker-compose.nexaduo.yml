@@ -1,9 +1,21 @@
+# Issue #156: bounded logging is the default for every service (see the
+# longer rationale in deploy/docker-compose.shared.yml — YAML anchors don't
+# cross compose files, so each file carries its own copy of this block).
+# evolution-api was measured at ~14,948 lines / ~820KB in 15h (~1.3MB/day) —
+# the default 30MB buffer already covers ~23 days; no override needed.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   evolution-api:
     # Evolution API's official image moved to evoapicloud/* — atendai/evolution-api
     # now denies pulls and broke CI/redeploys. Same pinned version (v2.1.1).
     image: evoapicloud/evolution-api:v2.1.1
     restart: unless-stopped
+    logging: *default-logging
     environment:
       SERVER_TYPE: http
       SERVER_PORT: 8080
@@ -23,6 +35,7 @@ services:
   middleware:
     image: '${MIDDLEWARE_IMAGE}'
     restart: unless-stopped
+    logging: *default-logging
     environment:
       PORT: 4000
       CHATWOOT_BASE_URL: http://chatwoot-rails:3000
@@ -45,6 +58,7 @@ services:
   loki:
     image: grafana/loki:3.2.0
     restart: unless-stopped
+    logging: *default-logging
     user: "0"
     command: -config.file=/etc/loki/loki.yaml
     volumes:
@@ -57,6 +71,7 @@ services:
   promtail:
     image: grafana/promtail:3.1.0
     restart: unless-stopped
+    logging: *default-logging
     command: -config.file=/etc/promtail/promtail.yaml
     volumes:
       # Directory mount (not single-file) — WSL stale-inode hardening (#113/#116).
@@ -80,6 +95,7 @@ services:
     # fixes (@sec MEDIUM advisory on PR #130).
     image: grafana/grafana:11.6.16
     restart: unless-stopped
+    logging: *default-logging
     environment:
       GF_SECURITY_ADMIN_PASSWORD: '${GRAFANA_PASSWORD}'
       GF_AUTH_GOOGLE_ENABLED: "true"
@@ -110,6 +126,7 @@ services:
   prometheus:
     image: prom/prometheus:v2.55.0
     restart: unless-stopped
+    logging: *default-logging
     command:
       - --config.file=/etc/prometheus/prometheus.yml
       - --storage.tsdb.retention.time=30d
@@ -124,6 +141,7 @@ services:
   self-healing-agent:
     image: '${SELF_HEALING_IMAGE}'
     restart: unless-stopped
+    logging: *default-logging
     environment:
       DATABASE_URL: 'postgresql://postgres:${POSTGRES_PASSWORD}@postgres:5432/self_healing'
       LOKI_URL: http://loki:3100
@@ -145,6 +163,7 @@ services:
     # scrape (:8889), traces → Tempo (:4317).
     image: otel/opentelemetry-collector-contrib:0.111.0
     restart: unless-stopped
+    logging: *default-logging
     command: ["--config=/etc/otelcol-contrib/config.yaml"]
     volumes:
       # Directory mount (not single-file) — WSL stale-inode hardening (#113/#116).
@@ -154,6 +173,7 @@ services:
   tempo:
     image: grafana/tempo:2.6.1
     restart: unless-stopped
+    logging: *default-logging
     user: "0"
     command: ["-config.file=/etc/tempo/tempo.yaml"]
     volumes:

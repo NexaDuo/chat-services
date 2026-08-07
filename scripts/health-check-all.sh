@@ -246,6 +246,52 @@ docker_enabled_count="$(echo "$routers_json" | grep -o '"provider":"docker"[^}]*
 echo "  docker-provider routers OK: ${docker_enabled_count} enabled"
 
 # ---------------------------------------------------------------------------
+# 4b. Log rotation coverage (issue #156). Only coolify-proxy had a bounded
+# log policy (json-file + max-size + max-file, #151/#153); every other
+# service accrued logs unbounded — chatwoot-sidekiq measured ~22MB/day, faster
+# than the 136k-line #151 incident that motivated rotation in the first
+# place. This asserts the *class* of regression (any chat-services-* /
+# coolify-proxy container missing a bounded json-file policy), the same
+# pattern as the #153 router-count check, so a future service that forgets to
+# reference the shared `x-logging` anchor is caught here instead of silently
+# accruing unrotated logs again.
+#
+# `chat-services-postgres-1` is deliberately EXCLUDED from this hard-fail set:
+# the compose files DO carry the policy for it now, but the live production
+# container has intentionally not been recreated to pick it up yet (SACRED
+# volume — AGENTS.md requires explicit sign-off before recreating it). A
+# fresh `run-stack.sh bootstrap` creates it compliant from the start; this
+# skip only applies to the already-running production container pending that
+# sign-off. WARN instead of silently passing so the gap stays visible.
+# ---------------------------------------------------------------------------
+step "Verifying every running chat-services-*/coolify-proxy container has a bounded log policy"
+LOG_POLICY_SKIP_SUBNAMES="${LOG_POLICY_SKIP_SUBNAMES:-postgres}"
+log_policy_bad=0
+while IFS= read -r container; do
+  [[ -n "$container" ]] || continue
+  skip=0
+  for skip_subname in $LOG_POLICY_SKIP_SUBNAMES; do
+    if [[ "$container" == "${COMPOSE_PROJECT_NAME}-${skip_subname}-1" ]]; then
+      skip=1
+      break
+    fi
+  done
+  if [[ "$skip" == "1" ]]; then
+    echo "  WARN: skipping ${container} (pending sign-off — issue #156, SACRED volume recreate)"
+    continue
+  fi
+  log_config="$(docker inspect -f '{{.HostConfig.LogConfig.Type}} {{index .HostConfig.LogConfig.Config "max-size"}}' "$container" 2>/dev/null || echo "")"
+  driver="${log_config%% *}"
+  max_size="${log_config#* }"
+  if [[ "$driver" != "json-file" || -z "$max_size" ]]; then
+    echo "  UNBOUNDED: ${container} (driver=${driver:-none} max-size=${max_size:-unset})" >&2
+    log_policy_bad=1
+  fi
+done < <(docker ps --format '{{.Names}}' | grep -E "^(${COMPOSE_PROJECT_NAME}-|coolify-proxy$)")
+(( log_policy_bad == 0 )) || fail "one or more containers have an unbounded/non-json-file log policy (issue #156 regression) — see UNBOUNDED lines above"
+echo "  log rotation coverage OK"
+
+# ---------------------------------------------------------------------------
 # 5. Cross-stack network membership: confirm at least one container per
 #    stack is attached to nexaduo-network (proves cross-stack DNS works).
 # ---------------------------------------------------------------------------

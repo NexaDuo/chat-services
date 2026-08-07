@@ -1,8 +1,25 @@
 # Dify Service Stack - Dynamic Environment Configurations
+#
+# Issue #156: bounded logging is the default for every service (see the
+# longer rationale in deploy/docker-compose.shared.yml — YAML anchors don't
+# cross compose files, so each file carries its own copy of this block).
+# dify-plugin-daemon was one of the two services singled out in #156
+# (measured ~55,238 lines / ~3.4MB in 15h ≈ 5.4MB/day — a high LINE rate
+# close to the #151 incident's, but a modest BYTE rate), so the stack-wide
+# default of 10m x 3 = 30MB already gives it ~5.5 days of local buffer; no
+# per-service override needed here (unlike chatwoot-sidekiq's byte-heavy
+# ~22MB/day — see deploy/docker-compose.chatwoot.yml).
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   dify-init:
     image: alpine:3.19
     restart: "no"
+    logging: *default-logging
     volumes:
       - dify-api-storage:/app/api/storage
     command: chown -R 1001:1001 /app/api/storage
@@ -11,6 +28,7 @@ services:
   dify-api:
     image: langgenius/dify-api:1.13.3
     restart: unless-stopped
+    logging: *default-logging
     # Healthcheck for issue #41: after a redeploy/recreate the gunicorn master
     # sometimes binds :5001 but no workers boot ("Booting worker" never appears),
     # so the port accepts TCP but every request hangs (0 bytes -> edge 502).
@@ -88,6 +106,7 @@ services:
   dify-worker:
     image: langgenius/dify-api:1.13.3
     restart: unless-stopped
+    logging: *default-logging
     environment:
       MODE: worker
       SECRET_KEY: ${DIFY_SECRET_KEY}
@@ -105,6 +124,7 @@ services:
   dify-web:
     image: langgenius/dify-web:1.13.3
     restart: unless-stopped
+    logging: *default-logging
     environment:
       CONSOLE_API_URL: ${DIFY_CONSOLE_API_URL}
       APP_API_URL: ${DIFY_APP_API_URL}
@@ -120,6 +140,7 @@ services:
   dify-sandbox:
     image: langgenius/dify-sandbox:0.2.14
     restart: unless-stopped
+    logging: *default-logging
     environment:
       API_KEY: ${DIFY_SANDBOX_API_KEY}
     networks:
@@ -127,6 +148,7 @@ services:
   dify-plugin-daemon:
     image: langgenius/dify-plugin-daemon:0.5.3-local
     restart: unless-stopped
+    logging: *default-logging
     environment:
       SERVER_KEY: ${DIFY_PLUGIN_DAEMON_KEY}
       DIFY_INNER_API_URL: http://dify-api:5001
@@ -151,6 +173,7 @@ services:
   dify-ssrf-proxy:
     image: ubuntu/squid:latest
     restart: unless-stopped
+    logging: *default-logging
     networks:
       - chat-network
 volumes:
