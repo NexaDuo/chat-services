@@ -1,0 +1,77 @@
+name: Unit Tests
+
+# Runs the vitest unit suites for agents/self-healing and middleware on every PR
+# and on push to main. Kept separate from stack-compose-playwright.yml (issue
+# #155): the unit suites are fast (no ephemeral stack spin-up) and a stack
+# flake there must not mask a unit failure here, nor vice versa. The two
+# packages pin different vitest majors (self-healing ^2.1.9, middleware
+# ^4.1.6), so each gets its own job/install rather than a shared runner.
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Explicit least-privilege token (matches deploy.yml/power.yml/publish-images.yml).
+# Both jobs only checkout + npm ci + npm test, so read-only contents access is
+# enough. Declared at workflow level since it's the same scope for both jobs.
+# The repo's default_workflow_permissions is already `read`, but issue #162
+# found main has no branch protection at all — platform enforcement here is
+# weak, so this isn't left to an implicit repo default that could change
+# unnoticed.
+permissions:
+  contents: read
+
+jobs:
+  self-healing:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # The job only reads the repo (npm ci + npm test); it never pushes
+          # or otherwise needs git credentials after checkout. Don't leave
+          # GITHUB_TOKEN sitting in .git/config while npm ci runs PR-controlled
+          # lockfile lifecycle scripts (qodo finding on PR #159).
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: agents/self-healing/package-lock.json
+
+      - name: Install dependencies
+        working-directory: agents/self-healing
+        run: npm ci
+
+      - name: Run vitest (self-healing)
+        working-directory: agents/self-healing
+        run: npm test
+
+  middleware:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # See self-healing job: no git credentials needed after checkout.
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: middleware/package-lock.json
+
+      - name: Install dependencies
+        working-directory: middleware
+        run: npm ci
+
+      - name: Run vitest (middleware)
+        working-directory: middleware
+        run: npm test
