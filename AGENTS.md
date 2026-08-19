@@ -313,23 +313,68 @@ serializes on this live stack; **do not recreate shared containers (especially
 ## Runbook: Instagram `external_error 100 — "não é a dona do tópico"` (subcode 2534037)
 Recurring self-healing cluster (issue **#64**, aggregates #67/#69/#72/#84/#97–#106).
 Outgoing messages on `Channel::Instagram` inboxes fail with
-`100 - A ação é inválida porque não é a dona do tópico` (subcode `2534037`).
+`100 - A ação é inválida porque não é a dona do tópico` (subcode `2534037`) while
+**inbound keeps working** — that asymmetry is the whole tell.
+
+- **Root cause (proven live 2026-08-19, issue #173): Conversation Routing.** The
+  Instagram account has a **Facebook Page linked**, which puts the thread under Meta's
+  Conversation Routing. When the Page's **default routing app** is not ours, our app is
+  only a *secondary receiver*: it receives every webhook (inbound works) but has **no
+  right to send** (every outbound rejected with `2534037`). For `miau.duda` the linked
+  Page is "Maria Eduarda".
+- **Fix (Meta, not versionable here):** Page Settings → Page setup → **Advanced
+  messaging** → **Default routing app** → set to the app that owns the channel
+  (`Maria Eduarda - IG`, Instagram App ID `1042111571516215`).
+- **Validate:** resend through the product path and confirm the **terminal** state —
+  `messages.status = sent` **and `source_id` populated** (Chatwoot only writes
+  `source_id` from an accepted API response), with no Instagram error line in
+  `chat-services-chatwoot-sidekiq-1`. Proof from #173, four minutes apart on the same
+  DB: msg `51` `status=3` (failed), no `source_id` → msg `54` `status=0` (sent), with
+  `source_id`, `Performed SendReplyJob in 762.18ms`.
 - **Not our stack's bug.** Sending is 100% upstream in Chatwoot: `message.send_reply` →
   `SendReplyJob` → `Instagram::SendOnInstagramService` → `POST
   graph.instagram.com/v22.0/<ig_id>/messages`. Our `middleware/` is not in the failure
   path; our IaC only supplies the app creds. `performed_by: nil` in the broadcast is a
   symptom (status of an already-`failed` message), not the cause.
-- **Diagnosed empirically (#64):** `GET /me` confirms the channel owner, `GET
-  /<ig_id>/conversations` shows the account owns the thread, participants match the
-  `recipient.id` Chatwoot uses — addressing/ownership/token/24h-window all correct, yet
-  the send POST is rejected while the profile GET works. Read OK + send blocked =
-  **permission/mode gating of the Meta App**, not data.
-- **Root cause:** the Meta App lacks **Advanced Access** for
-  `instagram_business_manage_messages` (or is in Development mode).
-- **Fix (Meta App Dashboard — not versionable here):** App Review → Advanced Access for
-  `instagram_business_manage_messages`; move the app to **Live**; reconnect the channel
-  (re-OAuth) so the token carries the scopes; validate by resending and checking
-  `messages.status = sent` + no `external_error 100` in `chat-services-chatwoot-sidekiq-1`.
+
+### Superseded: what this runbook used to claim, and why it cost months
+This runbook previously stated the root cause was the Meta App lacking **Advanced
+Access** for `instagram_business_manage_messages` (or being in Development mode). **That
+is wrong**, and it is recorded here rather than deleted so nobody re-derives it. Acting
+on it burned Advanced Access, Live mode, an accepted Instagram Tester, re-OAuth and the
+"Allow access to messages" toggle — **none** of which were the problem (all tested live
+2026-07-01 and 2026-07-07).
+
+The false premise underneath it: *"`miau.duda` is a pure Instagram-Login connection with
+no Facebook Page surface."* That was **assumed and never verified**. Because Meta
+documents Conversation Routing only for Page-linked accounts, the assumption made the
+team discard the exact mechanism that was causing the failure. This is the `AGENTS.md`
+rule "**verify before acting** — don't build on an inferred fact" failing in the most
+expensive way available.
+
+### How to test this class of bug (three traps, all hit for real)
+1. **Always open a real 24h window before concluding anything.** Meta validates the
+   messaging window **before** thread ownership, so a stale thread returns
+   `code=10 / subcode=2534022` ("outside allowed window") which **masks** `2534037`. A
+   *different* error is not evidence of progress when the tested condition changed too.
+2. **Vary the sender, not the Chatwoot conversation.** Instagram has **one thread per
+   person**; Chatwoot conversations are just resolved/reopened slices of the same IG
+   thread. Creating a new Chatwoot conversation does **not** create a new IG thread — to
+   test a genuinely new thread you need someone who has never DMed the account.
+3. **An outgoing message with `status=2` (read) can be a native echo.** Instagram echoes
+   messages sent from its own inbox over the webhook, and Chatwoot records them as
+   outgoing. A native echo is not proof that the API send works — check `source_id` and
+   the Sidekiq log.
+
+Isolate with a **controlled comparison**: same app, same token-acquisition path, same
+`account_type`, two different accounts, same minute. In #173 that produced
+`alexandrelmachado` → HTTP 200 vs `miau.duda` → `2534037`, which eliminated the app,
+the OAuth token path, and `account_type` in one shot.
+
+**Gotcha:** `GET /me/conversations` returns `paging.next` with the `access_token`
+embedded in the URL — never print the raw response; filter it or extract only the
+fields you need.
+
 - **Playwright N/A:** the failure is in an async Sidekiq job; the UI POST returns 200 and
   only later flips to `failed` — not observable as an HTTP error in the web flow, and
   there's no controllable Instagram connection in CI. Verify via API/DB/logs.
