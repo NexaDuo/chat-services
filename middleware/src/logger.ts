@@ -37,6 +37,11 @@ export function buildFastifyLoggerConfig(level: string): object {
     timestamp: () => `,"time":"${new Date().toISOString()}"`,
     // trace_id / span_id injected from the active OTel span context.
     mixin: otelLogMixin,
+    // Chatwoot delivers its webhook token in the query string, so the raw
+    // request URL is secret-bearing. Scrub it before it reaches stdout —
+    // otherwise the token lands in Loki, in `docker logs`, and in anything
+    // that ships them onward.
+    serializers: { req: redactingReqSerializer },
     ...(usePretty
       ? {
           transport: {
@@ -66,4 +71,54 @@ function otelLogMixin(): Record<string, string> {
   const ctx = span.spanContext();
   if (!ctx || !isSpanContextValid(ctx)) return {};
   return { trace_id: ctx.traceId, span_id: ctx.spanId };
+}
+
+/** Query params whose value must never be logged. */
+const SECRET_QUERY_PARAMS = new Set(["token", "access_token", "api_key", "apikey"]);
+
+/**
+ * Fastify request serializer mirroring the default shape, but with
+ * secret-bearing query parameters replaced by `<redacted>` in `url`.
+ */
+function redactingReqSerializer(request: {
+  method?: string;
+  url?: string;
+  headers?: Record<string, unknown>;
+  socket?: { remoteAddress?: string; remotePort?: number };
+}): Record<string, unknown> {
+  return {
+    method: request.method,
+    url: redactUrlSecrets(request.url),
+    host: request.headers?.host,
+    remoteAddress: request.socket?.remoteAddress,
+    remotePort: request.socket?.remotePort,
+  };
+}
+
+/**
+ * Replaces the value of any secret-bearing query parameter with `<redacted>`,
+ * leaving the path and every other parameter intact. Falls back to dropping
+ * the whole query string if the URL cannot be parsed — never log what we
+ * could not inspect.
+ */
+export function redactUrlSecrets(url: string | undefined): string | undefined {
+  if (!url) return url;
+  const queryStart = url.indexOf("?");
+  if (queryStart === -1) return url;
+
+  const path = url.slice(0, queryStart);
+  try {
+    const params = new URLSearchParams(url.slice(queryStart + 1));
+    let touched = false;
+    for (const key of [...params.keys()]) {
+      if (SECRET_QUERY_PARAMS.has(key.toLowerCase())) {
+        params.set(key, "<redacted>");
+        touched = true;
+      }
+    }
+    if (!touched) return url;
+    return `${path}?${params.toString()}`;
+  } catch {
+    return `${path}?<unparseable-query-redacted>`;
+  }
 }

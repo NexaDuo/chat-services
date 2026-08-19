@@ -7,6 +7,27 @@ import { resolveTenant } from "../config.js";
 import type { Metrics } from "../metrics.js";
 import type { ChatwootClient } from "../chatwoot.js";
 import { DifyClient } from "../dify.js";
+import { timingSafeEqual } from "node:crypto";
+
+/**
+ * Constant-time token comparison. A plain `!==` leaks the length of the
+ * matching prefix through timing, which is exploitable against an endpoint
+ * an attacker can call repeatedly — and this webhook is reachable from the
+ * public tunnel. Length is compared first (and non-secret), then the bytes.
+ */
+function safeTokenEqual(candidate: string, expected: string): boolean {
+  const a = Buffer.from(candidate, "utf8");
+  const b = Buffer.from(expected, "utf8");
+  if (a.length !== b.length) return false;
+  return timingSafeEqual(a, b);
+}
+
+/** Which channel carried the token — for diagnosing 401s without logging it. */
+function tokenSourceOf(headerToken: unknown, queryToken: unknown): string {
+  if (typeof headerToken === "string") return "header";
+  if (typeof queryToken === "string") return "query";
+  return "none";
+}
 
 /**
  * Chatwoot webhook payload (partial — only the fields we care about).
@@ -59,9 +80,24 @@ export async function registerChatwootWebhookRoute(
   app.post("/webhooks/chatwoot", async (req, reply) => {
     // 1. Authenticate webhook if token is configured
     if (config.chatwoot.webhookToken) {
-      const token = req.headers["x-chatwoot-webhook-token"];
-      if (!token || token !== config.chatwoot.webhookToken) {
-        req.log.warn({ hasToken: !!token }, "webhook: unauthorized (invalid token)");
+      // Chatwoot's generic webhooks cannot send custom headers, so the token
+      // arrives in the query string (`?token=...`) — that is the only channel
+      // Chatwoot offers. We still prefer a header when present so internal
+      // callers (which CAN set one) keep the token out of URLs and access logs.
+      const headerToken = req.headers["x-chatwoot-webhook-token"];
+      const queryToken = (req.query as { token?: unknown } | undefined)?.token;
+      const token =
+        typeof headerToken === "string"
+          ? headerToken
+          : typeof queryToken === "string"
+            ? queryToken
+            : undefined;
+
+      if (!token || !safeTokenEqual(token, config.chatwoot.webhookToken)) {
+        req.log.warn(
+          { hasToken: !!token, tokenSource: tokenSourceOf(headerToken, queryToken) },
+          "webhook: unauthorized (invalid token)",
+        );
         return reply.code(401).send({ error: "unauthorized" });
       }
     } else {
