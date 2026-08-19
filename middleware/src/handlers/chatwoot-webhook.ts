@@ -15,18 +15,35 @@ import { timingSafeEqual } from "node:crypto";
  * an attacker can call repeatedly — and this webhook is reachable from the
  * public tunnel. Length is compared first (and non-secret), then the bytes.
  */
-function safeTokenEqual(candidate: string, expected: string): boolean {
+export function safeTokenEqual(candidate: string, expected: string): boolean {
   const a = Buffer.from(candidate, "utf8");
   const b = Buffer.from(expected, "utf8");
   if (a.length !== b.length) return false;
   return timingSafeEqual(a, b);
 }
 
-/** Which channel carried the token — for diagnosing 401s without logging it. */
-function tokenSourceOf(headerToken: unknown, queryToken: unknown): string {
-  if (typeof headerToken === "string") return "header";
-  if (typeof queryToken === "string") return "query";
-  return "none";
+/**
+ * Picks the webhook token out of the request, preferring the header.
+ *
+ * Chatwoot's generic webhooks cannot send custom headers, so its token
+ * arrives as `?token=...`. Internal callers CAN set a header, and those keep
+ * the secret out of URLs and access logs — hence the precedence.
+ *
+ * A present-but-wrong header does NOT fall back to the query: falling back
+ * would let an attacker who can only set a header downgrade to whichever
+ * channel they control. A repeated parameter (`?token=a&token=b`) parses to
+ * an array, which is ambiguous — it is rejected, but still reported as
+ * `"query"` so a 401 is diagnosable.
+ */
+export function extractWebhookToken(
+  headerToken: unknown,
+  queryToken: unknown,
+): { token?: string; source: "header" | "query" | "none" } {
+  if (typeof headerToken === "string") return { token: headerToken, source: "header" };
+  if (Array.isArray(headerToken)) return { source: "header" };
+  if (typeof queryToken === "string") return { token: queryToken, source: "query" };
+  if (Array.isArray(queryToken)) return { source: "query" };
+  return { source: "none" };
 }
 
 /**
@@ -84,18 +101,14 @@ export async function registerChatwootWebhookRoute(
       // arrives in the query string (`?token=...`) — that is the only channel
       // Chatwoot offers. We still prefer a header when present so internal
       // callers (which CAN set one) keep the token out of URLs and access logs.
-      const headerToken = req.headers["x-chatwoot-webhook-token"];
-      const queryToken = (req.query as { token?: unknown } | undefined)?.token;
-      const token =
-        typeof headerToken === "string"
-          ? headerToken
-          : typeof queryToken === "string"
-            ? queryToken
-            : undefined;
+      const { token, source } = extractWebhookToken(
+        req.headers["x-chatwoot-webhook-token"],
+        (req.query as { token?: unknown } | undefined)?.token,
+      );
 
       if (!token || !safeTokenEqual(token, config.chatwoot.webhookToken)) {
         req.log.warn(
-          { hasToken: !!token, tokenSource: tokenSourceOf(headerToken, queryToken) },
+          { hasToken: !!token, tokenSource: source },
           "webhook: unauthorized (invalid token)",
         );
         return reply.code(401).send({ error: "unauthorized" });

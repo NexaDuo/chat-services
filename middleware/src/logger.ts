@@ -83,17 +83,27 @@ const SECRET_QUERY_PARAMS = new Set(["token", "access_token", "api_key", "apikey
 function redactingReqSerializer(request: {
   method?: string;
   url?: string;
+  // `ip` and `host` are Fastify's getters, which honour `trustProxy` (set in
+  // index.ts) and resolve the real client through X-Forwarded-For. Reading
+  // `socket.remoteAddress`/`headers.host` instead would log the reverse
+  // proxy on every line — the whole stack sits behind coolify-proxy, so that
+  // would silently blind every request log, not just this webhook.
+  ip?: string;
+  host?: string;
   headers?: Record<string, unknown>;
   socket?: { remoteAddress?: string; remotePort?: number };
 }): Record<string, unknown> {
   return {
     method: request.method,
     url: redactUrlSecrets(request.url),
-    host: request.headers?.host,
-    remoteAddress: request.socket?.remoteAddress,
+    host: request.host ?? request.headers?.host,
+    remoteAddress: request.ip ?? request.socket?.remoteAddress,
     remotePort: request.socket?.remotePort,
   };
 }
+
+/** Exported for tests — mirrors Fastify's default serializer shape. */
+export const __testing = { redactingReqSerializer };
 
 /**
  * Replaces the value of any secret-bearing query parameter with `<redacted>`,
