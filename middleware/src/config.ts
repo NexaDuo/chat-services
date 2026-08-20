@@ -14,6 +14,12 @@ const EnvSchema = z.object({
   DIFY_BASE_URL: z.string().url(),
   DIFY_REQUEST_TIMEOUT_MS: z.coerce.number().int().positive().default(30000),
 
+  // Burst-dedup debounce window (issue #179): a message-burst window during
+  // which incoming messages for the same conversation are grouped into a
+  // single Dify call instead of one call per message. 0 disables grouping
+  // (each message flushes on its own, still serialized per conversation).
+  WEBHOOK_DEBOUNCE_MS: z.coerce.number().int().nonnegative().default(2500),
+
   HANDOFF_SHARED_SECRET: z
     .string()
     .min(16, "HANDOFF_SHARED_SECRET must be at least 16 chars"),
@@ -43,6 +49,9 @@ export type AppConfig = {
   dify: {
     baseUrl: string;
     requestTimeoutMs: number;
+  };
+  webhook: {
+    debounceMs: number;
   };
   handoff: {
     sharedSecret: string;
@@ -81,6 +90,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     dify: {
       baseUrl: data.DIFY_BASE_URL.replace(/\/+$/, ""),
       requestTimeoutMs: data.DIFY_REQUEST_TIMEOUT_MS,
+    },
+    webhook: {
+      debounceMs: data.WEBHOOK_DEBOUNCE_MS,
     },
     handoff: {
       sharedSecret: data.HANDOFF_SHARED_SECRET,
