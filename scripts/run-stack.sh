@@ -117,6 +117,37 @@ up() {
   # normal "bring the stack back up after a restart" path also restores backups.
   log "reconciling backup cron (survive-WSL-restart)"
   install_cron
+  # Cron does not catch up. This host is a workstation that is routinely powered
+  # off at 03:00, so a missed daily run is never retried and the gap grows
+  # silently — between 2026-08-07 and 2026-08-20 that produced 13 days with no
+  # backup at all, while `crontab -l` still looked correct. Re-asserting the
+  # schedule is therefore not enough: take a catch-up backup here whenever the
+  # newest dump is already older than the staleness threshold.
+  catchup_backup
+}
+
+# Run a backup now if (and only if) the newest dump is already stale. Safe to
+# call on every `up`: on a healthy host it is a no-op. Never fails `up` — a
+# backup problem must be visible, but it must not block bringing the stack back.
+catchup_backup() {
+  local dir="${BACKUP_DIR:-$DUMPS_DIR}"
+  local max_h="${BACKUP_MAX_AGE_HOURS:-26}"
+  local newest age_h=999999
+  newest="$(find "$dir" -type f -name '*.sql.gz' -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -n1)"
+  if [[ -n "$newest" ]]; then
+    local epoch="${newest%% *}"
+    age_h=$(( ( $(date +%s) - ${epoch%.*} ) / 3600 ))
+  fi
+  if (( age_h < max_h )); then
+    log "backup catch-up not needed (newest dump ${age_h}h old, threshold ${max_h}h)"
+    return 0
+  fi
+  warn "newest dump is ${age_h}h old (>= ${max_h}h) — running catch-up backup now"
+  if BACKUP_DIR="$dir" "${REPO_ROOT}/scripts/backup-host.sh"; then
+    log "catch-up backup OK"
+  else
+    warn "catch-up backup FAILED — investigate ${HOME}/nexaduo-backup.log; the stack is up regardless"
+  fi
 }
 
 restore() {
@@ -256,6 +287,7 @@ case "${1:-}" in
   validate)     validate ;;
   backup)       backup ;;
   install-cron) install_cron ;;
+  catchup-backup) catchup_backup ;;
   reconcile-cron) install_cron ;;
   check-backup) check_backup ;;
   down)         down ;;
@@ -267,6 +299,7 @@ Usage: $0 [--no-isolated] {preflight|up|restore|bootstrap|validate|backup|instal
   up           bring up the stack (populated volume; no restore) + reconcile cron
   validate     smoke real tunnel URLs + Playwright against them
   backup       run scripts/backup-host.sh once
+  catchup-backup  run a backup only if the newest dump is already stale (no-op otherwise)
   install-cron install/converge the daily 03:00 backup cron (dedupes stale entries)
   reconcile-cron  alias of install-cron (idempotent; run after a WSL restart)
   check-backup verify the newest dump is fresh (< \${BACKUP_MAX_AGE_HOURS:-26}h)

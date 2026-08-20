@@ -751,6 +751,25 @@ else
   fi
   echo "  backup OK: newest dump $(basename "$dump_file") is ${dump_age_h}h old"
 
+  # Off-host copy (the DR question this check exists to answer). Every artifact
+  # backup-host.sh produces lands in BACKUP_DIR *on this host* — the same host
+  # whose loss the backup is supposed to survive. Without an off-host remote the
+  # freshness checks above are satisfied by backups that die with the machine,
+  # which is exactly how "we have daily backups" stayed true and useless. This
+  # was found unset on 2026-08-20 with rclone not even installed. Set
+  # BACKUP_RCLONE_REMOTE (see .env.production.example) — or set
+  # ALLOW_LOCAL_ONLY_BACKUP=1 to consciously accept host-local-only backups.
+  if [[ "${ALLOW_LOCAL_ONLY_BACKUP:-0}" == "1" ]]; then
+    echo "  WARN: off-host backup check skipped (ALLOW_LOCAL_ONLY_BACKUP=1) — backups die with this host"
+  else
+    step "Checking backups are copied off-host (BACKUP_RCLONE_REMOTE + rclone)"
+    [[ -n "${BACKUP_RCLONE_REMOTE:-}" ]] || \
+      fail "NO OFF-HOST BACKUP: BACKUP_RCLONE_REMOTE is unset — every dump/volume/env archive lives only on this host and is lost with it. See .env.production.example, or set ALLOW_LOCAL_ONLY_BACKUP=1 to accept the risk."
+    command -v rclone >/dev/null 2>&1 || \
+      fail "NO OFF-HOST BACKUP: BACKUP_RCLONE_REMOTE is set but rclone is not installed — backup-host.sh silently skips the off-host copy."
+    echo "  off-host backup OK: rclone present and BACKUP_RCLONE_REMOTE configured"
+  fi
+
   # Volume-archive freshness (issue #61). pg_dump does NOT capture Docker volumes
   # (chatwoot-storage uploads, Dify RSA privkeys); backup-host.sh now tars them as
   # *<suffix>-<ts>.tar.gz. A fresh DB dump while the volume archive is missing/stale
