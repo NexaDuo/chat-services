@@ -784,4 +784,36 @@ else
   echo "  env backup OK: newest .env archive $(basename "$env_file_found") is ${env_age_h}h old"
 fi
 
+# ---------------------------------------------------------------------------
+# 7. Grafana Dify token-usage alert rules (issue #182) must still be
+#    evaluating. Skippable via SKIP_ALERT_HEALTH_CHECK=1 (e.g. ephemeral CI
+#    with no Grafana provisioning mounted). An alert rule that silently stops
+#    being evaluated (broken provisioning file, query erroring against
+#    Prometheus) is worse than no alert — it produces false confidence right
+#    when a real spike could be happening. Uses the grafana container's own
+#    GF_SECURITY_ADMIN_PASSWORD env var (never printed) to authenticate, so
+#    no secret needs to be sourced or logged by this script.
+# ---------------------------------------------------------------------------
+if [[ "${SKIP_ALERT_HEALTH_CHECK:-0}" == "1" ]]; then
+  step "Skipping Grafana alert-rule health check (SKIP_ALERT_HEALTH_CHECK=1)"
+else
+  grafana_container="$(container_by_subname grafana)"
+  if [[ -z "$grafana_container" ]]; then
+    step "Skipping Grafana alert-rule health check (no grafana container found)"
+  else
+    step "Checking Dify token-usage alert rules are healthy and being evaluated"
+    rules_json="$(docker exec "$grafana_container" sh -c \
+      'AUTH=$(printf "admin:%s" "$GF_SECURITY_ADMIN_PASSWORD" | base64); wget -qO- --header="Authorization: Basic $AUTH" http://127.0.0.1:3000/api/prometheus/grafana/api/v1/rules' \
+      2>/dev/null || true)"
+    [[ -n "$rules_json" ]] || fail "could not reach Grafana's alert-rules API inside ${grafana_container} — is grafana up?"
+    for rule_uid in dify-tokens-aggregate-spike dify-tokens-per-account-spike; do
+      echo "$rules_json" | grep -q "\"uid\":\"${rule_uid}\"" \
+        || fail "alert rule ${rule_uid} not found via Grafana API — provisioning file observability/grafana/provisioning/alerting/dify-token-usage.yml did not load (issue #182)"
+    done
+    echo "$rules_json" | grep -q '"health":"error"' \
+      && fail "at least one Dify token-usage alert rule reports health=error — check its query/datasource (issue #182)"
+    echo "  Dify token-usage alert rules present and healthy"
+  fi
+fi
+
 echo "OK all stacks healthy — shared + chatwoot + dify + nexaduo"

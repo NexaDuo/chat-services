@@ -177,6 +177,14 @@ states, scans logs for known anomalies, and files structured GitHub issues.
   with concurrent work — do **not** recreate the postgres container casually.
 - **Observability:** Grafana + Prometheus for queue depths and **token usage per
   account_id**. **Rate limiting:** respect Meta tiers; throttle in Dify.
+- **Token-usage alerting (issue #182):** two Grafana alert rules — aggregate and
+  per-`account_id` — provisioned in
+  `observability/grafana/provisioning/alerting/dify-token-usage.yml`, on top of the
+  `middleware_dify_tokens_total` metric above. Alert only, no automatic cutoff by
+  design. See [`docs/RUNBOOK-dify-token-alert.md`](docs/RUNBOOK-dify-token-alert.md)
+  for the threshold justification, the expected human action, and the still-pending
+  notification-channel decision (no SMTP/Slack/webhook notifier exists in this
+  stack's provisioning today).
 
 ### Disaster recovery — restore Postgres from a dump (host-local)
 Dumps: `~/nexaduo-local/dumps/<db>-<YYYY-MM-DD>-HHMM.sql.gz` (+ off-host mirror if
