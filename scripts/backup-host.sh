@@ -178,9 +178,14 @@ fi
 # silent gap that produced this incident — so treat a missing/empty required
 # volume archive as a hard failure that surfaces in the cron log.
 REQUIRED_VOL_SUFFIXES=(${BACKUP_REQUIRED_VOLUME_SUFFIXES:-$BACKUP_VOLUME_SUFFIXES})
-# A gzipped tar of a tiny (privkey) volume is legitimately small; use a lower
-# floor than the DB dump one but still non-empty (an empty/errored tar is ~<50B).
-VOL_MIN_BYTES="${BACKUP_VOLUME_MIN_BYTES:-100}"
+# Integrity, not size. A byte floor cannot tell "the volume is legitimately
+# empty" from "the tar is truncated": a tar.gz of an empty directory is a valid
+# 87-byte archive, which the old 100-byte floor rejected. That false failure
+# aborted this script before it could write .last-success, so every run from
+# 2026-08-06 on reported FAILURE while producing perfectly good dumps — and the
+# stale marker then read as "backups are broken" for two weeks. Verify the gzip
+# stream and the tar index instead: a truncated/errored archive fails those, an
+# empty-but-valid one passes and is reported as empty.
 vol_missing=0
 for suffix in "${REQUIRED_VOL_SUFFIXES[@]}"; do
   f="$(ls -1t "${BACKUP_DIR}"/*"${suffix}"-"${TS}".tar.gz 2>/dev/null | head -n1)"
@@ -189,10 +194,23 @@ for suffix in "${REQUIRED_VOL_SUFFIXES[@]}"; do
     vol_missing=1
     continue
   fi
-  sz="$(stat -c%s "$f" 2>/dev/null || echo 0)"
-  if [[ "$sz" -lt "$VOL_MIN_BYTES" ]]; then
-    log "ERRO: arquivo de volume '${suffix}' suspeito (${sz} bytes < ${VOL_MIN_BYTES})."
+  if ! gzip -t "$f" 2>/dev/null; then
+    log "ERRO: arquivo de volume '${suffix}' corrompido (gzip -t falhou): $(basename "$f")."
     vol_missing=1
+    continue
+  fi
+  # A truncated tar exits non-zero here even when the gzip layer is intact.
+  if ! tar tzf "$f" >/dev/null 2>&1; then
+    log "ERRO: arquivo de volume '${suffix}' ilegível (tar tzf falhou): $(basename "$f")."
+    vol_missing=1
+    continue
+  fi
+  entries="$(tar tzf "$f" 2>/dev/null | grep -vc '/$' || true)"
+  if [[ "${entries:-0}" -eq 0 ]]; then
+    # Not a failure: some volumes are legitimately empty (e.g.
+    # evolution-instances with no WhatsApp instance connected). Say so out loud
+    # so an operator reading the log can tell "empty" from "we lost the data".
+    log "AVISO: volume '${suffix}' arquivado VAZIO (0 arquivos) — arquivo íntegro, volume sem conteúdo."
   fi
 done
 if [[ "$vol_missing" -ne 0 ]]; then

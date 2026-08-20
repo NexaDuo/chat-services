@@ -171,6 +171,26 @@ states, scans logs for known anomalies, and files structured GitHub issues.
     the DB dumps already shipped to the same remote), and `health-check-all.sh`
     staleness-checks it the same way. Set `BACKUP_RCLONE_REMOTE` (see
     `.env.production.example` for Google Drive setup) or it stays local-only.
+  - **The off-host copy is now a health-check FAILURE, not a suggestion.** On
+    2026-08-20 `BACKUP_RCLONE_REMOTE` was found unset with `rclone` not even
+    installed: every dump, volume archive and `env-<ts>.tar.gz` lived only on the
+    WSL host they exist to survive, so "we have daily backups" was true and
+    worthless. `health-check-all.sh` now fails when the remote is unset or rclone
+    is missing; `ALLOW_LOCAL_ONLY_BACKUP=1` consciously accepts the risk.
+  - **Volume-archive coverage checks integrity, never size.** A byte floor cannot
+    tell an empty volume from a truncated tar — and got both backwards: the old
+    100-byte floor rejected the *valid* 87-byte archive of the legitimately empty
+    `evolution-instances` volume while it would have accepted a truncated 4KB one.
+    That false failure aborted `backup-host.sh` before it wrote `.last-success`,
+    so from 2026-08-06 every run reported FAILURE while producing good dumps, and
+    the stale marker read as "backups are broken" for two weeks. The check now
+    runs `gzip -t` + `tar tzf` and reports an empty-but-valid archive as a WARN.
+  - **Cron does not catch up, and this host is powered off at 03:00.** Between
+    2026-08-07 and 2026-08-20 no backup ran at all (`docker.sock` absent at cron
+    time) while `crontab -l` still looked correct. `run-stack.sh up` therefore
+    also runs `catchup_backup`, which takes a backup when the newest dump is
+    already past the staleness threshold and is a no-op otherwise. Available
+    standalone as `run-stack.sh catchup-backup`.
 - **Postgres data is SACRED.** It lives in the Docker named volume
   `chat-services_postgres-data`. **Never** `docker compose down -v` or prune it;
   `run-stack.sh down` deliberately omits `-v`. The host serves production and is shared
