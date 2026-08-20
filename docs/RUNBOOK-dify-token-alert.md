@@ -95,16 +95,21 @@ like any other broken health check.
 
 ## Known gap: no working notification channel
 
-**Pending decision, not invented here.** As of this writing, nothing in this
-stack's provisioning configures an SMTP server, Slack webhook, or any other
-outbound notifier — grepped every `docker-compose*.yml` and
-`.env.production.example`. The rules above route to Grafana's built-in default
-contact point (`grafana-default-email`), which has no SMTP backing configured and
-will **not** deliver anywhere. Today, "seeing" this alert means opening Grafana
-(`grafana.nexaduo.com` → Alerting) or running the liveness check above — not a
-push notification outside Grafana as issue #182 asked for.
+**Today this alert is visible only inside Grafana — nothing pushes it anywhere
+else.** "Seeing" it means opening `grafana.nexaduo.com` → Alerting, or running the
+liveness check above. There is no email/Slack/Telegram delivery yet, and this PR
+deliberately does not add one.
 
-**This needs a decision from the user**: pick a real channel (email via SMTP,
-Slack webhook, Telegram, etc.) and it can be wired as a Grafana contact point +
-notification policy, both provisionable in this same `alerting/` directory. Until
-that decision is made, this alert is silent outside of an active Grafana check.
+Delivery was attempted and dropped from this PR on purpose: Grafana's alerting
+provisioning infers a JSON type from `${VAR}`-interpolated values, and a Telegram
+`chat_id` is always numeric, so it gets promoted to a JSON number and the
+`contact-points.yml` provisioning fails with `failed to unmarshal settings: json:
+cannot unmarshal number into Go struct field Config.chatid of type string`
+(upstream bug `grafana/grafana#69950`, present in our pinned Grafana version; six
+YAML forms of referencing the env var were tried, all failed the same way). Worse,
+one broken contact point takes down the whole org's `ProvisioningServiceImpl`,
+including these unrelated alert rules — the same mechanism behind the Grafana
+outage in issue #188. Shipping a hardcoded literal chat_id was not an option
+(it's a credential), so detection (this PR) and delivery were split. The delivery
+side is tracked in issue #189 — see it before attempting `${VAR}`-based Telegram
+provisioning again.
