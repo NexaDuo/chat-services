@@ -102,6 +102,10 @@ Reproducible bootstrap (no manual drift — issue #109):
 Internal agents (e.g. `self-healing`) fetch their functional config from the
 **Middleware Config API** (`GET /config`), authenticated via `Bearer` using
 `HANDOFF_SHARED_SECRET`. New keys go in the `middleware.configs` Postgres table.
+This model is also how the operator manually kills the Dify webhook path in an
+emergency (`DIFY_KILL_SWITCH`, issue #184, checked at flush time — see
+[`docs/dify-kill-switch.md`](docs/dify-kill-switch.md) for the full ON/OFF/
+verify procedure) without touching `.env` or restarting anything.
 Every service block that talks to `GET /config` must receive `HANDOFF_SHARED_SECRET`
 (issue #152 — it reached `middleware` but not `self-healing-agent` for an unknown
 period, silently disabling that agent's LLM analysis). **Fail-loud by default:**

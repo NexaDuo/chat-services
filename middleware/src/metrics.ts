@@ -7,6 +7,8 @@ export type Metrics = {
   difyRequestDuration: Histogram<"account_id" | "status">;
   errorsTotal: Counter<"account_id" | "reason">;
   handoffsTotal: Counter<"account_id">;
+  /** Groups skipped because DIFY_KILL_SWITCH was ON at flush time (issue #184). */
+  difyKillSwitchSkipsTotal: Counter<"account_id">;
 };
 
 export function createMetrics(): Metrics {
@@ -50,6 +52,13 @@ export function createMetrics(): Metrics {
     registers: [registry],
   });
 
+  const difyKillSwitchSkipsTotal = new Counter({
+    name: "middleware_dify_kill_switch_skips_total",
+    help: "Groups skipped at flush time because DIFY_KILL_SWITCH was ON, per account (issue #184).",
+    labelNames: ["account_id"] as const,
+    registers: [registry],
+  });
+
   return {
     registry,
     difyTokensTotal,
@@ -57,5 +66,6 @@ export function createMetrics(): Metrics {
     difyRequestDuration,
     errorsTotal,
     handoffsTotal,
+    difyKillSwitchSkipsTotal,
   };
 }

@@ -3,7 +3,7 @@ import { z } from "zod";
 import axios from "axios";
 import pg from "pg";
 import type { AppConfig } from "../config.js";
-import { resolveTenant } from "../config.js";
+import { resolveTenant, isDifyKillSwitchEnabled } from "../config.js";
 import type { Metrics } from "../metrics.js";
 import type { ChatwootClient } from "../chatwoot.js";
 import { DifyClient } from "../dify.js";
@@ -264,6 +264,28 @@ async function flushGroup(
   if (!tenant) {
     log.warn({ accountId: accountIdStr }, "webhook: no tenant mapping (group dropped)");
     metrics.errorsTotal.inc({ account_id: accountIdStr, reason: "no_tenant_mapping" });
+    return;
+  }
+
+  // Manual kill switch (issue #184) — checked HERE, at flush time, immediately
+  // before the Dify call, and nowhere earlier in the pipeline. PR #180 made
+  // this the only point that can actually see "the operator turned it off
+  // just now": the webhook handler enqueues into the debouncer and returns
+  // 200 well before this runs, so checking at enqueue would let an
+  // already-buffered burst fire anyway during the exact window the switch
+  // exists to close. Fail-safe: any read failure/ambiguity from
+  // `isDifyKillSwitchEnabled` resolves to "off" (keep answering) — see its
+  // docstring for the #152-mirrored rationale. The user's message is never
+  // lost when the switch is ON: Chatwoot already stored it before this
+  // webhook fired, so it stays visible for human handoff; we simply skip the
+  // Dify call and the outgoing reply (total silence, per #182) and leave the
+  // watermark un-advanced.
+  if (await isDifyKillSwitchEnabled(pool, log)) {
+    metrics.difyKillSwitchSkipsTotal.inc({ account_id: accountIdStr });
+    log.warn(
+      { accountId: accountIdStr, conversationId, groupSize: eligible.length },
+      "webhook: DIFY_KILL_SWITCH is ON — skipping Dify call for this group; message stays in Chatwoot for human handoff (issue #184)",
+    );
     return;
   }
 
