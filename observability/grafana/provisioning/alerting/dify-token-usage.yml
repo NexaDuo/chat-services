@@ -129,6 +129,16 @@ groups:
               instant: true
               range: false
               refId: A
+          - refId: B
+            relativeTimeRange:
+              from: 900
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: reduce
+              reducer: last
+              expression: A
+              refId: B
           - refId: C
             relativeTimeRange:
               from: 900
@@ -136,7 +146,7 @@ groups:
             datasourceUid: __expr__
             model:
               type: threshold
-              expression: A
+              expression: B
               conditions:
                 - evaluator:
                     type: gt

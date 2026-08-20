@@ -87,11 +87,31 @@ docker exec chat-services-grafana-1 sh -c \
    http://127.0.0.1:3000/api/prometheus/grafana/api/v1/rules'
 ```
 
-Check, for both `dify-tokens-aggregate-spike` and `dify-tokens-per-account-spike`:
+The response nests rules under `data.groups[].rules[]`; each rule carries its own
+`uid` and `health` field. Scope both checks to the `dify-token-usage` group before
+reading them — a plain string match against the whole body would also catch an
+unrelated group's `health: error` and misattribute it to this alert:
+
+```
+echo "$rules_json" | jq '.data.groups[] | select(.name=="dify-token-usage")
+  | .rules[] | {uid, health, lastEvaluation}'
+```
+
+For both `dify-tokens-aggregate-spike` and `dify-tokens-per-account-spike`:
 `health` must be `"ok"` (not `"error"`), and `lastEvaluation` must be recent
 (within the last couple of minutes, given the 1m evaluation interval). A stale
 `lastEvaluation` or `health: error` means the rule stopped evaluating — treat it
-like any other broken health check.
+like any other broken health check. `scripts/health-check-all.sh` runs this same
+check with `jq` on every invocation (issue #182/#185); `jq` parses on the host
+after the body is fetched, not inside the Grafana container, since the
+`grafana/grafana:11.6.16` image's Alpine shell has no `jq` (confirmed live).
+
+This endpoint (`/api/prometheus/grafana/api/v1/rules`, the Prometheus-compatible
+API) was re-verified live against a disposable `grafana/grafana:11.6.16` container
+during the #185 review to confirm it actually returns `uid` per rule — an earlier
+draft of this doc/PR had instead exercised `/api/v1/provisioning/alert-rules` (a
+different endpoint, different shape) as its "proof," which never exercised the
+literal command above.
 
 ## Known gap: no working notification channel
 
