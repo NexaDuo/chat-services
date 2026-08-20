@@ -290,6 +290,46 @@ describe("registerChatwootWebhookRoute — burst dedup + watermark (issue #179)"
     await app.close();
   });
 
+  it("does NOT advance the watermark when Dify succeeds but posting the reply to Chatwoot fails", async () => {
+    // Gap flagged by @rev on PR #180: the previous test only exercised a
+    // Dify failure. The AC says "falha ao postar não avança o watermark" —
+    // that is specifically chatwoot.postMessage() for the outgoing reply
+    // failing AFTER a successful Dify call, which is a different code path
+    // through the same try/catch. This pins that path explicitly.
+    const pool = buildFakePool();
+    const chatwoot = buildFakeChatwoot();
+    // The first postMessage call is the outgoing reply — make it fail.
+    // The private-note retry (best-effort) that follows is allowed to succeed.
+    chatwoot.postMessage
+      .mockRejectedValueOnce(new Error("chatwoot unreachable"))
+      .mockResolvedValueOnce({ id: 2, content: "", private: true, message_type: "outgoing", created_at: "" });
+    const app = await buildApp(pool, chatwoot);
+
+    await app.inject({
+      method: "POST",
+      url: "/webhooks/chatwoot",
+      payload: chatwootMessageCreated({ id: 110, content: "oi", accountId: 42, conversationId: 11 }),
+    });
+    await new Promise((resolve) => setTimeout(resolve, 200));
+
+    // Dify WAS called successfully — this is the fragile path: reply-post
+    // failure, not Dify failure.
+    expect(chatBlocking).toHaveBeenCalledTimes(1);
+    // The watermark must NOT have advanced: a redelivery of message 110
+    // must still be answered, not silently treated as "already handled".
+    expect(pool.watermarks.get("42:11")).toBeUndefined();
+    // First call was the (failed) outgoing reply, second was the private note.
+    expect(chatwoot.postMessage).toHaveBeenCalledTimes(2);
+    expect(chatwoot.postMessage.mock.calls[0][0]).toEqual(
+      expect.objectContaining({ messageType: "outgoing", content: "resposta única" }),
+    );
+    expect(chatwoot.postMessage.mock.calls[1][0]).toEqual(
+      expect.objectContaining({ private: true }),
+    );
+
+    await app.close();
+  });
+
   it("two different conversations in a simultaneous burst are each answered once, independently", async () => {
     const pool = buildFakePool();
     const chatwoot = buildFakeChatwoot();

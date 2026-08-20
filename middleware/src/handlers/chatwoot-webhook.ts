@@ -83,15 +83,17 @@ const WebhookSchema = z
       })
       .partial()
       .optional(),
-    // Chatwoot's real message_created payload carries the message id and
-    // creation timestamp at the top level (see
+    // Chatwoot's real message_created payload carries the message id at the
+    // top level (see
     // https://www.chatwoot.com/docs/product/channels/api/receive-messages).
-    // Both are optional here purely defensively — the watermark logic below
-    // degrades to "not persisted for this message" rather than throwing if
-    // either is ever missing, instead of 400-ing a webhook Chatwoot actually
-    // sent.
+    // Optional here purely defensively — the watermark logic below degrades
+    // to "not persisted for this message" rather than throwing if it is ever
+    // missing, instead of 400-ing a webhook Chatwoot actually sent.
+    //
+    // NOT read: `created_at`. Ordering within a group uses `id` only (auto-
+    // increment on Chatwoot's side, so equivalent in practice) — no need to
+    // carry a second field we'd never use for tie-breaking.
     id: z.union([z.number(), z.string()]).optional(),
-    created_at: z.union([z.number(), z.string()]).optional(),
   })
   .passthrough();
 
@@ -147,6 +149,66 @@ async function persistWatermark(
        last_processed_message_id = GREATEST(conversation_watermarks.last_processed_message_id, EXCLUDED.last_processed_message_id),
        updated_at = CURRENT_TIMESTAMP`,
     [accountIdStr, String(conversationId), messageId],
+  );
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Hardening for the MEDIUM finding in the `#179` PR review (`@rev`, PR #180):
+ * the window between `chatwoot.postMessage()` succeeding and this call
+ * succeeding is NOT atomic — the reply is an HTTP POST to Chatwoot, the
+ * watermark is a Postgres row, they cannot share a transaction. If the
+ * outgoing reply lands but Postgres is unreachable for that one write, a
+ * webhook redelivery of the same message would fail the `id > watermark`
+ * filter in `flushGroup` and re-answer it — the exact duplicate-reply
+ * regression issue #179 exists to close.
+ *
+ * Chosen mitigation: retry the write a few times with a short backoff
+ * before giving up (transient Postgres blips — pool exhaustion, a brief
+ * connection drop — are exactly the kind of failure a retry absorbs).
+ * Deliberately swallows the error after logging LOUDLY rather than
+ * rethrowing: by this point the reply has already been sent successfully,
+ * so throwing here would route into `flushGroup`'s catch block and post a
+ * confusing second, private "processing failed" note about a request that
+ * actually succeeded. The chosen tradeoff is: on a persistent Postgres
+ * outage, we accept the SAME accepted risk documented for a
+ * process-restart in the PR (a duplicate answer if a redelivery lands
+ * during that outage) — Chatwoot does not redeliver in practice for this
+ * webhook (the handler already returned 200 at buffer-time, well before
+ * this call), which keeps the residual window narrow. The loud log below
+ * is what makes an actual occurrence visible/alertable instead of silent.
+ */
+async function persistWatermarkResilient(
+  pool: pg.Pool,
+  accountIdStr: string,
+  conversationId: number | string,
+  messageId: number,
+  log: FastifyBaseLogger,
+): Promise<void> {
+  const attempts = 3;
+  let lastErr: unknown;
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      await persistWatermark(pool, accountIdStr, conversationId, messageId);
+      return;
+    } catch (err) {
+      lastErr = err;
+      log.warn(
+        { err, attempt, accountId: accountIdStr, conversationId, messageId },
+        "webhook: watermark persist failed, retrying",
+      );
+      if (attempt < attempts) await delay(150 * attempt);
+    }
+  }
+  // All retries exhausted. The reply was already sent — log loudly instead
+  // of throwing (see rationale above) so this is alertable, not silent.
+  log.error(
+    { err: lastErr, accountId: accountIdStr, conversationId, messageId },
+    "webhook: FAILED to persist watermark after retries — the reply was already sent; " +
+      "a webhook redelivery of this message before Postgres recovers could produce a duplicate reply (issue #179 residual risk)",
   );
 }
 
@@ -271,9 +333,12 @@ async function flushGroup(
     });
 
     // Only advance the watermark AFTER the reply was posted successfully —
-    // a failure here must not make the group look "already handled".
+    // a failure here must not make the group look "already handled". Uses
+    // the retrying/non-throwing variant: see persistWatermarkResilient's
+    // docstring for why a failure here must not be treated the same as a
+    // failure of the Dify/post call above.
     if (maxId > 0) {
-      await persistWatermark(pool, accountIdStr, conversationId, maxId);
+      await persistWatermarkResilient(pool, accountIdStr, conversationId, maxId, log);
     }
   } catch (err) {
     const durationS = Number(process.hrtime.bigint() - start) / 1_000_000_000;
