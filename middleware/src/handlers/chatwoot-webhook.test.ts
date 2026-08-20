@@ -140,6 +140,12 @@ describe("registerChatwootWebhookRoute — burst dedup + watermark (issue #179)"
   function buildFakePool() {
     const tenants = new Map<string, { dify_api_key: string; dify_app_type: string }>();
     const watermarks = new Map<string, number>();
+    // configs table (issue #184): undefined key => no row => fail-safe "off".
+    // A string here mimics the real `value TEXT` column; `null` mimics a row
+    // whose value is a genuine SQL NULL. Set `configsError` to make the read
+    // throw, exercising the fail-safe DB-error path.
+    const configs = new Map<string, string | null>();
+    let configsError: Error | null = null;
     tenants.set("42", { dify_api_key: "test-dify-key", dify_app_type: "chatflow" });
 
     const query = vi.fn(async (sql: string, params: unknown[]) => {
@@ -159,10 +165,23 @@ describe("registerChatwootWebhookRoute — burst dedup + watermark (issue #179)"
         watermarks.set(key, Math.max(current, incoming));
         return { rows: [] };
       }
+      if (sql.includes("FROM configs")) {
+        if (configsError) throw configsError;
+        const key = String(params[0]);
+        if (!configs.has(key)) return { rows: [] };
+        return { rows: [{ value: configs.get(key) }] };
+      }
       throw new Error(`unexpected query in test: ${sql}`);
     });
 
-    return { query, watermarks };
+    return {
+      query,
+      watermarks,
+      configs,
+      setConfigsError: (err: Error | null) => {
+        configsError = err;
+      },
+    };
   }
 
   function buildFakeChatwoot() {
@@ -355,5 +374,170 @@ describe("registerChatwootWebhookRoute — burst dedup + watermark (issue #179)"
     expect(pool.watermarks.get("42:21")).toBe(201);
 
     await app.close();
+  });
+
+  /**
+   * Regression tests for issue #184: the manual DIFY_KILL_SWITCH. Checked in
+   * `flushGroup`, immediately before the Dify call — NOT at enqueue time —
+   * specifically so an already-buffered burst (the PR #180 debounce) cannot
+   * fire after the operator has turned the switch on. Fail-safe: anything
+   * other than the exact string "true" must leave the bot answering.
+   */
+  describe("DIFY_KILL_SWITCH (issue #184)", () => {
+    it("ON ('true') — the flush skips Dify entirely and posts no reply, but the message stays in Chatwoot (it was never dropped, it was never bought there in the first place — Chatwoot persisted it before this webhook fired)", async () => {
+      const pool = buildFakePool();
+      pool.configs.set("DIFY_KILL_SWITCH", "true");
+      const chatwoot = buildFakeChatwoot();
+      const app = await buildApp(pool, chatwoot);
+
+      await app.inject({
+        method: "POST",
+        url: "/webhooks/chatwoot",
+        payload: chatwootMessageCreated({ id: 300, content: "oi", accountId: 42, conversationId: 30 }),
+      });
+      await new Promise((resolve) => setTimeout(resolve, 200));
+
+      expect(chatBlocking).not.toHaveBeenCalled();
+      expect(chatwoot.postMessage).not.toHaveBeenCalled();
+      // Watermark must not advance either — nothing was "handled".
+      expect(pool.watermarks.get("42:30")).toBeUndefined();
+
+      await app.close();
+    });
+
+    it("ON with mixed case / surrounding whitespace ('  TRUE ') still counts as ON", async () => {
+      const pool = buildFakePool();
+      pool.configs.set("DIFY_KILL_SWITCH", "  TRUE ");
+      const chatwoot = buildFakeChatwoot();
+      const app = await buildApp(pool, chatwoot);
+
+      await app.inject({
+        method: "POST",
+        url: "/webhooks/chatwoot",
+        payload: chatwootMessageCreated({ id: 301, content: "oi", accountId: 42, conversationId: 31 }),
+      });
+      await new Promise((resolve) => setTimeout(resolve, 200));
+
+      expect(chatBlocking).not.toHaveBeenCalled();
+      await app.close();
+    });
+
+    it("absent key — bot answers normally (default-off, fresh bootstrap behavior)", async () => {
+      const pool = buildFakePool(); // no DIFY_KILL_SWITCH row at all
+      const chatwoot = buildFakeChatwoot();
+      const app = await buildApp(pool, chatwoot);
+
+      await app.inject({
+        method: "POST",
+        url: "/webhooks/chatwoot",
+        payload: chatwootMessageCreated({ id: 302, content: "oi", accountId: 42, conversationId: 32 }),
+      });
+      await new Promise((resolve) => setTimeout(resolve, 200));
+
+      expect(chatBlocking).toHaveBeenCalledTimes(1);
+      expect(chatwoot.postMessage).toHaveBeenCalledTimes(1);
+      await app.close();
+    });
+
+    it("empty-string value — bot answers normally", async () => {
+      const pool = buildFakePool();
+      pool.configs.set("DIFY_KILL_SWITCH", "");
+      const chatwoot = buildFakeChatwoot();
+      const app = await buildApp(pool, chatwoot);
+
+      await app.inject({
+        method: "POST",
+        url: "/webhooks/chatwoot",
+        payload: chatwootMessageCreated({ id: 303, content: "oi", accountId: 42, conversationId: 33 }),
+      });
+      await new Promise((resolve) => setTimeout(resolve, 200));
+
+      expect(chatBlocking).toHaveBeenCalledTimes(1);
+      await app.close();
+    });
+
+    it("SQL NULL value — bot answers normally", async () => {
+      const pool = buildFakePool();
+      pool.configs.set("DIFY_KILL_SWITCH", null);
+      const chatwoot = buildFakeChatwoot();
+      const app = await buildApp(pool, chatwoot);
+
+      await app.inject({
+        method: "POST",
+        url: "/webhooks/chatwoot",
+        payload: chatwootMessageCreated({ id: 304, content: "oi", accountId: 42, conversationId: 34 }),
+      });
+      await new Promise((resolve) => setTimeout(resolve, 200));
+
+      expect(chatBlocking).toHaveBeenCalledTimes(1);
+      await app.close();
+    });
+
+    it("invalid/garbage value ('maybe') — bot answers normally, does NOT interpret it as ON", async () => {
+      const pool = buildFakePool();
+      pool.configs.set("DIFY_KILL_SWITCH", "maybe");
+      const chatwoot = buildFakeChatwoot();
+      const app = await buildApp(pool, chatwoot);
+
+      await app.inject({
+        method: "POST",
+        url: "/webhooks/chatwoot",
+        payload: chatwootMessageCreated({ id: 305, content: "oi", accountId: 42, conversationId: 35 }),
+      });
+      await new Promise((resolve) => setTimeout(resolve, 200));
+
+      expect(chatBlocking).toHaveBeenCalledTimes(1);
+      await app.close();
+    });
+
+    it("DB error reading the flag — fail-safe: bot answers normally, error is not fatal to the flush", async () => {
+      const pool = buildFakePool();
+      pool.setConfigsError(new Error("connection terminated"));
+      const chatwoot = buildFakeChatwoot();
+      const app = await buildApp(pool, chatwoot);
+
+      await app.inject({
+        method: "POST",
+        url: "/webhooks/chatwoot",
+        payload: chatwootMessageCreated({ id: 306, content: "oi", accountId: 42, conversationId: 36 }),
+      });
+      await new Promise((resolve) => setTimeout(resolve, 200));
+
+      expect(chatBlocking).toHaveBeenCalledTimes(1);
+      expect(chatwoot.postMessage).toHaveBeenCalledTimes(1);
+      await app.close();
+    });
+
+    it("turning the switch OFF again lets the bot resume answering on the next flush — the two-way check", async () => {
+      const pool = buildFakePool();
+      pool.configs.set("DIFY_KILL_SWITCH", "true");
+      const chatwoot = buildFakeChatwoot();
+      const app = await buildApp(pool, chatwoot);
+
+      await app.inject({
+        method: "POST",
+        url: "/webhooks/chatwoot",
+        payload: chatwootMessageCreated({ id: 310, content: "primeira", accountId: 42, conversationId: 40 }),
+      });
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      expect(chatBlocking).not.toHaveBeenCalled();
+
+      // Operator flips it off — no restart, just the config row changing,
+      // exactly as it would via the real POST /config or psql.
+      pool.configs.set("DIFY_KILL_SWITCH", "false");
+
+      await app.inject({
+        method: "POST",
+        url: "/webhooks/chatwoot",
+        payload: chatwootMessageCreated({ id: 311, content: "segunda", accountId: 42, conversationId: 40 }),
+      });
+      await new Promise((resolve) => setTimeout(resolve, 200));
+
+      expect(chatBlocking).toHaveBeenCalledTimes(1);
+      expect(chatBlocking.mock.calls[0][0].query).toBe("segunda");
+      expect(chatwoot.postMessage).toHaveBeenCalledTimes(1);
+
+      await app.close();
+    });
   });
 });

@@ -122,6 +122,15 @@ CREATE TABLE IF NOT EXISTS conversation_watermarks (
 -- Pre-seed some default keys if needed
 -- INSERT INTO configs (key, value) VALUES ('DIFY_SELF_HEALING_API_KEY', NULL) ON CONFLICT DO NOTHING;
 
+-- DIFY_KILL_SWITCH (issue #184): manual, no-redeploy override that stops the
+-- webhook handler from calling Dify (checked at flush time — see
+-- middleware/src/handlers/chatwoot-webhook.ts and config.ts
+-- isDifyKillSwitchEnabled). Seeded OFF ("false") so a fresh bootstrap starts
+-- with the bot answering normally; ON CONFLICT DO NOTHING keeps this
+-- idempotent and never clobbers an operator's live value on a re-apply of
+-- this script against a running Postgres.
+INSERT INTO configs (key, value) VALUES ('DIFY_KILL_SWITCH', 'false') ON CONFLICT (key) DO NOTHING;
+
 -- ---------- self_healing -----------------------------------------------------
 \connect self_healing
 CREATE EXTENSION IF NOT EXISTS pgcrypto;

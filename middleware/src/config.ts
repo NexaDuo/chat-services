@@ -101,6 +101,45 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   };
 }
 
+/** Key in the `configs` table (middleware DB) for the manual Dify kill switch — issue #184. */
+export const DIFY_KILL_SWITCH_KEY = "DIFY_KILL_SWITCH";
+
+/**
+ * Reads the manual Dify kill switch (issue #184) straight from Postgres — no
+ * in-process cache, so a flip takes effect on the very next flush (the only
+ * "latency" is one `SELECT` round-trip, observed <10ms against the local
+ * Postgres container; there is no TTL to reduce because nothing here is
+ * cached).
+ *
+ * Deliberately **fail-safe, not fail-closed**: this is the mirror image of
+ * the #152 lesson (self-healing silently degrading when its config read
+ * failed). The accident this function must never cause is silencing the bot.
+ * So every ambiguous case — missing row, NULL, empty string, whitespace, any
+ * value other than the exact literal `"true"` (case-insensitive, trimmed),
+ * or a thrown DB error — resolves to `false` ("keep operating normally").
+ * Only an explicit `"true"` turns the switch on.
+ */
+export async function isDifyKillSwitchEnabled(
+  pool: import("pg").Pool,
+  log?: { warn: (obj: unknown, msg?: string) => void },
+): Promise<boolean> {
+  try {
+    const result = await pool.query("SELECT value FROM configs WHERE key = $1", [
+      DIFY_KILL_SWITCH_KEY,
+    ]);
+    if (result.rows.length === 0) return false;
+    const raw = result.rows[0].value;
+    if (typeof raw !== "string") return false;
+    return raw.trim().toLowerCase() === "true";
+  } catch (err) {
+    log?.warn(
+      { err },
+      "config: failed to read DIFY_KILL_SWITCH — defaulting to OFF (fail-safe: bot keeps answering, issue #184)",
+    );
+    return false;
+  }
+}
+
 /**
  * Resolves the per-tenant Dify config for a given Chatwoot account_id from database.
  * Returns `null` if the account is not mapped.
