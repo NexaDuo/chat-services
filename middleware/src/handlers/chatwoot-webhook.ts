@@ -1,4 +1,4 @@
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyBaseLogger } from "fastify";
 import { z } from "zod";
 import axios from "axios";
 import pg from "pg";
@@ -8,6 +8,7 @@ import type { Metrics } from "../metrics.js";
 import type { ChatwootClient } from "../chatwoot.js";
 import { DifyClient } from "../dify.js";
 import { timingSafeEqual } from "node:crypto";
+import { ConversationDebouncer } from "../conversation-debouncer.js";
 
 /**
  * Constant-time token comparison. A plain `!==` leaks the length of the
@@ -82,10 +83,299 @@ const WebhookSchema = z
       })
       .partial()
       .optional(),
+    // Chatwoot's real message_created payload carries the message id at the
+    // top level (see
+    // https://www.chatwoot.com/docs/product/channels/api/receive-messages).
+    // Optional here purely defensively — the watermark logic below degrades
+    // to "not persisted for this message" rather than throwing if it is ever
+    // missing, instead of 400-ing a webhook Chatwoot actually sent.
+    //
+    // NOT read: `created_at`. Ordering within a group uses `id` only (auto-
+    // increment on Chatwoot's side, so equivalent in practice) — no need to
+    // carry a second field we'd never use for tie-breaking.
+    id: z.union([z.number(), z.string()]).optional(),
   })
   .passthrough();
 
 const DIFY_CONV_ID_ATTR = "dify_conversation_id";
+
+/** One incoming message buffered for grouping, per issue #179. */
+type BufferedIncomingMessage = {
+  /** Chatwoot message id — used for the watermark, and for chronological sort. */
+  id: number | undefined;
+  content: string;
+  accountIdStr: string;
+  conversationId: number | string;
+  contactId: number | string;
+  /** dify_conversation_id as read from THIS webhook's custom_attributes, if any. */
+  difyConvIdHint?: string;
+};
+
+function watermarkKey(accountIdStr: string, conversationId: number | string): string {
+  return `${accountIdStr}:${conversationId}`;
+}
+
+/** Reads the persisted watermark for a conversation. Defaults to 0 (never processed). */
+async function readWatermark(
+  pool: pg.Pool,
+  accountIdStr: string,
+  conversationId: number | string,
+): Promise<number> {
+  const result = await pool.query(
+    "SELECT last_processed_message_id FROM conversation_watermarks WHERE account_id = $1 AND conversation_id = $2",
+    [accountIdStr, String(conversationId)],
+  );
+  if (result.rows.length === 0) return 0;
+  return Number(result.rows[0].last_processed_message_id) || 0;
+}
+
+/**
+ * Persists the watermark as the max of the stored value and `messageId`
+ * (never regresses it) — an UPSERT, so it doubles as the row-level lock the
+ * design calls for. Called ONLY after the outgoing message has been posted
+ * successfully; a failed post must never advance this.
+ */
+async function persistWatermark(
+  pool: pg.Pool,
+  accountIdStr: string,
+  conversationId: number | string,
+  messageId: number,
+): Promise<void> {
+  await pool.query(
+    `INSERT INTO conversation_watermarks (account_id, conversation_id, last_processed_message_id)
+     VALUES ($1, $2, $3)
+     ON CONFLICT (account_id, conversation_id)
+     DO UPDATE SET
+       last_processed_message_id = GREATEST(conversation_watermarks.last_processed_message_id, EXCLUDED.last_processed_message_id),
+       updated_at = CURRENT_TIMESTAMP`,
+    [accountIdStr, String(conversationId), messageId],
+  );
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Hardening for the MEDIUM finding in the `#179` PR review (`@rev`, PR #180):
+ * the window between `chatwoot.postMessage()` succeeding and this call
+ * succeeding is NOT atomic — the reply is an HTTP POST to Chatwoot, the
+ * watermark is a Postgres row, they cannot share a transaction. If the
+ * outgoing reply lands but Postgres is unreachable for that one write, a
+ * webhook redelivery of the same message would fail the `id > watermark`
+ * filter in `flushGroup` and re-answer it — the exact duplicate-reply
+ * regression issue #179 exists to close.
+ *
+ * Chosen mitigation: retry the write a few times with a short backoff
+ * before giving up (transient Postgres blips — pool exhaustion, a brief
+ * connection drop — are exactly the kind of failure a retry absorbs).
+ * Deliberately swallows the error after logging LOUDLY rather than
+ * rethrowing: by this point the reply has already been sent successfully,
+ * so throwing here would route into `flushGroup`'s catch block and post a
+ * confusing second, private "processing failed" note about a request that
+ * actually succeeded. The chosen tradeoff is: on a persistent Postgres
+ * outage, we accept the SAME accepted risk documented for a
+ * process-restart in the PR (a duplicate answer if a redelivery lands
+ * during that outage) — Chatwoot does not redeliver in practice for this
+ * webhook (the handler already returned 200 at buffer-time, well before
+ * this call), which keeps the residual window narrow. The loud log below
+ * is what makes an actual occurrence visible/alertable instead of silent.
+ */
+async function persistWatermarkResilient(
+  pool: pg.Pool,
+  accountIdStr: string,
+  conversationId: number | string,
+  messageId: number,
+  log: FastifyBaseLogger,
+): Promise<void> {
+  const attempts = 3;
+  let lastErr: unknown;
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      await persistWatermark(pool, accountIdStr, conversationId, messageId);
+      return;
+    } catch (err) {
+      lastErr = err;
+      log.warn(
+        { err, attempt, accountId: accountIdStr, conversationId, messageId },
+        "webhook: watermark persist failed, retrying",
+      );
+      if (attempt < attempts) await delay(150 * attempt);
+    }
+  }
+  // All retries exhausted. The reply was already sent — log loudly instead
+  // of throwing (see rationale above) so this is alertable, not silent.
+  log.error(
+    { err: lastErr, accountId: accountIdStr, conversationId, messageId },
+    "webhook: FAILED to persist watermark after retries — the reply was already sent; " +
+      "a webhook redelivery of this message before Postgres recovers could produce a duplicate reply (issue #179 residual risk)",
+  );
+}
+
+/**
+ * Handles one already-grouped burst: resolves the tenant fresh (in case the
+ * mapping changed since the messages arrived), calls Dify exactly once with
+ * the concatenated content, posts exactly one outgoing reply, and — only on
+ * success — advances the persisted watermark. See issue #179.
+ */
+async function flushGroup(
+  group: { key: string; messages: BufferedIncomingMessage[] },
+  deps: {
+    app: FastifyInstance;
+    config: AppConfig;
+    metrics: Metrics;
+    chatwoot: ChatwootClient;
+    pool: pg.Pool;
+    difyConvIdCache: Map<string, string>;
+  },
+): Promise<void> {
+  const { app, config, metrics, chatwoot, pool, difyConvIdCache } = deps;
+  const log: FastifyBaseLogger = app.log;
+  const first = group.messages[0];
+  const accountIdStr = first.accountIdStr;
+  const conversationId = first.conversationId;
+  const contactId =
+    group.messages.find((m) => m.contactId !== "unknown")?.contactId ?? "unknown";
+
+  // Defensive re-filter against the persisted watermark: protects against a
+  // webhook retry/redelivery landing in the same group as a message already
+  // accounted for, and against messages whose id we could not parse (kept
+  // in the group for content, but never allowed to move the watermark).
+  const watermark = await readWatermark(pool, accountIdStr, conversationId);
+  const eligible = group.messages
+    .filter((m) => m.id === undefined || m.id > watermark)
+    .sort((a, b) => (a.id ?? 0) - (b.id ?? 0));
+
+  if (eligible.length === 0) {
+    log.info(
+      { accountId: accountIdStr, conversationId, watermark },
+      "webhook: group fully below watermark, skipping (duplicate delivery)",
+    );
+    return;
+  }
+
+  const content = eligible.map((m) => m.content).join("\n");
+  const maxId = eligible.reduce(
+    (max, m) => (m.id !== undefined && m.id > max ? m.id : max),
+    0,
+  );
+
+  const tenant = await resolveTenant(config, accountIdStr, pool);
+  if (!tenant) {
+    log.warn({ accountId: accountIdStr }, "webhook: no tenant mapping (group dropped)");
+    metrics.errorsTotal.inc({ account_id: accountIdStr, reason: "no_tenant_mapping" });
+    return;
+  }
+
+  const difyConvId =
+    difyConvIdCache.get(group.key) ??
+    group.messages.find((m) => m.difyConvIdHint)?.difyConvIdHint;
+
+  const dify = new DifyClient(
+    tenant.baseUrl,
+    tenant.apiKey,
+    config.dify.requestTimeoutMs,
+    log,
+  );
+
+  const start = process.hrtime.bigint();
+  try {
+    const chatReq = {
+      query: content,
+      user: `${accountIdStr}:${contactId}`,
+      conversationId: difyConvId,
+      inputs: {
+        chatwoot_account_id: accountIdStr,
+        chatwoot_conversation_id: String(conversationId),
+        chatwoot_contact_id: String(contactId),
+      },
+    };
+    const difyResp = tenant.appType === "agent"
+      ? await dify.chatStreaming(chatReq)
+      : await dify.chatBlocking(chatReq);
+
+    const durationS = Number(process.hrtime.bigint() - start) / 1_000_000_000;
+    metrics.difyRequestsTotal.inc({ account_id: accountIdStr, status: "ok" });
+    metrics.difyRequestDuration.observe({ account_id: accountIdStr, status: "ok" }, durationS);
+    if (difyResp.metadata?.usage?.prompt_tokens) {
+      metrics.difyTokensTotal.inc(
+        { account_id: accountIdStr, kind: "prompt" },
+        difyResp.metadata.usage.prompt_tokens,
+      );
+    }
+    if (difyResp.metadata?.usage?.completion_tokens) {
+      metrics.difyTokensTotal.inc(
+        { account_id: accountIdStr, kind: "completion" },
+        difyResp.metadata.usage.completion_tokens,
+      );
+    }
+
+    // Persist Dify conversation_id on first turn for memory continuity.
+    if (!difyConvId && difyResp.conversation_id) {
+      difyConvIdCache.set(group.key, difyResp.conversation_id);
+      try {
+        await chatwoot.setConversationCustomAttributes({
+          accountId: accountIdStr,
+          conversationId,
+          attributes: { [DIFY_CONV_ID_ATTR]: difyResp.conversation_id },
+        });
+      } catch (err) {
+        log.warn({ err }, "webhook: failed to persist dify_conversation_id (non-fatal)");
+      }
+    }
+
+    // Post the agent's answer back to the user — exactly once for the group.
+    await chatwoot.postMessage({
+      accountId: accountIdStr,
+      conversationId,
+      content: difyResp.answer,
+      messageType: "outgoing",
+    });
+
+    // Only advance the watermark AFTER the reply was posted successfully —
+    // a failure here must not make the group look "already handled". Uses
+    // the retrying/non-throwing variant: see persistWatermarkResilient's
+    // docstring for why a failure here must not be treated the same as a
+    // failure of the Dify/post call above.
+    if (maxId > 0) {
+      await persistWatermarkResilient(pool, accountIdStr, conversationId, maxId, log);
+    }
+  } catch (err) {
+    const durationS = Number(process.hrtime.bigint() - start) / 1_000_000_000;
+    metrics.difyRequestsTotal.inc({ account_id: accountIdStr, status: "error" });
+    metrics.difyRequestDuration.observe({ account_id: accountIdStr, status: "error" }, durationS);
+
+    const isTimeout =
+      axios.isAxiosError(err) &&
+      (err.code === "ECONNABORTED" || err.message.includes("timeout"));
+    const reason = isTimeout ? "dify_timeout" : "dify_error";
+    metrics.errorsTotal.inc({ account_id: accountIdStr, reason });
+
+    log.error(
+      { err, accountId: accountIdStr, conversationId, isTimeout, groupSize: eligible.length },
+      "webhook: dify call failed for group",
+    );
+
+    // Drop a private note so the human team has context. Best-effort: a
+    // failure to post the note must not mask the original error.
+    try {
+      const note =
+        `[middleware] Falha ao processar mensagem(ns) via Dify (${reason}).\n` +
+        `Motivo: ${(err as Error).message ?? "desconhecido"}`;
+      await chatwoot.postMessage({
+        accountId: accountIdStr,
+        conversationId,
+        content: note,
+        private: true,
+      });
+    } catch (postErr) {
+      log.error({ err: postErr }, "webhook: also failed to post error note to Chatwoot");
+    }
+    // Deliberately re-thrown so the debouncer's onError hook can log the
+    // key too; watermark is already un-advanced above.
+    throw err;
+  }
+}
 
 export async function registerChatwootWebhookRoute(
   app: FastifyInstance,
@@ -94,6 +384,19 @@ export async function registerChatwootWebhookRoute(
   chatwoot: ChatwootClient,
   pool: pg.Pool,
 ): Promise<void> {
+  // dify_conversation_id per conversation key, freshest-wins cache so a
+  // burst that arrives before Chatwoot's custom_attributes write lands
+  // (or before we've re-read it) still gets the right Dify thread.
+  const difyConvIdCache = new Map<string, string>();
+
+  const debouncer = new ConversationDebouncer<BufferedIncomingMessage>(
+    config.webhook.debounceMs,
+    (group) => flushGroup(group, { app, config, metrics, chatwoot, pool, difyConvIdCache }),
+    (key, err) => {
+      app.log.error({ key, err }, "webhook: group flush failed (see prior log line for detail)");
+    },
+  );
+
   app.post("/webhooks/chatwoot", async (req, reply) => {
     // 1. Authenticate webhook if token is configured
     if (config.chatwoot.webhookToken) {
@@ -151,8 +454,13 @@ export async function registerChatwootWebhookRoute(
     }
     const conversationId = evt.conversation.id;
     const contactId = evt.conversation.contact_inbox?.contact_id ?? "unknown";
-
     const accountIdStr = String(accountId);
+
+    // Cheap tenant-existence check on the hot path (kept — this is a fast
+    // read that lets us 200-and-skip a truly unmapped account without ever
+    // buffering it). The full tenant lookup happens again at flush time,
+    // since that is when it actually gets used against Dify and a burst can
+    // straddle a tenant-mapping change.
     const tenant = await resolveTenant(config, accountIdStr, pool);
     if (!tenant) {
       req.log.warn({ accountId: accountIdStr }, "webhook: no tenant mapping");
@@ -168,124 +476,39 @@ export async function registerChatwootWebhookRoute(
         | string
         | undefined) ?? undefined;
 
-    const dify = new DifyClient(
-      tenant.baseUrl,
-      tenant.apiKey,
-      config.dify.requestTimeoutMs,
-      req.log,
-    );
-
-    const start = process.hrtime.bigint();
-    try {
-      const chatReq = {
-        query: content,
-        user: `${accountIdStr}:${contactId}`,
-        conversationId: difyConvId,
-        inputs: {
-          chatwoot_account_id: accountIdStr,
-          chatwoot_conversation_id: String(conversationId),
-          chatwoot_contact_id: String(contactId),
-        },
-      };
-      const difyResp = tenant.appType === "agent"
-        ? await dify.chatStreaming(chatReq)
-        : await dify.chatBlocking(chatReq);
-
-      const durationS =
-        Number(process.hrtime.bigint() - start) / 1_000_000_000;
-      metrics.difyRequestsTotal.inc({
-        account_id: accountIdStr,
-        status: "ok",
-      });
-      metrics.difyRequestDuration.observe(
-        { account_id: accountIdStr, status: "ok" },
-        durationS,
+    const rawId = evt.id;
+    const numericId =
+      rawId === undefined
+        ? undefined
+        : typeof rawId === "number"
+          ? rawId
+          : Number.isFinite(Number(rawId))
+            ? Number(rawId)
+            : undefined;
+    if (numericId === undefined) {
+      req.log.warn(
+        { accountId: accountIdStr, conversationId },
+        "webhook: message_created without a parseable id — content will be grouped but cannot advance the watermark",
       );
-      if (difyResp.metadata?.usage?.prompt_tokens) {
-        metrics.difyTokensTotal.inc(
-          { account_id: accountIdStr, kind: "prompt" },
-          difyResp.metadata.usage.prompt_tokens,
-        );
-      }
-      if (difyResp.metadata?.usage?.completion_tokens) {
-        metrics.difyTokensTotal.inc(
-          { account_id: accountIdStr, kind: "completion" },
-          difyResp.metadata.usage.completion_tokens,
-        );
-      }
-
-      // Persist Dify conversation_id on first turn for memory continuity.
-      if (!difyConvId && difyResp.conversation_id) {
-        try {
-          await chatwoot.setConversationCustomAttributes({
-            accountId: accountIdStr,
-            conversationId,
-            attributes: { [DIFY_CONV_ID_ATTR]: difyResp.conversation_id },
-          });
-        } catch (err) {
-          req.log.warn(
-            { err },
-            "webhook: failed to persist dify_conversation_id (non-fatal)",
-          );
-        }
-      }
-
-      // Post the agent's answer back to the user.
-      await chatwoot.postMessage({
-        accountId: accountIdStr,
-        conversationId,
-        content: difyResp.answer,
-        messageType: "outgoing",
-      });
-
-      return reply.code(200).send({ ok: true });
-    } catch (err) {
-      const durationS =
-        Number(process.hrtime.bigint() - start) / 1_000_000_000;
-      metrics.difyRequestsTotal.inc({
-        account_id: accountIdStr,
-        status: "error",
-      });
-      metrics.difyRequestDuration.observe(
-        { account_id: accountIdStr, status: "error" },
-        durationS,
-      );
-
-      const isTimeout =
-        axios.isAxiosError(err) &&
-        (err.code === "ECONNABORTED" || err.message.includes("timeout"));
-      const reason = isTimeout ? "dify_timeout" : "dify_error";
-      metrics.errorsTotal.inc({ account_id: accountIdStr, reason });
-
-      req.log.error(
-        {
-          err,
-          accountId: accountIdStr,
-          conversationId,
-          isTimeout,
-        },
-        "webhook: dify call failed",
-      );
-
-      // Drop a private note so the human team has context.
-      try {
-        const note =
-          `[middleware] Falha ao processar mensagem via Dify (${reason}).\n` +
-          `Motivo: ${(err as Error).message ?? "desconhecido"}`;
-        await chatwoot.postMessage({
-          accountId: accountIdStr,
-          conversationId,
-          content: note,
-          private: true,
-        });
-      } catch (postErr) {
-        req.log.error(
-          { err: postErr },
-          "webhook: also failed to post error note to Chatwoot",
-        );
-      }
-
-      return reply.code(502).send({ error: reason });
     }
+
+    // 2. Buffer the message and (re)arm the debounce timer for this
+    // conversation — this is the fix for issue #179. Do NOT call Dify here:
+    // the burst that triggered this fix is exactly two `message_created`
+    // webhooks ~1.5s apart for the same conversation, each of which used to
+    // call Dify (and post an outgoing reply) independently. Grouping means
+    // the actual Dify call + reply happen once, asynchronously, in
+    // `flushGroup` — so we ack Chatwoot immediately and let the debouncer
+    // decide when the group is complete.
+    debouncer.enqueue(watermarkKey(accountIdStr, conversationId), {
+      id: numericId,
+      content,
+      accountIdStr,
+      conversationId,
+      contactId,
+      difyConvIdHint: difyConvId,
+    });
+
+    return reply.code(200).send({ ok: true, buffered: true });
   });
 }

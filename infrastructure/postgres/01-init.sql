@@ -105,6 +105,20 @@ CREATE TABLE IF NOT EXISTS sessions (
 CREATE INDEX IF NOT EXISTS idx_sessions_token ON sessions(token);
 CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at);
 
+-- conversation_watermarks: burst-dedup watermark (issue #179). Tracks the
+-- highest Chatwoot message id already answered per conversation, so a burst
+-- of `message_created` events grouped by the webhook handler's in-memory
+-- debouncer is answered exactly once and nothing is reprocessed after a
+-- restart. Written ONLY after an outgoing reply has been posted successfully
+-- — see middleware/src/handlers/chatwoot-webhook.ts.
+CREATE TABLE IF NOT EXISTS conversation_watermarks (
+  account_id TEXT NOT NULL,
+  conversation_id TEXT NOT NULL,
+  last_processed_message_id BIGINT NOT NULL DEFAULT 0,
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (account_id, conversation_id)
+);
+
 -- Pre-seed some default keys if needed
 -- INSERT INTO configs (key, value) VALUES ('DIFY_SELF_HEALING_API_KEY', NULL) ON CONFLICT DO NOTHING;
 
