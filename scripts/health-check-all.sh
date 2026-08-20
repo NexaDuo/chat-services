@@ -784,4 +784,64 @@ else
   echo "  env backup OK: newest .env archive $(basename "$env_file_found") is ${env_age_h}h old"
 fi
 
+# ---------------------------------------------------------------------------
+# 7. Grafana Dify token-usage alert rules (issue #182) must still be
+#    evaluating. Skippable via SKIP_ALERT_HEALTH_CHECK=1 (e.g. ephemeral CI
+#    with no Grafana provisioning mounted). An alert rule that silently stops
+#    being evaluated (broken provisioning file, query erroring against
+#    Prometheus) is worse than no alert — it produces false confidence right
+#    when a real spike could be happening. Uses the grafana container's own
+#    GF_SECURITY_ADMIN_PASSWORD env var (never printed) to authenticate, so
+#    no secret needs to be sourced or logged by this script.
+#
+#    Endpoint + shape verified live against a disposable
+#    `grafana/grafana:11.6.16` container (issue #185 review, `@rev` HIGH
+#    finding): `GET /api/prometheus/grafana/api/v1/rules` — the literal path
+#    used below — DOES return `"uid":"<rule-uid>"` per rule (the earlier
+#    "Proof" in the PR body had instead exercised
+#    `/api/v1/provisioning/alert-rules`, a different endpoint with a
+#    different shape; that was the actual bug, not the endpoint choice
+#    itself, which turns out to already carry `uid`). Rules are nested
+#    `data.groups[].rules[]`, each rule's own `health` field — NOT a
+#    top-level field — so a plain `grep '"health":"error"'` across the whole
+#    body would also match an unrelated rule/group in the org (`@rev` MEDIUM
+#    finding); the `jq` filters below scope every check to
+#    `.data.groups[] | select(.name=="dify-token-usage")` first.
+#
+#    `jq` availability: present on this host (`jq-1.7`, confirmed live) and
+#    already a dependency elsewhere in this repo's scripts
+#    (scripts/sync-coolify-compose.sh). It is NOT present inside the
+#    `grafana/grafana:11.6.16` image's shell (Alpine, confirmed live —
+#    `jq: not found`), so parsing happens here on the host after `docker exec`
+#    fetches the raw body with `wget`, not inside the container.
+# ---------------------------------------------------------------------------
+if [[ "${SKIP_ALERT_HEALTH_CHECK:-0}" == "1" ]]; then
+  step "Skipping Grafana alert-rule health check (SKIP_ALERT_HEALTH_CHECK=1)"
+else
+  grafana_container="$(container_by_subname grafana)"
+  if [[ -z "$grafana_container" ]]; then
+    step "Skipping Grafana alert-rule health check (no grafana container found)"
+  else
+    command -v jq >/dev/null 2>&1 || fail "jq not found on this host — required to parse Grafana's alert-rules API response safely (issue #182/#185); install jq or set SKIP_ALERT_HEALTH_CHECK=1 to explicitly bypass"
+    step "Checking Dify token-usage alert rules are healthy and being evaluated"
+    rules_json="$(docker exec "$grafana_container" sh -c \
+      'AUTH=$(printf "admin:%s" "$GF_SECURITY_ADMIN_PASSWORD" | base64); wget -qO- --header="Authorization: Basic $AUTH" http://127.0.0.1:3000/api/prometheus/grafana/api/v1/rules' \
+      2>/dev/null || true)"
+    [[ -n "$rules_json" ]] || fail "could not reach Grafana's alert-rules API inside ${grafana_container} — is grafana up?"
+    jq -e '.' >/dev/null 2>&1 <<<"$rules_json" \
+      || fail "Grafana's alert-rules API returned a non-JSON/unparseable response inside ${grafana_container} — treating as down rather than trusting a malformed body"
+    for rule_uid in dify-tokens-aggregate-spike dify-tokens-per-account-spike; do
+      jq -e --arg group "dify-token-usage" --arg uid "$rule_uid" \
+        '[.data.groups[]? | select(.name==$group) | .rules[]? | select(.uid==$uid)] | length > 0' \
+        >/dev/null 2>&1 <<<"$rules_json" \
+        || fail "alert rule ${rule_uid} not found in the dify-token-usage group via Grafana API — provisioning file observability/grafana/provisioning/alerting/dify-token-usage.yml did not load (issue #182)"
+    done
+    jq -e --arg group "dify-token-usage" \
+      '[.data.groups[]? | select(.name==$group) | .rules[]? | select(.health=="error")] | length > 0' \
+      >/dev/null 2>&1 <<<"$rules_json" \
+      && fail "at least one Dify token-usage alert rule reports health=error — check its query/datasource (issue #182)"
+    echo "  Dify token-usage alert rules present and healthy"
+  fi
+fi
+
 echo "OK all stacks healthy — shared + chatwoot + dify + nexaduo"

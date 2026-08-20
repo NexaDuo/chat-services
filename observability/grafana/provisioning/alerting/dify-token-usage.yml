@@ -1,0 +1,174 @@
+# =============================================================================
+# Dify token-usage alerts (issue #182) — ALERT ONLY, no automatic cutoff.
+#
+# Built on the metric already emitted by middleware/src/metrics.ts:
+#   middleware_dify_tokens_total{account_id, kind="prompt"|"completion"}
+# (confirmed live+populated by the #181 audit; this file adds the alerting
+# layer on top, it does not instrument anything new).
+#
+# Two rules, per the accepted criteria:
+#   1. dify-tokens-aggregate-spike — sum across every account_id. Answers
+#      "is the whole stack burning tokens faster than normal" (e.g. a
+#      successful LinkedIn-post traffic spike).
+#   2. dify-tokens-per-account-spike — max single account_id. Answers "is one
+#      tenant/sender anomalous" even if the aggregate looks fine (more
+#      accounts will exist beyond the current single-tenant baseline).
+#
+# Threshold/window derivation (measured live 2026-08-20 via Prometheus,
+# NOT guessed — see PR body for the raw query output):
+#   - Only account_id=3 had traffic. 6 requests / 6h, ~10,237 tokens increase
+#     over 6h -> ~1,700 tokens/hour average; the busiest observed 1h window
+#     was ~3,335 tokens (~1,700 tokens/request, consistent with a Dify RAG
+#     agent's system-prompt + context cost per turn).
+#   - 15m window chosen for detection latency ("minutes, not the invoice"):
+#     with for: 5m and a 1m evaluation interval, a sustained spike surfaces
+#     within ~6 minutes of onset.
+#   - Aggregate threshold 30000 tokens/15m ≈ 120k tokens/hour ≈ ~35x the
+#     busiest observed hourly rate (~68 requests/hour at the observed
+#     ~1,700 tokens/request) — comfortably above single-tenant test noise,
+#     low enough to catch a real traffic spike within the first 15 minutes
+#     instead of waiting for a full hour or the invoice.
+#   - Per-account threshold 15000 tokens/15m ≈ 60k tokens/hour on ONE
+#     account_id ≈ ~18x the busiest observed single-account hourly rate —
+#     deliberately lower than the aggregate threshold so one anomalous
+#     sender fires even while the aggregate stays under its own threshold.
+#   - Both are plain values in this versioned YAML (no UI edits): to change
+#     them, edit this file and re-apply
+#     (`docker compose up -d --no-deps grafana`) — see the PR for the
+#     forced-firing + recovery proof required before merge.
+#
+# Runbook (what the alert means + the expected human action, since there is
+# NO automatic cutoff by design): docs/RUNBOOK-dify-token-alert.md
+#
+# Notification channel: NOT configured. No SMTP/Slack/webhook notifier
+# exists anywhere in this stack's provisioning today (grepped
+# docker-compose*.yml and .env.production.example — none found), so these
+# rules route to Grafana's built-in default contact point
+# (`grafana-default-email`), which has no SMTP backing and will NOT deliver
+# anywhere. This is a deliberately left PENDING DECISION for the user
+# (see PR body) rather than an invented channel.
+# =============================================================================
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: dify-token-usage
+    folder: NexaDuo
+    interval: 1m
+    rules:
+      - uid: dify-tokens-aggregate-spike
+        title: "Dify tokens — aggregate spike (all accounts)"
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 900
+              to: 0
+            datasourceUid: prometheus
+            model:
+              editorMode: code
+              expr: sum(increase(middleware_dify_tokens_total[15m]))
+              instant: true
+              range: false
+              refId: A
+          - refId: B
+            relativeTimeRange:
+              from: 900
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: reduce
+              reducer: last
+              expression: A
+              refId: B
+          - refId: C
+            relativeTimeRange:
+              from: 900
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator:
+                    type: gt
+                    params:
+                      - 30000
+              refId: C
+        noDataState: OK
+        execErrState: Error
+        for: 5m
+        labels:
+          severity: warning
+          category: cost
+          service: dify
+        annotations:
+          summary: "Aggregate Dify token usage over the last 15m exceeded the configured threshold."
+          description: >-
+            sum(increase(middleware_dify_tokens_total[15m])) is above 30000.
+            This means the whole stack is consuming Azure OpenAI tokens well
+            above the measured baseline (~1,700 tokens/hour observed
+            2026-08-20) — expected during a successful traffic spike (e.g.
+            the LinkedIn post) but ALSO the exact signature of a runaway
+            cost. No automatic cutoff exists by design; see
+            docs/RUNBOOK-dify-token-alert.md for the expected human action.
+          runbook_url: "https://github.com/NexaDuo/chat-services/blob/main/docs/RUNBOOK-dify-token-alert.md"
+
+      - uid: dify-tokens-per-account-spike
+        title: "Dify tokens — single account_id spike"
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 900
+              to: 0
+            datasourceUid: prometheus
+            model:
+              editorMode: code
+              expr: sum by (account_id) (increase(middleware_dify_tokens_total[15m]))
+              instant: true
+              range: false
+              refId: A
+          - refId: B
+            relativeTimeRange:
+              from: 900
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: reduce
+              reducer: last
+              expression: A
+              refId: B
+          - refId: C
+            relativeTimeRange:
+              from: 900
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator:
+                    type: gt
+                    params:
+                      - 15000
+              refId: C
+        noDataState: OK
+        execErrState: Error
+        for: 5m
+        labels:
+          severity: warning
+          category: cost
+          service: dify
+        annotations:
+          summary: "A single account_id's Dify token usage over the last 15m exceeded the configured threshold."
+          description: >-
+            sum by (account_id) (increase(middleware_dify_tokens_total[15m]))
+            is above 15000 for at least one account_id — one tenant/sender is
+            consuming tokens far above the measured single-account baseline
+            (~1,700 tokens/hour observed 2026-08-20 for the only active
+            account). Fires independently of the aggregate rule so a single
+            anomalous account is visible even if total usage looks fine.
+            No automatic cutoff exists by design; see
+            docs/RUNBOOK-dify-token-alert.md for the expected human action.
+          runbook_url: "https://github.com/NexaDuo/chat-services/blob/main/docs/RUNBOOK-dify-token-alert.md"
