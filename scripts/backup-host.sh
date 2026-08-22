@@ -58,6 +58,58 @@ set -euo pipefail
 
 log() { echo "[$(date -Is)] $*"; }
 
+# Volumes that are legitimately EMPTY BY DESIGN, and therefore exempt ONLY
+# from the minimum-size floor applied in section 6b below — NOT from the
+# presence check there (a missing archive for one of these still fails the
+# run). Deliberately a fixed, hardcoded array, not an env-overridable
+# string: same documented-exception pattern and the same reasoning as the
+# hardcoded `postgres` mem_limit exclusion (issue #157) and the fixed
+# `HEALTHCHECK_COVERAGE_SKIP_SUBNAMES` array in health-check-all.sh (issue
+# #158) — an env var here could silently widen the exemption from a stray
+# shell export, exactly the "check that doesn't check" class both of those
+# precedents were fixed to prevent.
+#
+#   evolution-instances → 2026-08-21: this Evolution API v2 deployment runs
+#     with DATABASE_ENABLED (deploy/docker-compose.nexaduo.yml), which makes
+#     it persist ALL instance/session/auth state (the `Instance`, `Session`,
+#     `IntegrationSession` tables) in the `evolution` Postgres DB instead of
+#     the filesystem — already covered by the evolution-*.sql.gz dump taken
+#     in section 3 above. The volume is therefore genuinely empty (verified
+#     live: `docker run --rm -v chat-services_evolution-instances:/data:ro
+#     alpine find /data -mindepth 1 | wc -l` → 0), so its tar.gz is a
+#     near-zero-byte gzip of an empty directory and legitimately trips the
+#     size floor below.
+#     `evolution-instances` stays in BACKUP_VOLUME_SUFFIXES on purpose,
+#     rather than being removed from that list: if Evolution ever starts
+#     writing to this volume again (a version bump, or DATABASE_ENABLED
+#     flipped off), the archive keeps being taken every run and this guard
+#     starts catching a truly-broken/empty archive again immediately —
+#     removing the suffix instead would silently drop coverage for good.
+BACKUP_EMPTY_OK_VOLUME_SUFFIXES=(evolution-instances)
+
+# Pure decision function for the section-6b size guard, factored out so it
+# can be exercised by a deterministic unit test
+# (scripts/test-backup-volume-guard.sh) without running the rest of this
+# script (which touches live Docker/Postgres). Returns 0 (should FAIL the
+# run) or 1 (should NOT fail — either big enough, or small-but-allowlisted).
+backup_volume_size_guard_should_fail() {
+  local suffix="$1" sz="$2" min_bytes="$3"
+  [[ "$sz" -lt "$min_bytes" ]] || return 1
+  local allowed
+  for allowed in "${BACKUP_EMPTY_OK_VOLUME_SUFFIXES[@]}"; do
+    [[ "$suffix" == "$allowed" ]] && return 1
+  done
+  return 0
+}
+
+# Test-only early exit: BACKUP_HOST_TEST_MODE=1 lets
+# scripts/test-backup-volume-guard.sh `source` this file to reuse the exact
+# guard function/allowlist above (single source of truth) without executing
+# any of the live-Docker/Postgres logic below.
+if [[ "${BACKUP_HOST_TEST_MODE:-0}" == "1" ]]; then
+  return 0 2>/dev/null || exit 0
+fi
+
 # 1. Locate the Postgres container (compose name chat-services-postgres-1, or by image).
 PG="$(docker ps --filter 'name=postgres' --filter 'ancestor=pgvector/pgvector:pg16' --format '{{.Names}}' | head -n1)"
 if [[ -z "$PG" ]]; then
@@ -177,6 +229,12 @@ fi
 # the chatwoot-storage / dify-api-storage volumes went un-archived is the exact
 # silent gap that produced this incident — so treat a missing/empty required
 # volume archive as a hard failure that surfaces in the cron log.
+#
+# The size-floor decision itself (small-but-legitimately-empty vs.
+# genuinely-suspicious) is delegated to backup_volume_size_guard_should_fail()
+# defined near the top of this file, so BACKUP_EMPTY_OK_VOLUME_SUFFIXES (see
+# its comment there for the evolution-instances rationale) has a single
+# source of truth shared with scripts/test-backup-volume-guard.sh.
 REQUIRED_VOL_SUFFIXES=(${BACKUP_REQUIRED_VOLUME_SUFFIXES:-$BACKUP_VOLUME_SUFFIXES})
 # A gzipped tar of a tiny (privkey) volume is legitimately small; use a lower
 # floor than the DB dump one but still non-empty (an empty/errored tar is ~<50B).
@@ -190,9 +248,11 @@ for suffix in "${REQUIRED_VOL_SUFFIXES[@]}"; do
     continue
   fi
   sz="$(stat -c%s "$f" 2>/dev/null || echo 0)"
-  if [[ "$sz" -lt "$VOL_MIN_BYTES" ]]; then
+  if backup_volume_size_guard_should_fail "$suffix" "$sz" "$VOL_MIN_BYTES"; then
     log "ERRO: arquivo de volume '${suffix}' suspeito (${sz} bytes < ${VOL_MIN_BYTES})."
     vol_missing=1
+  elif [[ "$sz" -lt "$VOL_MIN_BYTES" ]]; then
+    log "AVISO: arquivo de volume '${suffix}' pequeno (${sz} bytes < ${VOL_MIN_BYTES}) mas está na allowlist de vazio-por-design (BACKUP_EMPTY_OK_VOLUME_SUFFIXES) — não falha o guard."
   fi
 done
 if [[ "$vol_missing" -ne 0 ]]; then
