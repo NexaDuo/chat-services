@@ -106,8 +106,20 @@ backup_volume_size_guard_should_fail() {
 # scripts/test-backup-volume-guard.sh `source` this file to reuse the exact
 # guard function/allowlist above (single source of truth) without executing
 # any of the live-Docker/Postgres logic below.
+# Sourced (the legitimate test path) -> return quietly. EXECUTED as a script
+# with this var set is never legitimate: it would turn the nightly cron backup
+# into a silent no-op exiting 0, which is a WORSE failure mode than the false
+# positive this PR fixes (that one at least failed loudly). Fail loud instead,
+# mirroring the SELF_HEALING_ALLOW_NO_CONFIG fail-loud precedent (AGENTS.md).
+# Flagged independently by both the @sec and @rev pre-merge gates on PR #190.
 if [[ "${BACKUP_HOST_TEST_MODE:-0}" == "1" ]]; then
-  return 0 2>/dev/null || exit 0
+  if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then
+    return 0
+  fi
+  echo "ERRO: BACKUP_HOST_TEST_MODE=1 com o script EXECUTADO (nao sourceado)." >&2
+  echo "      Essa variavel e exclusiva de scripts/test-backup-volume-guard.sh." >&2
+  echo "      Abortando ruidosamente para nao mascarar um backup nao realizado." >&2
+  exit 1
 fi
 
 # 1. Locate the Postgres container (compose name chat-services-postgres-1, or by image).
