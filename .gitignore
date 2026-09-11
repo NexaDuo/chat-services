@@ -85,3 +85,10 @@ terraform.rc
 
 # stray stderr-capture artifact (accidental in #124)
 config-err.txt
+
+# Ruído commitado por acidente e removido junto com este bloco: um err.txt vazio
+# e um job_log.txt de ~1 MB chegaram ao main porque o .gitignore só cobria *.log
+# e config-err.txt. Sem estas linhas eles voltam no próximo `git add` distraído —
+# a regra do AGENTS.md é que a correção viva no código, não na lembrança.
+err.txt
+job_log.txt
