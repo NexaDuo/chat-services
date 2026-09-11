@@ -9,6 +9,14 @@ export type Metrics = {
   handoffsTotal: Counter<"account_id">;
   /** Groups skipped because DIFY_KILL_SWITCH was ON at flush time (issue #184). */
   difyKillSwitchSkipsTotal: Counter<"account_id">;
+  /**
+   * Incoming `message_created` webhooks whose `content` was empty, per
+   * account and content type — split by whether we answered with a derived
+   * marker or genuinely skipped (issue #203). Without this, the silence
+   * this issue fixes could regress invisibly, same lesson as the
+   * silent-failure-detection rule in AGENTS.md.
+   */
+  emptyContentTotal: Counter<"account_id" | "type" | "outcome">;
 };
 
 export function createMetrics(): Metrics {
@@ -59,6 +67,13 @@ export function createMetrics(): Metrics {
     registers: [registry],
   });
 
+  const emptyContentTotal = new Counter({
+    name: "middleware_empty_content_total",
+    help: "Incoming messages with empty content, per account/type/outcome (answered_with_marker vs skipped) — issue #203.",
+    labelNames: ["account_id", "type", "outcome"] as const,
+    registers: [registry],
+  });
+
   return {
     registry,
     difyTokensTotal,
@@ -67,5 +82,6 @@ export function createMetrics(): Metrics {
     errorsTotal,
     handoffsTotal,
     difyKillSwitchSkipsTotal,
+    emptyContentTotal,
   };
 }
