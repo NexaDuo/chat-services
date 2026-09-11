@@ -105,7 +105,12 @@ function chatwootMessageCreated(params: {
   accountId: number;
   conversationId: number;
   difyConversationId?: string;
+  /** Defaults to 501. Pass `null` to omit `contact_inbox` entirely (the
+   * real-world case that makes the handler fall back to the "unknown"
+   * sentinel contact — issue #204's ARMADILHA). */
+  contactId?: number | null;
 }) {
+  const contactId = params.contactId === undefined ? 501 : params.contactId;
   return {
     id: params.id,
     content: params.content,
@@ -115,7 +120,7 @@ function chatwootMessageCreated(params: {
     content_attributes: {},
     source_id: null,
     private: false,
-    sender: { id: 501, name: "Alexandre Machado", avatar: "", type: "contact" },
+    sender: { id: contactId ?? 501, name: "Alexandre Machado", avatar: "", type: "contact" },
     inbox: { id: 7, name: "miau.duda" },
     conversation: {
       additional_attributes: null,
@@ -129,7 +134,7 @@ function chatwootMessageCreated(params: {
       custom_attributes: params.difyConversationId
         ? { dify_conversation_id: params.difyConversationId }
         : {},
-      contact_inbox: { contact_id: 501 },
+      ...(contactId === null ? {} : { contact_inbox: { contact_id: contactId } }),
     },
     account: { id: params.accountId, name: "NexaDuo" },
     event: "message_created",
@@ -196,6 +201,9 @@ describe("registerChatwootWebhookRoute — burst dedup + watermark (issue #179)"
     // whose value is a genuine SQL NULL. Set `configsError` to make the read
     // throw, exercising the fail-safe DB-error path.
     const configs = new Map<string, string | null>();
+    // contact_dify_conversations (issue #204): key is "accountId:contactId".
+    // Exposed on the returned object so tests can assert on it directly.
+    const contactDifyConversations = new Map<string, string>();
     let configsError: Error | null = null;
     tenants.set("42", { dify_api_key: "test-dify-key", dify_app_type: "chatflow" });
 
@@ -216,6 +224,18 @@ describe("registerChatwootWebhookRoute — burst dedup + watermark (issue #179)"
         watermarks.set(key, Math.max(current, incoming));
         return { rows: [] };
       }
+      if (sql.includes("FROM contact_dify_conversations")) {
+        // Never see a query for the shared "unknown" sentinel — pinned by a
+        // dedicated test below via `pool.query` call assertions.
+        const key = `${params[0]}:${params[1]}`;
+        const value = contactDifyConversations.get(key);
+        return { rows: value === undefined ? [] : [{ dify_conversation_id: value }] };
+      }
+      if (sql.includes("INSERT INTO contact_dify_conversations")) {
+        const key = `${params[0]}:${params[1]}`;
+        contactDifyConversations.set(key, String(params[2]));
+        return { rows: [] };
+      }
       if (sql.includes("FROM configs")) {
         if (configsError) throw configsError;
         const key = String(params[0]);
@@ -229,6 +249,7 @@ describe("registerChatwootWebhookRoute — burst dedup + watermark (issue #179)"
       query,
       watermarks,
       configs,
+      contactDifyConversations,
       setConfigsError: (err: Error | null) => {
         configsError = err;
       },
@@ -591,6 +612,251 @@ describe("registerChatwootWebhookRoute — burst dedup + watermark (issue #179)"
       await app.close();
     });
   });
+
+  /**
+   * Regression tests for issue #204: agent memory moves from per-Chatwoot-
+   * conversation to per-CONTACT. Production evidence: contact 4 on account 3
+   * had 5 separate Dify conversations (30 messages) instead of one
+   * continuous history, because `dify_conversation_id` used to live only in
+   * the conversation's `custom_attributes`.
+   */
+  describe("per-contact Dify memory (issue #204)", () => {
+    it("two DIFFERENT Chatwoot conversations of the SAME contact reuse the same Dify conversation_id", async () => {
+      const pool = buildFakePool();
+      const chatwoot = buildFakeChatwoot();
+      const app = await buildApp(pool, chatwoot);
+
+      // First Chatwoot conversation for contact 501 — Dify starts a new
+      // conversation and the middleware persists it.
+      chatBlocking.mockResolvedValueOnce({
+        message_id: "m1",
+        conversation_id: "dify-conv-contact-501",
+        answer: "primeira resposta",
+      });
+      await app.inject({
+        method: "POST",
+        url: "/webhooks/chatwoot",
+        payload: chatwootMessageCreated({
+          id: 900,
+          content: "oi",
+          accountId: 42,
+          conversationId: 90,
+          contactId: 501,
+        }),
+      });
+      await new Promise((resolve) => setTimeout(resolve, 200));
+
+      expect(pool.contactDifyConversations.get("42:501")).toBe("dify-conv-contact-501");
+
+      // Second, DIFFERENT Chatwoot conversation (id=91), same contact
+      // (501), no `dify_conversation_id` hint in ITS custom_attributes —
+      // exactly the production scenario in the issue. Must reuse the
+      // conversation_id from the table, not start a fresh Dify thread.
+      await app.inject({
+        method: "POST",
+        url: "/webhooks/chatwoot",
+        payload: chatwootMessageCreated({
+          id: 910,
+          content: "voltei",
+          accountId: 42,
+          conversationId: 91,
+          contactId: 501,
+        }),
+      });
+      await new Promise((resolve) => setTimeout(resolve, 200));
+
+      expect(chatBlocking).toHaveBeenCalledTimes(2);
+      expect(chatBlocking.mock.calls[1][0].conversationId).toBe("dify-conv-contact-501");
+
+      await app.close();
+    });
+
+    it("DIFFERENT contacts never share a Dify conversation, even in the same account", async () => {
+      const pool = buildFakePool();
+      const chatwoot = buildFakeChatwoot();
+      const app = await buildApp(pool, chatwoot);
+
+      chatBlocking.mockResolvedValueOnce({
+        message_id: "m1",
+        conversation_id: "dify-conv-contact-A",
+        answer: "resposta A",
+      });
+      await app.inject({
+        method: "POST",
+        url: "/webhooks/chatwoot",
+        payload: chatwootMessageCreated({
+          id: 920,
+          content: "oi, sou A",
+          accountId: 42,
+          conversationId: 92,
+          contactId: 601,
+        }),
+      });
+      await new Promise((resolve) => setTimeout(resolve, 200));
+
+      chatBlocking.mockResolvedValueOnce({
+        message_id: "m2",
+        conversation_id: "dify-conv-contact-B",
+        answer: "resposta B",
+      });
+      await app.inject({
+        method: "POST",
+        url: "/webhooks/chatwoot",
+        payload: chatwootMessageCreated({
+          id: 930,
+          content: "oi, sou B",
+          accountId: 42,
+          conversationId: 93,
+          contactId: 602,
+        }),
+      });
+      await new Promise((resolve) => setTimeout(resolve, 200));
+
+      expect(pool.contactDifyConversations.get("42:601")).toBe("dify-conv-contact-A");
+      expect(pool.contactDifyConversations.get("42:602")).toBe("dify-conv-contact-B");
+      // Neither call carried the other contact's conversation_id.
+      expect(chatBlocking.mock.calls[0][0].conversationId).toBeUndefined();
+      expect(chatBlocking.mock.calls[1][0].conversationId).toBeUndefined();
+
+      await app.close();
+    });
+
+    it("ARMADILHA: contactId === \"unknown\" (missing contact_inbox) NEVER reads or writes the shared row, and keeps the old per-conversation behavior", async () => {
+      const pool = buildFakePool();
+      const chatwoot = buildFakeChatwoot();
+      const app = await buildApp(pool, chatwoot);
+
+      chatBlocking.mockResolvedValueOnce({
+        message_id: "m1",
+        conversation_id: "dify-conv-unknown-1",
+        answer: "resposta 1",
+      });
+      // No `contact_inbox` at all in the payload — the handler falls back to
+      // the "unknown" sentinel.
+      await app.inject({
+        method: "POST",
+        url: "/webhooks/chatwoot",
+        payload: chatwootMessageCreated({
+          id: 940,
+          content: "oi",
+          accountId: 42,
+          conversationId: 94,
+          contactId: null,
+        }),
+      });
+      await new Promise((resolve) => setTimeout(resolve, 200));
+
+      // The shared "unknown" row must never exist in the table.
+      expect(pool.contactDifyConversations.has("42:unknown")).toBe(false);
+      // Nor must any query ever have been issued for it.
+      for (const call of pool.query.mock.calls) {
+        const [sql, params] = call as [string, unknown[]];
+        if (sql.includes("contact_dify_conversations")) {
+          expect(params[1]).not.toBe("unknown");
+        }
+      }
+
+      // A SECOND, unrelated conversation that also lacks contact_inbox must
+      // NOT reuse conversation 94's Dify thread — the old per-conversation
+      // behavior stays in force for "unknown", so this is a brand-new Dify
+      // conversation, not "dify-conv-unknown-1".
+      chatBlocking.mockResolvedValueOnce({
+        message_id: "m2",
+        conversation_id: "dify-conv-unknown-2",
+        answer: "resposta 2",
+      });
+      await app.inject({
+        method: "POST",
+        url: "/webhooks/chatwoot",
+        payload: chatwootMessageCreated({
+          id: 950,
+          content: "outra pessoa sem contact_id",
+          accountId: 42,
+          conversationId: 95,
+          contactId: null,
+        }),
+      });
+      await new Promise((resolve) => setTimeout(resolve, 200));
+
+      expect(chatBlocking).toHaveBeenCalledTimes(2);
+      expect(chatBlocking.mock.calls[1][0].conversationId).toBeUndefined();
+
+      // A THIRD message back in conversation 94 (same conversation as the
+      // first) must still reuse ITS OWN Dify conversation_id — the old
+      // per-conversation memory is preserved for "unknown" contacts.
+      await app.inject({
+        method: "POST",
+        url: "/webhooks/chatwoot",
+        payload: chatwootMessageCreated({
+          id: 941,
+          content: "voltei na mesma conversa",
+          accountId: 42,
+          conversationId: 94,
+          contactId: null,
+        }),
+      });
+      await new Promise((resolve) => setTimeout(resolve, 200));
+
+      expect(chatBlocking).toHaveBeenCalledTimes(3);
+      expect(chatBlocking.mock.calls[2][0].conversationId).toBe("dify-conv-unknown-1");
+
+      await app.close();
+    });
+
+    it("falls back to the custom_attributes hint when the table has no row yet (transition compatibility)", async () => {
+      const pool = buildFakePool();
+      const chatwoot = buildFakeChatwoot();
+      const app = await buildApp(pool, chatwoot);
+
+      // Table is empty for this contact, but the webhook carries the OLD
+      // per-conversation `dify_conversation_id` custom attribute — as would
+      // happen right after this feature ships, before the backfill runs.
+      await app.inject({
+        method: "POST",
+        url: "/webhooks/chatwoot",
+        payload: chatwootMessageCreated({
+          id: 960,
+          content: "oi",
+          accountId: 42,
+          conversationId: 96,
+          contactId: 701,
+          difyConversationId: "dify-conv-legacy-hint",
+        }),
+      });
+      await new Promise((resolve) => setTimeout(resolve, 200));
+
+      expect(chatBlocking.mock.calls[0][0].conversationId).toBe("dify-conv-legacy-hint");
+
+      await app.close();
+    });
+
+    it("the table takes priority over the custom_attributes hint once it has a row", async () => {
+      const pool = buildFakePool();
+      pool.contactDifyConversations.set("42:801", "dify-conv-from-table");
+      const chatwoot = buildFakeChatwoot();
+      const app = await buildApp(pool, chatwoot);
+
+      // Stale hint from an old/different conversation's custom_attributes —
+      // the table must win.
+      await app.inject({
+        method: "POST",
+        url: "/webhooks/chatwoot",
+        payload: chatwootMessageCreated({
+          id: 970,
+          content: "oi",
+          accountId: 42,
+          conversationId: 97,
+          contactId: 801,
+          difyConversationId: "dify-conv-stale-hint",
+        }),
+      });
+      await new Promise((resolve) => setTimeout(resolve, 200));
+
+      expect(chatBlocking.mock.calls[0][0].conversationId).toBe("dify-conv-from-table");
+
+      await app.close();
+    });
+  });
 });
 
 /**
@@ -623,6 +889,12 @@ describe("registerChatwootWebhookRoute — empty content marker (issue #203)", (
         const incoming = Number(params[2]);
         const current = watermarks.get(key) ?? 0;
         watermarks.set(key, Math.max(current, incoming));
+        return { rows: [] };
+      }
+      if (sql.includes("FROM contact_dify_conversations")) {
+        return { rows: [] };
+      }
+      if (sql.includes("INSERT INTO contact_dify_conversations")) {
         return { rows: [] };
       }
       if (sql.includes("FROM configs")) {

@@ -171,6 +171,68 @@ async function persistWatermark(
   );
 }
 
+/**
+ * Reads the per-contact persisted Dify `conversation_id` — the source of
+ * truth for per-contact agent memory (issue #204). Returns `undefined` for
+ * both "no row yet" and any read miss; callers fall back to the
+ * `dify_conversation_id` webhook hint (transition compatibility) and, after
+ * that, to letting Dify start a new conversation.
+ *
+ * MUST NEVER be called with `contactId === "unknown"` — see
+ * `persistContactDifyConversationId` for why; this function does not itself
+ * special-case it because every real call site already filters it out
+ * before reaching here, and a defensive no-op return here would silently
+ * mask a caller bug instead of surfacing it.
+ */
+async function readContactDifyConversationId(
+  pool: pg.Pool,
+  accountIdStr: string,
+  contactId: number | string,
+): Promise<string | undefined> {
+  const result = await pool.query(
+    "SELECT dify_conversation_id FROM contact_dify_conversations WHERE account_id = $1 AND contact_id = $2",
+    [accountIdStr, String(contactId)],
+  );
+  return (result.rows[0]?.dify_conversation_id as string | undefined) ?? undefined;
+}
+
+/**
+ * Persists `dify_conversation_id` per (account, contact) — issue #204: the
+ * agent's memory is per CONTACT now, reused indefinitely across Chatwoot
+ * conversations, not reset every time a new conversation is opened.
+ *
+ * ARMADILHA (mandatory guard, per the issue): `contactId` falls back to the
+ * literal string `"unknown"` elsewhere in this file when
+ * `conversation.contact_inbox.contact_id` is absent from the webhook
+ * payload. That string is NOT a real contact id — it is a shared sentinel.
+ * Writing it here would merge every contact whose payload happens to be
+ * missing that field into ONE shared Dify conversation, leaking one
+ * person's history to another. The guard is enforced HERE (not only at the
+ * call site in `flushGroup`) so a future call site cannot reintroduce the
+ * leak by forgetting to check first.
+ */
+async function persistContactDifyConversationId(
+  pool: pg.Pool,
+  accountIdStr: string,
+  contactId: number | string,
+  difyConversationId: string,
+): Promise<void> {
+  if (contactId === "unknown") {
+    throw new Error(
+      "persistContactDifyConversationId: refusing to write the shared 'unknown' contact row (issue #204)",
+    );
+  }
+  await pool.query(
+    `INSERT INTO contact_dify_conversations (account_id, contact_id, dify_conversation_id, updated_at)
+     VALUES ($1, $2, $3, CURRENT_TIMESTAMP)
+     ON CONFLICT (account_id, contact_id)
+     DO UPDATE SET
+       dify_conversation_id = EXCLUDED.dify_conversation_id,
+       updated_at = CURRENT_TIMESTAMP`,
+    [accountIdStr, String(contactId), difyConversationId],
+  );
+}
+
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -308,9 +370,30 @@ async function flushGroup(
     return;
   }
 
-  const difyConvId =
-    difyConvIdCache.get(group.key) ??
-    group.messages.find((m) => m.difyConvIdHint)?.difyConvIdHint;
+  // Issue #204: the agent's memory is keyed by CONTACT, not by Chatwoot
+  // conversation — a reused Dify `conversation_id` must follow the same
+  // person across every Chatwoot conversation they ever open. ARMADILHA:
+  // `contactId === "unknown"` (the payload never carried
+  // `contact_inbox.contact_id`) must keep the OLD per-conversation behavior
+  // — `group.key` is `accountId:conversationId` (see `watermarkKey`) — and
+  // must never touch `contact_dify_conversations`, which would merge
+  // different people's history under the shared sentinel row.
+  const cacheKey =
+    contactId === "unknown" ? group.key : `${accountIdStr}:${contactId}`;
+
+  let difyConvId = difyConvIdCache.get(cacheKey);
+  if (!difyConvId && contactId !== "unknown") {
+    // (1) The new table is the source of truth for a real contact.
+    difyConvId = await readContactDifyConversationId(pool, accountIdStr, contactId);
+  }
+  if (!difyConvId) {
+    // (2) Transition-compatibility fallback: a `dify_conversation_id` still
+    // written to THIS conversation's `custom_attributes` from before the
+    // per-contact table existed (or from a run where the table write below
+    // failed non-fatally).
+    difyConvId = group.messages.find((m) => m.difyConvIdHint)?.difyConvIdHint;
+  }
+  // (3) Neither found ⇒ stays undefined; Dify starts a brand-new conversation.
 
   const dify = new DifyClient(
     tenant.baseUrl,
@@ -353,7 +436,34 @@ async function flushGroup(
 
     // Persist Dify conversation_id on first turn for memory continuity.
     if (!difyConvId && difyResp.conversation_id) {
-      difyConvIdCache.set(group.key, difyResp.conversation_id);
+      difyConvIdCache.set(cacheKey, difyResp.conversation_id);
+
+      // Issue #204: the table is the source of truth going forward — but
+      // NEVER for the shared "unknown" sentinel (see
+      // `persistContactDifyConversationId`'s docstring). Best-effort/non-
+      // fatal like the `custom_attributes` write below: the in-memory cache
+      // already makes this process answer correctly for the rest of its
+      // lifetime even if this write fails, and a future turn will simply
+      // retry the write.
+      if (contactId !== "unknown") {
+        try {
+          await persistContactDifyConversationId(
+            pool,
+            accountIdStr,
+            contactId,
+            difyResp.conversation_id,
+          );
+        } catch (err) {
+          log.warn(
+            { err, accountId: accountIdStr, contactId },
+            "webhook: failed to persist contact_dify_conversations row (non-fatal)",
+          );
+        }
+      }
+
+      // Still written to the conversation's custom_attributes too — a
+      // visible trail for anyone debugging via the Chatwoot UI — but the
+      // table above, not this, is now the source of truth.
       try {
         await chatwoot.setConversationCustomAttributes({
           accountId: accountIdStr,
@@ -547,9 +657,12 @@ export async function registerChatwootWebhookRoute(
   chatwoot: ChatwootClient,
   pool: pg.Pool,
 ): Promise<void> {
-  // dify_conversation_id per conversation key, freshest-wins cache so a
-  // burst that arrives before Chatwoot's custom_attributes write lands
-  // (or before we've re-read it) still gets the right Dify thread.
+  // dify_conversation_id cache, freshest-wins, so a burst that arrives
+  // before the persisted write (table or custom_attributes) lands — or
+  // before we've re-read it — still gets the right Dify thread. Keyed by
+  // `accountId:contactId` (per-contact memory, issue #204) EXCEPT when
+  // `contactId === "unknown"`, which keeps the old `accountId:conversationId`
+  // key so different people who all lack a `contact_id` never share a slot.
   const difyConvIdCache = new Map<string, string>();
 
   const debouncer = new ConversationDebouncer<BufferedIncomingMessage>(

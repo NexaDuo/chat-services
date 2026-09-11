@@ -119,6 +119,27 @@ CREATE TABLE IF NOT EXISTS conversation_watermarks (
   PRIMARY KEY (account_id, conversation_id)
 );
 
+-- contact_dify_conversations: per-CONTACT Dify conversation_id (issue #204).
+-- Product decision 2026-09-11: agent memory is per contact, reused
+-- indefinitely across every Chatwoot conversation that contact ever opens,
+-- instead of resetting on each new Chatwoot conversation (previously the
+-- only persistence was `dify_conversation_id` in the conversation's
+-- `custom_attributes`, scoped per conversation). This table is now the
+-- source of truth for resolution; the custom_attributes write is kept only
+-- as a visible trail for UI debugging. NEVER holds a row for the literal
+-- contact_id "unknown" — that string is a shared sentinel used by the
+-- webhook handler when a payload doesn't carry
+-- `conversation.contact_inbox.contact_id`, and writing it here would merge
+-- unrelated people's history into one Dify conversation. See
+-- middleware/src/handlers/chatwoot-webhook.ts.
+CREATE TABLE IF NOT EXISTS contact_dify_conversations (
+  account_id TEXT NOT NULL,
+  contact_id TEXT NOT NULL,
+  dify_conversation_id TEXT NOT NULL,
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (account_id, contact_id)
+);
+
 -- Pre-seed some default keys if needed
 -- INSERT INTO configs (key, value) VALUES ('DIFY_SELF_HEALING_API_KEY', NULL) ON CONFLICT DO NOTHING;
 
