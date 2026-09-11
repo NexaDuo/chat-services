@@ -148,6 +148,9 @@ Routine inspections use the workspace skill
 states, scans logs for known anomalies, and files structured GitHub issues.
 
 ## Operational non-negotiables
+- **RAM (superseded):** this used to declare a 16 GB minimum for the shared stack;
+  removed as stale (issue #200) — the WSL VM runs on ~15 GiB and the stack is
+  healthy at that ceiling.
 - **Backup:** daily `pg_dump` (all DBs, `--clean --if-exists`) via
   `scripts/backup-host.sh` (host cron 03:00). Dumps land in `~/nexaduo-local/dumps`
   and, if `BACKUP_RCLONE_REMOTE` is set, are copied **off-host** via rclone (a dump on
