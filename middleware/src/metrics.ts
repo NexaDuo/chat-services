@@ -17,6 +17,21 @@ export type Metrics = {
    * silent-failure-detection rule in AGENTS.md.
    */
   emptyContentTotal: Counter<"account_id" | "type" | "outcome">;
+  /**
+   * Incoming `message_created` webhooks where a content-marker signal (story
+   * reply/mention, attachment) was detected ALONGSIDE non-empty `content`
+   * (issue #208) — e.g. an Instagram story reply that also carries an emoji.
+   * Deliberately a SEPARATE counter from `emptyContentTotal` rather than a
+   * new value of its `outcome` label: `emptyContentTotal`'s name and existing
+   * dashboards/alerts are specifically about the empty-content case (issue
+   * #203); silently changing what "answered_with_marker" means there, or
+   * counting a non-empty-content webhook under a metric named
+   * `..._empty_content_...`, would be exactly the "reused metric name whose
+   * meaning changes" the issue calls out to avoid. Without this counter, a
+   * regression that stopped deriving the marker for non-empty content (the
+   * bug this issue fixes) would again be invisible.
+   */
+  contentMarkerWithTextTotal: Counter<"account_id" | "type">;
 };
 
 export function createMetrics(): Metrics {
@@ -74,6 +89,13 @@ export function createMetrics(): Metrics {
     registers: [registry],
   });
 
+  const contentMarkerWithTextTotal = new Counter({
+    name: "middleware_content_marker_with_text_total",
+    help: "Incoming messages where a content-marker signal (story reply/mention, attachment) was detected alongside non-empty content, per account/type — issue #208.",
+    labelNames: ["account_id", "type"] as const,
+    registers: [registry],
+  });
+
   return {
     registry,
     difyTokensTotal,
@@ -83,5 +105,6 @@ export function createMetrics(): Metrics {
     handoffsTotal,
     difyKillSwitchSkipsTotal,
     emptyContentTotal,
+    contentMarkerWithTextTotal,
   };
 }

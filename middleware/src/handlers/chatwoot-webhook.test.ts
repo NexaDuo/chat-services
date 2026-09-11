@@ -187,6 +187,56 @@ const REAL_MSG_174_STORY_REPLY_PAYLOAD = {
   event: "message_created",
 };
 
+/**
+ * Real payload captured from Chatwoot message 182 (production DB, account 3
+ * / tenant `duda`, conversation 10, contact 4, 2026-09-11 14:23), transcribed
+ * verbatim from issue #208 with only the Meta `signature=...` query-string
+ * values redacted. Unlike msg 174, `content` is NOT empty ("😍") — this is
+ * the exact case that used to reach Dify as the bare emoji with no story
+ * context, because #203 only derived the marker inside the empty-content
+ * early-return.
+ */
+const REAL_MSG_182_STORY_REPLY_WITH_TEXT_PAYLOAD = {
+  id: 182,
+  content: "😍",
+  content_type: 0,
+  created_at: new Date().toISOString(),
+  message_type: "incoming",
+  content_attributes: {
+    story_id: "18099013352357043",
+    story_sender: "17841429474434917",
+    story_url:
+      "https://lookaside.fbsbx.com/ig_messaging_cdn/?asset_id=example&signature=REDACTED",
+    image_type: "ig_story_reply",
+    in_reply_to_external_id: null,
+  },
+  attachments: [
+    {
+      file_type: 11,
+      external_url:
+        "https://lookaside.fbsbx.com/ig_messaging_cdn/?asset_id=example&signature=REDACTED",
+    },
+  ],
+  source_id: null,
+  private: false,
+  sender: { id: 4, name: "Contato", avatar: "", type: "contact" },
+  inbox: { id: 7, name: "miau.duda" },
+  conversation: {
+    additional_attributes: null,
+    channel: "Channel::Instagram",
+    id: 10,
+    inbox_id: 7,
+    status: "open",
+    agent_last_seen_at: 0,
+    contact_last_seen_at: 0,
+    timestamp: Math.floor(Date.now() / 1000),
+    custom_attributes: {},
+    contact_inbox: { contact_id: 4 },
+  },
+  account: { id: 42, name: "NexaDuo" },
+  event: "message_created",
+};
+
 describe("registerChatwootWebhookRoute — burst dedup + watermark (issue #179)", () => {
   function buildFakePool() {
     const tenants = new Map<string, { dify_api_key: string; dify_app_type: string }>();
@@ -714,6 +764,55 @@ describe("registerChatwootWebhookRoute — empty content marker (issue #203)", (
     await app.close();
   });
 
+  /**
+   * Issue #208 regression: real production case (msg 182, account 3, conv
+   * 10). `content` is non-empty ("😍"), so pre-#208 the marker was never
+   * derived and Dify only ever saw the bare emoji. AC-2: marker first, then
+   * the user's text verbatim, joined with "\n".
+   */
+  it("story reply (real payload, msg 182) WITH non-empty content ⇒ marker AND verbatim text both reach Dify", async () => {
+    const pool = buildFakePool();
+    const chatwoot = buildFakeChatwoot();
+    const { app, metrics } = await buildApp(pool, chatwoot);
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/webhooks/chatwoot",
+      payload: REAL_MSG_182_STORY_REPLY_WITH_TEXT_PAYLOAD,
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ ok: true, buffered: true });
+
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    expect(chatBlocking).toHaveBeenCalledTimes(1);
+    expect(chatBlocking.mock.calls[0][0].query).toBe(
+      "[o usuário respondeu ao seu story]\n😍",
+    );
+
+    // The Dify request must never carry the signed story/attachment URL,
+    // same `@sec` requirement as the empty-content path.
+    const serializedDifyCall = JSON.stringify(chatBlocking.mock.calls[0][0]);
+    expect(serializedDifyCall).not.toContain("signature=");
+    expect(serializedDifyCall).not.toContain("lookaside.fbsbx.com");
+
+    // AC-6: a marker+text webhook is counted under the new, dedicated
+    // counter — NOT under `emptyContentTotal` (whose meaning is specifically
+    // about empty content).
+    const markerWithTextCount = await metrics.contentMarkerWithTextTotal.get();
+    const counted = markerWithTextCount.values.find(
+      (v) => v.labels.type === "story_reply" && v.labels.account_id === "42",
+    );
+    expect(counted?.value).toBe(1);
+
+    const emptyContentCount = await metrics.emptyContentTotal.get();
+    expect(
+      emptyContentCount.values.some((v) => v.labels.account_id === "42"),
+    ).toBe(false);
+
+    await app.close();
+  });
+
   it("attachment of an unconfirmed file_type ⇒ generic marker, not skipped", async () => {
     const pool = buildFakePool();
     const chatwoot = buildFakeChatwoot();
@@ -838,6 +937,38 @@ describe("registerChatwootWebhookRoute — empty content marker (issue #203)", (
       method: "POST",
       url: "/webhooks/chatwoot",
       payload: REAL_MSG_174_STORY_REPLY_PAYLOAD,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    const logOutput = chunks.join("");
+    expect(logOutput).not.toContain("signature=");
+    expect(logOutput).not.toContain("lookaside.fbsbx.com");
+    expect(logOutput).not.toContain("story_url");
+    expect(logOutput).not.toContain("external_url");
+
+    await app.close();
+  });
+
+  /**
+   * Issue #208: extends the `@sec` Meta-signed-URL guarantee to the new
+   * marker+text path (msg 182 has non-empty content, unlike msg 174).
+   */
+  it("never logs the Meta-signed story_url/external_url on the marker+text path — `@sec` requirement", async () => {
+    const pool = buildFakePool();
+    const chatwoot = buildFakeChatwoot();
+    const chunks: string[] = [];
+    const logStream = {
+      write: (chunk: string) => {
+        chunks.push(chunk);
+        return true;
+      },
+    };
+    const { app } = await buildApp(pool, chatwoot, { logStream });
+
+    await app.inject({
+      method: "POST",
+      url: "/webhooks/chatwoot",
+      payload: REAL_MSG_182_STORY_REPLY_WITH_TEXT_PAYLOAD,
     });
     await new Promise((resolve) => setTimeout(resolve, 100));
 
@@ -1048,6 +1179,54 @@ describe("registerChatwootWebhookRoute — empty content marker (issue #203)", (
     expect(chatwoot.postMessage).toHaveBeenCalledTimes(1);
     // Watermark only advances once the reply has actually been posted.
     expect(pool.watermarks.get("42:70")).toBe(701);
+
+    await app.close();
+  });
+
+  /**
+   * Issue #208, AC-5: in a burst, some messages carry a marker+text and
+   * others carry plain text only — still exactly ONE query and ONE reply,
+   * and each message's own marker travels with ITS OWN text in the
+   * concatenation (not swapped/merged across messages).
+   */
+  it("burst: a marker+text message followed by a plain-text message ⇒ ONE query with each marker attached to its own text", async () => {
+    const pool = buildFakePool();
+    const chatwoot = buildFakeChatwoot();
+    const { app } = await buildApp(pool, chatwoot);
+
+    await app.inject({
+      method: "POST",
+      url: "/webhooks/chatwoot",
+      payload: {
+        ...REAL_MSG_182_STORY_REPLY_WITH_TEXT_PAYLOAD,
+        id: 800,
+        conversation: { ...REAL_MSG_182_STORY_REPLY_WITH_TEXT_PAYLOAD.conversation, id: 80 },
+      },
+    });
+    await app.inject({
+      method: "POST",
+      url: "/webhooks/chatwoot",
+      payload: {
+        id: 801,
+        content: "que fofa essa foto",
+        content_type: null,
+        message_type: "incoming",
+        content_attributes: {},
+        private: false,
+        sender: { id: 4, type: "contact" },
+        conversation: { id: 80, custom_attributes: {}, contact_inbox: { contact_id: 4 } },
+        account: { id: 42 },
+        event: "message_created",
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 150));
+
+    expect(chatBlocking).toHaveBeenCalledTimes(1);
+    expect(chatBlocking.mock.calls[0][0].query).toBe(
+      "[o usuário respondeu ao seu story]\n😍\nque fofa essa foto",
+    );
+    expect(chatwoot.postMessage).toHaveBeenCalledTimes(1);
+    expect(pool.watermarks.get("42:80")).toBe(801);
 
     await app.close();
   });
