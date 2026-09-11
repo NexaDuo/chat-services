@@ -626,36 +626,68 @@ export async function registerChatwootWebhookRoute(
     const conversationId = evt.conversation.id;
 
     let content = (evt.content ?? "").trim();
-    if (!content) {
+    const hasOriginalText = content.length > 0;
+
+    // Issue #208: the content-marker signal (a story reply/mention, an
+    // attachment) is ORTHOGONAL to whether `content` is empty. #203 only
+    // derived it inside the empty-content early-return, so a story reply
+    // that carries real text (e.g. an emoji reaction, msg 182 in
+    // production) reached Dify as the bare text with no story context.
+    // `deriveContentMarker` is now called for every eligible message,
+    // regardless of `content`.
+    const derived = deriveContentMarker(evt.content_attributes, evt.attachments);
+
+    if (!hasOriginalText && !derived) {
       // Issue #203: an empty `content` used to be silently dropped even
       // when the payload carried a real content signal (a story reply, an
       // attachment) — 4 of 66 incoming messages on account 3, including a
       // real story reply that never got answered. Now: derive a pt-BR
       // marker when there's a signal, and keep skipping ONLY when there
       // genuinely is none.
-      const derived = deriveContentMarker(evt.content_attributes, evt.attachments);
-      if (!derived) {
-        metrics.emptyContentTotal.inc({
-          account_id: accountIdStr,
-          type: "none",
-          outcome: "skipped",
-        });
-        return reply.code(200).send({ skipped: "empty_content" });
-      }
-      content = derived.marker;
       metrics.emptyContentTotal.inc({
         account_id: accountIdStr,
-        type: derived.type,
-        outcome: "answered_with_marker",
+        type: "none",
+        outcome: "skipped",
       });
-      req.log.info(
-        {
-          accountId: accountIdStr,
-          conversationId,
-          markerType: derived.type,
-        },
-        "webhook: empty content, answering with a derived marker instead of staying silent (issue #203)",
-      );
+      return reply.code(200).send({ skipped: "empty_content" });
+    }
+
+    if (derived) {
+      if (hasOriginalText) {
+        // Issue #208, AC-2: marker first, user text preserved VERBATIM,
+        // joined with a newline — mirrors the burst-grouping join
+        // convention used in `flushGroup` (`m.content` joined with "\n"),
+        // so the format is consistent whether the two pieces come from one
+        // message or from two messages in the same debounce window.
+        content = `${derived.marker}\n${content}`;
+        metrics.contentMarkerWithTextTotal.inc({
+          account_id: accountIdStr,
+          type: derived.type,
+        });
+        req.log.info(
+          {
+            accountId: accountIdStr,
+            conversationId,
+            markerType: derived.type,
+          },
+          "webhook: content carried both a marker signal and user text — prefixing the marker so the agent has context (issue #208)",
+        );
+      } else {
+        content = derived.marker;
+        metrics.emptyContentTotal.inc({
+          account_id: accountIdStr,
+          type: derived.type,
+          outcome: "answered_with_marker",
+        });
+        req.log.info(
+          {
+            accountId: accountIdStr,
+            conversationId,
+            markerType: derived.type,
+          },
+          "webhook: empty content, answering with a derived marker instead of staying silent (issue #203)",
+        );
+      }
     }
 
     const contactId = evt.conversation.contact_inbox?.contact_id ?? "unknown";
