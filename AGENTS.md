@@ -39,7 +39,8 @@ and adds the `atendimento-humano` label.
 > stack, which **is** production — there is no separate staging. See issue #109.
 
 The full four-service stack runs as Docker Compose on a single host (a WSL machine,
-~31GB RAM) and is served on the production domains
+~15GB RAM — the WSL VM's own allocation, not the physical Windows host's) and is
+served on the production domains
 (`chat`/`dify`/`evolution`/`middleware`/`grafana.nexaduo.com`) through the production
 **Cloudflare tunnel** (`1eea65b4`, ingress → `coolify-proxy:80`).
 
@@ -147,7 +148,9 @@ Routine inspections use the workspace skill
 states, scans logs for known anomalies, and files structured GitHub issues.
 
 ## Operational non-negotiables
-- **RAM:** 16 GB minimum for the shared stack.
+- **RAM (superseded):** this used to declare a 16 GB minimum for the shared stack;
+  removed as stale (issue #200) — the WSL VM runs on ~15 GiB and the stack is
+  healthy at that ceiling.
 - **Backup:** daily `pg_dump` (all DBs, `--clean --if-exists`) via
   `scripts/backup-host.sh` (host cron 03:00). Dumps land in `~/nexaduo-local/dumps`
   and, if `BACKUP_RCLONE_REMOTE` is set, are copied **off-host** via rclone (a dump on
