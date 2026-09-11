@@ -605,6 +605,7 @@ describe("registerChatwootWebhookRoute — burst dedup + watermark (issue #179)"
 describe("registerChatwootWebhookRoute — empty content marker (issue #203)", () => {
   function buildFakePool() {
     const tenants = new Map<string, { dify_api_key: string; dify_app_type: string }>();
+    const watermarks = new Map<string, number>();
     tenants.set("42", { dify_api_key: "test-dify-key", dify_app_type: "chatflow" });
 
     const query = vi.fn(async (sql: string, params: unknown[]) => {
@@ -613,9 +614,15 @@ describe("registerChatwootWebhookRoute — empty content marker (issue #203)", (
         return { rows: row ? [row] : [] };
       }
       if (sql.includes("SELECT last_processed_message_id")) {
-        return { rows: [] };
+        const key = `${params[0]}:${params[1]}`;
+        const value = watermarks.get(key);
+        return { rows: value === undefined ? [] : [{ last_processed_message_id: value }] };
       }
       if (sql.includes("INSERT INTO conversation_watermarks")) {
+        const key = `${params[0]}:${params[1]}`;
+        const incoming = Number(params[2]);
+        const current = watermarks.get(key) ?? 0;
+        watermarks.set(key, Math.max(current, incoming));
         return { rows: [] };
       }
       if (sql.includes("FROM configs")) {
@@ -624,7 +631,7 @@ describe("registerChatwootWebhookRoute — empty content marker (issue #203)", (
       throw new Error(`unexpected query in test: ${sql}`);
     });
 
-    return { query };
+    return { query, watermarks };
   }
 
   function buildFakeChatwoot() {
@@ -839,6 +846,249 @@ describe("registerChatwootWebhookRoute — empty content marker (issue #203)", (
     expect(logOutput).not.toContain("lookaside.fbsbx.com");
     expect(logOutput).not.toContain("story_url");
     expect(logOutput).not.toContain("external_url");
+
+    await app.close();
+  });
+
+  /**
+   * `@rev` finding on PR #206 (MEDIUM): a bare `content_attributes.story_id`
+   * must NOT by itself be labeled "story reply" — only the OBSERVED
+   * `image_type === "ig_story_reply"` may. An unconfirmed story signal
+   * (present `story_id`, different/absent `image_type`, no matching
+   * attachment) must fall to the generic marker, never a guessed label.
+   */
+  it("story_id present but image_type is NOT the confirmed reply value ⇒ generic marker, not story_reply", async () => {
+    const pool = buildFakePool();
+    const chatwoot = buildFakeChatwoot();
+    const { app } = await buildApp(pool, chatwoot);
+
+    await app.inject({
+      method: "POST",
+      url: "/webhooks/chatwoot",
+      payload: {
+        id: 503,
+        content: "",
+        content_type: 0,
+        message_type: "incoming",
+        content_attributes: {
+          story_id: "18099013352357043",
+          image_type: "ig_story_mention", // NOT the confirmed "ig_story_reply" value
+        },
+        private: false,
+        sender: { id: 1, type: "contact" },
+        conversation: { id: 53, custom_attributes: {}, contact_inbox: { contact_id: 1 } },
+        account: { id: 42 },
+        event: "message_created",
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    expect(chatBlocking).toHaveBeenCalledTimes(1);
+    expect(chatBlocking.mock.calls[0][0].query).toBe("[o usuário enviou uma mídia]");
+
+    await app.close();
+  });
+
+  /**
+   * `@rev` finding on PR #206 (LOW): an empty/whitespace `story_id` must not
+   * count as "present" — that would fabricate a reply out of nothing.
+   */
+  it("empty-string story_id ⇒ treated as absent, genuinely-empty message stays skipped", async () => {
+    const pool = buildFakePool();
+    const chatwoot = buildFakeChatwoot();
+    const { app } = await buildApp(pool, chatwoot);
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/webhooks/chatwoot",
+      payload: {
+        id: 504,
+        content: "",
+        content_type: 0,
+        message_type: "incoming",
+        content_attributes: { story_id: "   " },
+        private: false,
+        sender: { id: 1, type: "contact" },
+        conversation: { id: 54, custom_attributes: {}, contact_inbox: { contact_id: 1 } },
+        account: { id: 42 },
+        event: "message_created",
+      },
+    });
+    expect(res.json()).toEqual({ skipped: "empty_content" });
+
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(chatBlocking).not.toHaveBeenCalled();
+
+    await app.close();
+  });
+
+  /**
+   * `@rev` finding on PR #206 (LOW): the reordering of `accountId`
+   * resolution above the empty-content guard is an intentional, observable
+   * contract change — a payload with BOTH empty `content` AND a missing
+   * `account_id` now gets `400 missing_account_id` (malformed payload)
+   * instead of the old `200 skipped:"empty_content"`. Pinned here so it
+   * cannot regress silently either way.
+   */
+  it("empty content AND missing account_id ⇒ 400 missing_account_id (not skipped:empty_content) — intentional contract change", async () => {
+    const pool = buildFakePool();
+    const chatwoot = buildFakeChatwoot();
+    const { app } = await buildApp(pool, chatwoot);
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/webhooks/chatwoot",
+      payload: {
+        id: 505,
+        content: "",
+        content_type: 0,
+        message_type: "incoming",
+        content_attributes: {},
+        private: false,
+        sender: { id: 1, type: "contact" },
+        conversation: { id: 55, custom_attributes: {}, contact_inbox: { contact_id: 1 } },
+        // No `account` object and no top-level `account_id` at all.
+        event: "message_created",
+      },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json()).toEqual({ error: "missing_account_id" });
+
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(chatBlocking).not.toHaveBeenCalled();
+
+    await app.close();
+  });
+
+  /**
+   * `@rev` finding on PR #206 (MEDIUM, AC of #203): the burst-grouping
+   * intersection (#179) was untested for this issue's exact touch point —
+   * the marker becoming just another `m.content` string concatenated with
+   * `\n` at `flushGroup`'s `:257`. A photo-with-marker followed by a real
+   * text reply in the SAME debounce window must produce one coherent query
+   * and exactly one outgoing reply, not two.
+   */
+  it("burst: an empty-content message (marker) + a real-text message in the same window ⇒ ONE coherent query, ONE reply", async () => {
+    const pool = buildFakePool();
+    const chatwoot = buildFakeChatwoot();
+    const { app } = await buildApp(pool, chatwoot);
+
+    await app.inject({
+      method: "POST",
+      url: "/webhooks/chatwoot",
+      payload: {
+        ...REAL_MSG_174_STORY_REPLY_PAYLOAD,
+        id: 600,
+        conversation: { ...REAL_MSG_174_STORY_REPLY_PAYLOAD.conversation, id: 60 },
+      },
+    });
+    await app.inject({
+      method: "POST",
+      url: "/webhooks/chatwoot",
+      payload: {
+        id: 601,
+        content: "poxa, obrigada!",
+        content_type: null,
+        message_type: "incoming",
+        content_attributes: {},
+        private: false,
+        sender: { id: 9001, type: "contact" },
+        conversation: { id: 60, custom_attributes: {}, contact_inbox: { contact_id: 9001 } },
+        account: { id: 42 },
+        event: "message_created",
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 150));
+
+    expect(chatBlocking).toHaveBeenCalledTimes(1);
+    expect(chatBlocking.mock.calls[0][0].query).toBe(
+      "[o usuário respondeu ao seu story]\npoxa, obrigada!",
+    );
+    expect(chatwoot.postMessage).toHaveBeenCalledTimes(1);
+    expect(pool.watermarks.get("42:60")).toBe(601);
+
+    await app.close();
+  });
+
+  /**
+   * `@rev` finding on PR #206 (MEDIUM, AC of #203): a burst made ENTIRELY of
+   * empty-content marker messages must still collapse to one Dify call and
+   * one reply, and — same #179 guarantee as any other group — the
+   * watermark must advance only AFTER that reply is posted successfully.
+   */
+  it("burst: two empty-content messages (both markers) in the same window ⇒ ONE reply, watermark advances only after the post succeeds", async () => {
+    const pool = buildFakePool();
+    const chatwoot = buildFakeChatwoot();
+    const { app } = await buildApp(pool, chatwoot);
+
+    await app.inject({
+      method: "POST",
+      url: "/webhooks/chatwoot",
+      payload: {
+        ...REAL_MSG_174_STORY_REPLY_PAYLOAD,
+        id: 700,
+        conversation: { ...REAL_MSG_174_STORY_REPLY_PAYLOAD.conversation, id: 70 },
+      },
+    });
+    await app.inject({
+      method: "POST",
+      url: "/webhooks/chatwoot",
+      payload: {
+        ...REAL_MSG_174_STORY_REPLY_PAYLOAD,
+        id: 701,
+        conversation: { ...REAL_MSG_174_STORY_REPLY_PAYLOAD.conversation, id: 70 },
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 150));
+
+    expect(chatBlocking).toHaveBeenCalledTimes(1);
+    expect(chatBlocking.mock.calls[0][0].query).toBe(
+      "[o usuário respondeu ao seu story]\n[o usuário respondeu ao seu story]",
+    );
+    expect(chatwoot.postMessage).toHaveBeenCalledTimes(1);
+    // Watermark only advances once the reply has actually been posted.
+    expect(pool.watermarks.get("42:70")).toBe(701);
+
+    await app.close();
+  });
+
+  it("burst of only-marker messages: a failed reply post must NOT advance the watermark", async () => {
+    const pool = buildFakePool();
+    const chatwoot = buildFakeChatwoot();
+    chatwoot.postMessage.mockRejectedValueOnce(new Error("chatwoot unreachable"));
+    chatwoot.postMessage.mockResolvedValueOnce({
+      id: 2,
+      content: "",
+      private: true,
+      message_type: "outgoing",
+      created_at: "",
+    });
+    const { app } = await buildApp(pool, chatwoot);
+
+    await app.inject({
+      method: "POST",
+      url: "/webhooks/chatwoot",
+      payload: {
+        ...REAL_MSG_174_STORY_REPLY_PAYLOAD,
+        id: 800,
+        conversation: { ...REAL_MSG_174_STORY_REPLY_PAYLOAD.conversation, id: 80 },
+      },
+    });
+    await app.inject({
+      method: "POST",
+      url: "/webhooks/chatwoot",
+      payload: {
+        ...REAL_MSG_174_STORY_REPLY_PAYLOAD,
+        id: 801,
+        conversation: { ...REAL_MSG_174_STORY_REPLY_PAYLOAD.conversation, id: 80 },
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 150));
+
+    expect(chatBlocking).toHaveBeenCalledTimes(1);
+    // First postMessage call (the outgoing reply) failed; the watermark
+    // must stay unset so a redelivery is still answered.
+    expect(pool.watermarks.get("42:80")).toBeUndefined();
 
     await app.close();
   });

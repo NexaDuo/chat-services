@@ -474,14 +474,38 @@ const FILE_TYPE_MARKER_TYPE: Partial<Record<number, ContentMarkerType>> = {
  * `attachments[].external_url` — both are Meta-SIGNED URLs
  * (`signature=...`) and must never reach a log line, a metric label, or the
  * Dify request.
+ *
+ * `@rev` finding on PR #206 (MEDIUM, latent — not reproduced): the ONLY
+ * `image_type` value OBSERVED in production is `"ig_story_reply"` (msg 174).
+ * We do not know what value (if any) a story-MENTION payload carries in
+ * `image_type`, and `story_id` alone is plausibly present on both kinds
+ * (Meta likely stamps the story id regardless of reply-vs-mention). So a
+ * bare `story_id` presence must NOT by itself imply "reply" — that would
+ * mislabel a mention as a reply the moment one arrives with empty content.
+ * Only `image_type === "ig_story_reply"` (the confirmed signal) yields
+ * `story_reply` here; any other/absent `image_type` alongside a present
+ * `story_id` is a recognized-but-unconfirmed story signal and falls through
+ * to the `attachments`-driven `file_type` mapping below (which DOES know
+ * `file_type=2` ⇒ `story_mention`), and finally to the generic marker if
+ * nothing more specific matches. Never guess.
  */
 function deriveContentMarker(
   contentAttributes: Record<string, unknown> | undefined,
   attachments: Array<{ file_type?: number | string }> | undefined,
 ): { marker: string; type: ContentMarkerType } | undefined {
   const imageType = contentAttributes?.["image_type"];
-  const storyId = contentAttributes?.["story_id"];
-  if (imageType === "ig_story_reply" || (storyId !== undefined && storyId !== null)) {
+  const rawStoryId = contentAttributes?.["story_id"];
+  // Treat "" / whitespace-only as absent — an empty string is not a real
+  // signal (`@rev` LOW finding on PR #206).
+  const storyId =
+    typeof rawStoryId === "string"
+      ? rawStoryId.trim()
+      : rawStoryId !== undefined && rawStoryId !== null
+        ? String(rawStoryId)
+        : "";
+  const hasStorySignal = storyId.length > 0;
+
+  if (imageType === "ig_story_reply") {
     return { marker: CONTENT_MARKERS.story_reply, type: "story_reply" };
   }
 
@@ -502,6 +526,14 @@ function deriveContentMarker(
     // An attachment IS present but not one of the observed file_type values
     // above — still a real signal, just an unconfirmed kind. Answer with
     // the generic marker rather than staying silent.
+    return { marker: CONTENT_MARKERS.generic, type: "generic" };
+  }
+
+  // A `story_id` was present but `image_type` was not the confirmed
+  // "ig_story_reply" value and there was no attachment to derive a more
+  // specific type from — a real story signal of an unconfirmed kind.
+  // Generic, not silence, and not a guessed label.
+  if (hasStorySignal) {
     return { marker: CONTENT_MARKERS.generic, type: "generic" };
   }
 
@@ -579,6 +611,15 @@ export async function registerChatwootWebhookRoute(
     // `account_id` even on the skip/marker path.
     const accountId = evt.account?.id ?? (req.body as { account_id?: unknown })["account_id"];
     if (accountId === undefined || accountId === null) {
+      // `@rev` note on PR #206: moving this resolution above the
+      // empty-content check (needed so the #203 metric can carry
+      // `account_id` on every path) means a payload with BOTH an empty
+      // `content` AND a missing `account_id` now gets `400
+      // missing_account_id` instead of the old `200 skipped:"empty_content"`.
+      // That is an intentional, observable contract change: a malformed
+      // payload (no account_id at all) should never be classified as "just
+      // an empty message" — see the dedicated regression test for this
+      // exact intersection.
       return reply.code(400).send({ error: "missing_account_id" });
     }
     const accountIdStr = String(accountId);
