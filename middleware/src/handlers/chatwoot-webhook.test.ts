@@ -136,6 +136,57 @@ function chatwootMessageCreated(params: {
   };
 }
 
+/**
+ * Real payload captured from Chatwoot message 174 (production DB, account 3
+ * / tenant `duda`, conversation 16, contact Gabriela Andretta, 2026-09-10),
+ * transcribed verbatim from issue #203 with only the Meta `signature=...`
+ * query-string values redacted (they are per-request signed URLs, not
+ * secrets that identify anything reusable, but AGENTS.md's rule is never to
+ * print them regardless). This is the exact case that used to go silent:
+ * `content` is empty, but `content_attributes`/`attachments` prove it was a
+ * real story reply.
+ */
+const REAL_MSG_174_STORY_REPLY_PAYLOAD = {
+  id: 174,
+  content: "",
+  content_type: 0,
+  created_at: new Date().toISOString(),
+  message_type: "incoming",
+  content_attributes: {
+    story_id: "18099013352357043",
+    story_sender: "17841429474434917",
+    story_url:
+      "https://lookaside.fbsbx.com/ig_messaging_cdn/?asset_id=example&signature=REDACTED",
+    image_type: "ig_story_reply",
+    in_reply_to_external_id: null,
+  },
+  attachments: [
+    {
+      file_type: 11,
+      external_url:
+        "https://lookaside.fbsbx.com/ig_messaging_cdn/?asset_id=example&signature=REDACTED",
+    },
+  ],
+  source_id: null,
+  private: false,
+  sender: { id: 9001, name: "Gabriela Andretta", avatar: "", type: "contact" },
+  inbox: { id: 7, name: "miau.duda" },
+  conversation: {
+    additional_attributes: null,
+    channel: "Channel::Instagram",
+    id: 16,
+    inbox_id: 7,
+    status: "open",
+    agent_last_seen_at: 0,
+    contact_last_seen_at: 0,
+    timestamp: Math.floor(Date.now() / 1000),
+    custom_attributes: {},
+    contact_inbox: { contact_id: 9001 },
+  },
+  account: { id: 42, name: "NexaDuo" },
+  event: "message_created",
+};
+
 describe("registerChatwootWebhookRoute — burst dedup + watermark (issue #179)", () => {
   function buildFakePool() {
     const tenants = new Map<string, { dify_api_key: string; dify_app_type: string }>();
@@ -539,5 +590,256 @@ describe("registerChatwootWebhookRoute — burst dedup + watermark (issue #179)"
 
       await app.close();
     });
+  });
+});
+
+/**
+ * Regression tests for issue #203: an empty `content` used to be silently
+ * dropped even when the payload proved there WAS real content (a story
+ * reply, an unrecognized attachment) — 4 of 66 incoming messages on account
+ * 3, including a real story reply from a real contact that never got a
+ * response. These pin: the marker path, the genuinely-empty skip path, the
+ * new metric, and the `@sec` requirement that a Meta-signed URL never
+ * reaches a log line.
+ */
+describe("registerChatwootWebhookRoute — empty content marker (issue #203)", () => {
+  function buildFakePool() {
+    const tenants = new Map<string, { dify_api_key: string; dify_app_type: string }>();
+    tenants.set("42", { dify_api_key: "test-dify-key", dify_app_type: "chatflow" });
+
+    const query = vi.fn(async (sql: string, params: unknown[]) => {
+      if (sql.includes("FROM tenants")) {
+        const row = tenants.get(String(params[0]));
+        return { rows: row ? [row] : [] };
+      }
+      if (sql.includes("SELECT last_processed_message_id")) {
+        return { rows: [] };
+      }
+      if (sql.includes("INSERT INTO conversation_watermarks")) {
+        return { rows: [] };
+      }
+      if (sql.includes("FROM configs")) {
+        return { rows: [] };
+      }
+      throw new Error(`unexpected query in test: ${sql}`);
+    });
+
+    return { query };
+  }
+
+  function buildFakeChatwoot() {
+    return {
+      postMessage: vi.fn().mockResolvedValue({
+        id: 1,
+        content: "",
+        private: false,
+        message_type: "outgoing",
+        created_at: "",
+      }),
+      setConversationCustomAttributes: vi.fn().mockResolvedValue({}),
+    };
+  }
+
+  async function buildApp(
+    pool: ReturnType<typeof buildFakePool>,
+    chatwoot: ReturnType<typeof buildFakeChatwoot>,
+    opts?: { logStream?: { write: (chunk: string) => boolean } },
+  ) {
+    const app = Fastify(
+      opts?.logStream
+        ? { logger: { level: "info", stream: opts.logStream as any } }
+        : { logger: false },
+    );
+    const config = {
+      chatwoot: { webhookToken: undefined, baseUrl: "https://chat.example", apiToken: "x" },
+      dify: { baseUrl: "https://dify.example", requestTimeoutMs: 5000 },
+      webhook: { debounceMs: 20 },
+    } as unknown as AppConfig;
+    const metrics = createMetrics();
+    await registerChatwootWebhookRoute(app, config, metrics, chatwoot as any, pool as any);
+    await app.ready();
+    return { app, metrics };
+  }
+
+  beforeEach(() => {
+    chatBlocking.mockReset();
+    chatStreaming.mockReset();
+    chatBlocking.mockResolvedValue({
+      message_id: "m1",
+      conversation_id: "dify-conv-1",
+      answer: "resposta única",
+    });
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("story reply (real payload, msg 174) with empty content ⇒ answered with the story-reply marker, not skipped", async () => {
+    const pool = buildFakePool();
+    const chatwoot = buildFakeChatwoot();
+    const { app } = await buildApp(pool, chatwoot);
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/webhooks/chatwoot",
+      payload: REAL_MSG_174_STORY_REPLY_PAYLOAD,
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ ok: true, buffered: true });
+
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    expect(chatBlocking).toHaveBeenCalledTimes(1);
+    expect(chatBlocking.mock.calls[0][0].query).toBe(
+      "[o usuário respondeu ao seu story]",
+    );
+    // The Dify request must never carry the signed story/attachment URL.
+    const serializedDifyCall = JSON.stringify(chatBlocking.mock.calls[0][0]);
+    expect(serializedDifyCall).not.toContain("signature=");
+    expect(serializedDifyCall).not.toContain("lookaside.fbsbx.com");
+
+    // Duda's answer, not the raw marker, is what reaches the user.
+    expect(chatwoot.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ content: "resposta única" }),
+    );
+
+    await app.close();
+  });
+
+  it("attachment of an unconfirmed file_type ⇒ generic marker, not skipped", async () => {
+    const pool = buildFakePool();
+    const chatwoot = buildFakeChatwoot();
+    const { app } = await buildApp(pool, chatwoot);
+
+    await app.inject({
+      method: "POST",
+      url: "/webhooks/chatwoot",
+      payload: {
+        id: 500,
+        content: "",
+        content_type: 0,
+        message_type: "incoming",
+        content_attributes: {},
+        attachments: [{ file_type: 999, external_url: "https://example.com/x" }],
+        private: false,
+        sender: { id: 1, type: "contact" },
+        conversation: { id: 50, custom_attributes: {}, contact_inbox: { contact_id: 1 } },
+        account: { id: 42 },
+        event: "message_created",
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    expect(chatBlocking).toHaveBeenCalledTimes(1);
+    expect(chatBlocking.mock.calls[0][0].query).toBe("[o usuário enviou uma mídia]");
+
+    await app.close();
+  });
+
+  it("genuinely empty content (no attachments, no content_attributes signal) ⇒ still skipped, no Dify call", async () => {
+    const pool = buildFakePool();
+    const chatwoot = buildFakeChatwoot();
+    const { app } = await buildApp(pool, chatwoot);
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/webhooks/chatwoot",
+      payload: {
+        id: 501,
+        content: "",
+        content_type: 0,
+        message_type: "incoming",
+        content_attributes: {},
+        private: false,
+        sender: { id: 1, type: "contact" },
+        conversation: { id: 51, custom_attributes: {}, contact_inbox: { contact_id: 1 } },
+        account: { id: 42 },
+        event: "message_created",
+      },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ skipped: "empty_content" });
+
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(chatBlocking).not.toHaveBeenCalled();
+    expect(chatwoot.postMessage).not.toHaveBeenCalled();
+
+    await app.close();
+  });
+
+  it("counts the marker metric per account/type/outcome, distinguishing answered-with-marker from skipped", async () => {
+    const pool = buildFakePool();
+    const chatwoot = buildFakeChatwoot();
+    const { app, metrics } = await buildApp(pool, chatwoot);
+
+    await app.inject({
+      method: "POST",
+      url: "/webhooks/chatwoot",
+      payload: REAL_MSG_174_STORY_REPLY_PAYLOAD,
+    });
+    await app.inject({
+      method: "POST",
+      url: "/webhooks/chatwoot",
+      payload: {
+        id: 502,
+        content: "",
+        content_type: 0,
+        message_type: "incoming",
+        content_attributes: {},
+        private: false,
+        sender: { id: 1, type: "contact" },
+        conversation: { id: 52, custom_attributes: {}, contact_inbox: { contact_id: 1 } },
+        account: { id: 42 },
+        event: "message_created",
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    const markerCount = await metrics.emptyContentTotal.get();
+    const answered = markerCount.values.find(
+      (v) =>
+        v.labels.outcome === "answered_with_marker" &&
+        v.labels.type === "story_reply" &&
+        v.labels.account_id === "42",
+    );
+    const skipped = markerCount.values.find(
+      (v) =>
+        v.labels.outcome === "skipped" &&
+        v.labels.type === "none" &&
+        v.labels.account_id === "42",
+    );
+    expect(answered?.value).toBe(1);
+    expect(skipped?.value).toBe(1);
+
+    await app.close();
+  });
+
+  it("never logs the Meta-signed story_url/external_url — `@sec` requirement", async () => {
+    const pool = buildFakePool();
+    const chatwoot = buildFakeChatwoot();
+    const chunks: string[] = [];
+    const logStream = {
+      write: (chunk: string) => {
+        chunks.push(chunk);
+        return true;
+      },
+    };
+    const { app } = await buildApp(pool, chatwoot, { logStream });
+
+    await app.inject({
+      method: "POST",
+      url: "/webhooks/chatwoot",
+      payload: REAL_MSG_174_STORY_REPLY_PAYLOAD,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    const logOutput = chunks.join("");
+    expect(logOutput).not.toContain("signature=");
+    expect(logOutput).not.toContain("lookaside.fbsbx.com");
+    expect(logOutput).not.toContain("story_url");
+    expect(logOutput).not.toContain("external_url");
+
+    await app.close();
   });
 });
