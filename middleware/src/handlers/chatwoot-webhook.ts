@@ -171,6 +171,68 @@ async function persistWatermark(
   );
 }
 
+/**
+ * Reads the per-contact persisted Dify `conversation_id` — the source of
+ * truth for per-contact agent memory (issue #204). Returns `undefined` for
+ * both "no row yet" and any read miss; callers fall back to the
+ * `dify_conversation_id` webhook hint (transition compatibility) and, after
+ * that, to letting Dify start a new conversation.
+ *
+ * MUST NEVER be called with `contactId === "unknown"` — see
+ * `persistContactDifyConversationId` for why; this function does not itself
+ * special-case it because every real call site already filters it out
+ * before reaching here, and a defensive no-op return here would silently
+ * mask a caller bug instead of surfacing it.
+ */
+async function readContactDifyConversationId(
+  pool: pg.Pool,
+  accountIdStr: string,
+  contactId: number | string,
+): Promise<string | undefined> {
+  const result = await pool.query(
+    "SELECT dify_conversation_id FROM contact_dify_conversations WHERE account_id = $1 AND contact_id = $2",
+    [accountIdStr, String(contactId)],
+  );
+  return (result.rows[0]?.dify_conversation_id as string | undefined) ?? undefined;
+}
+
+/**
+ * Persists `dify_conversation_id` per (account, contact) — issue #204: the
+ * agent's memory is per CONTACT now, reused indefinitely across Chatwoot
+ * conversations, not reset every time a new conversation is opened.
+ *
+ * ARMADILHA (mandatory guard, per the issue): `contactId` falls back to the
+ * literal string `"unknown"` elsewhere in this file when
+ * `conversation.contact_inbox.contact_id` is absent from the webhook
+ * payload. That string is NOT a real contact id — it is a shared sentinel.
+ * Writing it here would merge every contact whose payload happens to be
+ * missing that field into ONE shared Dify conversation, leaking one
+ * person's history to another. The guard is enforced HERE (not only at the
+ * call site in `flushGroup`) so a future call site cannot reintroduce the
+ * leak by forgetting to check first.
+ */
+async function persistContactDifyConversationId(
+  pool: pg.Pool,
+  accountIdStr: string,
+  contactId: number | string,
+  difyConversationId: string,
+): Promise<void> {
+  if (contactId === "unknown") {
+    throw new Error(
+      "persistContactDifyConversationId: refusing to write the shared 'unknown' contact row (issue #204)",
+    );
+  }
+  await pool.query(
+    `INSERT INTO contact_dify_conversations (account_id, contact_id, dify_conversation_id, updated_at)
+     VALUES ($1, $2, $3, CURRENT_TIMESTAMP)
+     ON CONFLICT (account_id, contact_id)
+     DO UPDATE SET
+       dify_conversation_id = EXCLUDED.dify_conversation_id,
+       updated_at = CURRENT_TIMESTAMP`,
+    [accountIdStr, String(contactId), difyConversationId],
+  );
+}
+
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -308,9 +370,54 @@ async function flushGroup(
     return;
   }
 
-  const difyConvId =
-    difyConvIdCache.get(group.key) ??
-    group.messages.find((m) => m.difyConvIdHint)?.difyConvIdHint;
+  // Issue #204: the agent's memory is keyed by CONTACT, not by Chatwoot
+  // conversation — a reused Dify `conversation_id` must follow the same
+  // person across every Chatwoot conversation they ever open. ARMADILHA:
+  // `contactId === "unknown"` (the payload never carried
+  // `contact_inbox.contact_id`) must keep the OLD per-conversation behavior
+  // — `group.key` is `accountId:conversationId` (see `watermarkKey`) — and
+  // must never touch `contact_dify_conversations`, which would merge
+  // different people's history under the shared sentinel row.
+  //
+  // `@sec` finding (issue #204 review): `contactId` and `conversationId` are
+  // independent numeric sequences within the same account, so an unprefixed
+  // `${accountIdStr}:${id}` key can collide (e.g. contact 10 and conversation
+  // 10 in the same account both render as `"3:10"`), leaking one person's
+  // Dify `conversation_id` into an unrelated conversation's reply. The
+  // `contact:`/`conv:` prefixes below make the two key spaces disjoint by
+  // construction — never remove them or reuse this cache without a prefix.
+  const cacheKey =
+    contactId === "unknown"
+      ? `conv:${group.key}`
+      : `contact:${accountIdStr}:${contactId}`;
+
+  let difyConvId = difyConvIdCache.get(cacheKey);
+  // `resolvedFrom` tracks WHERE `difyConvId` came from, because "did it come
+  // from the table already?" is what decides whether we still need to write
+  // it through below — `!difyConvId` alone (the pre-fix check) can't express
+  // that, since a hint match makes `difyConvId` truthy too (`@rev` finding,
+  // PR #210: the hint branch resolved a value but never wrote it through,
+  // contradicting this file's own "a future turn will simply retry the
+  // write" comment and `scripts/backfill-contact-dify-conversations.sh`'s
+  // docstring, which claimed the same self-heal).
+  let resolvedFrom: "cache" | "table" | "legacy" | undefined = difyConvId
+    ? "cache"
+    : undefined;
+  if (!difyConvId && contactId !== "unknown") {
+    // (1) The new table is the source of truth for a real contact.
+    difyConvId = await readContactDifyConversationId(pool, accountIdStr, contactId);
+    if (difyConvId) resolvedFrom = "table";
+  }
+  if (!difyConvId) {
+    // (2) Transition-compatibility fallback: a `dify_conversation_id` still
+    // written to THIS conversation's `custom_attributes` from before the
+    // per-contact table existed (or from a run where the table write below
+    // failed non-fatally). Resolving here does NOT mean the table already
+    // has this value — see the write-through below.
+    difyConvId = group.messages.find((m) => m.difyConvIdHint)?.difyConvIdHint;
+    if (difyConvId) resolvedFrom = "legacy";
+  }
+  // (3) Neither found ⇒ stays undefined; Dify starts a brand-new conversation.
 
   const dify = new DifyClient(
     tenant.baseUrl,
@@ -351,9 +458,74 @@ async function flushGroup(
       );
     }
 
-    // Persist Dify conversation_id on first turn for memory continuity.
-    if (!difyConvId && difyResp.conversation_id) {
-      difyConvIdCache.set(group.key, difyResp.conversation_id);
+    // Cache/persist Dify conversation_id for memory continuity whenever it
+    // did NOT already come from the cache or the table. Three situations
+    // reach here:
+    //  - `resolvedFrom === undefined`: Dify started a brand-new conversation
+    //    this turn (nothing resolved `difyConvId` beforehand) — this is the
+    //    ONLY case for `contactId === "unknown"`, since that sentinel never
+    //    consults the table (see below) and keeps the OLD per-conversation
+    //    cache-only behavior.
+    //  - `resolvedFrom === "legacy"`: the legacy `custom_attributes` hint
+    //    resolved `difyConvId`, but that alone never wrote it through to the
+    //    new table (`@rev` finding, PR #210 review) — every pre-existing
+    //    conversation from before this feature shipped hits this branch on
+    //    its first post-deploy message, and without this write-through the
+    //    table depends entirely on the manual backfill script rather than
+    //    self-healing lazily, contradicting both this comment's prior claim
+    //    and `scripts/backfill-contact-dify-conversations.sh`'s docstring.
+    // `resolvedFrom === "cache"` or `"table"` means this value is already
+    // durably persisted — nothing to redo.
+    if (resolvedFrom !== "table" && resolvedFrom !== "cache" && difyResp.conversation_id) {
+      // Issue #204: the table is the source of truth going forward — but
+      // NEVER for the shared "unknown" sentinel (see
+      // `persistContactDifyConversationId`'s docstring, and the `contactId
+      // !== "unknown"` guard below). The cache, however, DOES cover
+      // "unknown" — it is what preserves the old per-conversation memory
+      // for that sentinel (keyed by `conv:${group.key}`, disjoint from the
+      // per-contact `contact:` keys — see the cacheKey comment above).
+      //
+      // Best-effort/non-fatal: a failed table write still gets absorbed by
+      // the in-memory cache below so THIS process keeps answering correctly,
+      // and a future process restart falls back to re-resolving via the
+      // table/hint again.
+      //
+      // `@rev` finding (PR #210, MEDIUM): `cache.set` is deferred until AFTER
+      // the persist `await` settles (success or failure), in a `finally`,
+      // rather than run synchronously beforehand. Two concurrent first-turns
+      // for the same contact (different Chatwoot conversations racing
+      // through this function) each call Dify independently and can resolve
+      // different `conversation_id`s; the table's true final value is
+      // whichever UPSERT's `await` resolves last (Postgres serializes
+      // commits), so setting the cache right after our own `await` resolves
+      // keeps the cache's write-order aligned with the table's commit order
+      // instead of racing ahead of it on the synchronous JS call stack.
+      try {
+        if (contactId !== "unknown") {
+          await persistContactDifyConversationId(
+            pool,
+            accountIdStr,
+            contactId,
+            difyResp.conversation_id,
+          );
+        }
+      } catch (err) {
+        log.warn(
+          { err, accountId: accountIdStr, contactId },
+          "webhook: failed to persist contact_dify_conversations row (non-fatal)",
+        );
+      } finally {
+        difyConvIdCache.set(cacheKey, difyResp.conversation_id);
+      }
+    }
+
+    // Still written to the conversation's custom_attributes too — a visible
+    // trail for anyone debugging via the Chatwoot UI — but the table above,
+    // not this, is now the source of truth. Only meaningful the first time
+    // Dify hands us a brand-new id (`resolvedFrom === undefined`): the
+    // "legacy" case means this very attribute is where `difyConvId` came
+    // from, so it already holds this value.
+    if (!resolvedFrom && difyResp.conversation_id) {
       try {
         await chatwoot.setConversationCustomAttributes({
           accountId: accountIdStr,
@@ -547,9 +719,18 @@ export async function registerChatwootWebhookRoute(
   chatwoot: ChatwootClient,
   pool: pg.Pool,
 ): Promise<void> {
-  // dify_conversation_id per conversation key, freshest-wins cache so a
-  // burst that arrives before Chatwoot's custom_attributes write lands
-  // (or before we've re-read it) still gets the right Dify thread.
+  // dify_conversation_id cache, freshest-wins, so a burst that arrives
+  // before the persisted write (table or custom_attributes) lands — or
+  // before we've re-read it — still gets the right Dify thread. Keyed by
+  // `contact:<accountId>:<contactId>` (per-contact memory, issue #204) EXCEPT
+  // when `contactId === "unknown"`, which keeps the old per-conversation
+  // behavior under `conv:<accountId>:<conversationId>` so different people
+  // who all lack a `contact_id` never share a slot. The two prefixes are
+  // disjoint by construction (issue #204 `@sec` finding): `contactId` and
+  // `conversationId` are independent numeric sequences in the same account,
+  // so an unprefixed `${accountId}:${id}` could collide between a contact and
+  // an unrelated conversation with the same numeric id and leak one person's
+  // Dify memory into another's reply. Never drop these prefixes.
   const difyConvIdCache = new Map<string, string>();
 
   const debouncer = new ConversationDebouncer<BufferedIncomingMessage>(
