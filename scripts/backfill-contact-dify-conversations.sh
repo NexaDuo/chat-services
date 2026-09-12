@@ -9,10 +9,19 @@
 # per-CONTACT. Existing data has NO row in the new table yet — only the old,
 # per-conversation `custom_attributes.dify_conversation_id`. Without this
 # backfill, every contact who already has history restarts fresh the first
-# time they message after this change ships (until the webhook handler's
-# custom_attributes-hint fallback fires and repopulates the table on their
-# NEXT message — this script just makes that immediate instead of lazy, and
-# covers contacts who might not message again soon).
+# time they message after this change ships until the webhook handler's
+# custom_attributes-hint fallback fires and writes the value through to the
+# table (`middleware/src/handlers/chatwoot-webhook.ts`, the `resolvedFrom ===
+# "legacy"` branch) — this script just makes that immediate instead of lazy,
+# and covers contacts who might not message again soon.
+#
+# NOTE (PR #210 `@rev` review): before that write-through branch existed, this
+# claim was FALSE — the hint resolved a value for that one turn but never
+# persisted it, so this script was the ONLY thing populating the table for
+# any pre-existing contact. That gap is fixed in the handler now; this script
+# remains useful only to make the population immediate rather than waiting
+# for each contact's next message (or for restoring `middleware` after a
+# separate-database DR restore per `AGENTS.md`'s disaster-recovery section).
 #
 # For each (account_id, contact_id), the MOST RECENT Chatwoot conversation
 # (by `updated_at`) that carries a `dify_conversation_id` wins — mirroring
@@ -30,9 +39,19 @@
 # SAFETY:
 #   - DRY-RUN by default: prints the candidate rows and count, writes
 #     NOTHING. Pass --apply (or BACKFILL_APPLY=1) to actually write.
-#   - Idempotent: an UPSERT (ON CONFLICT DO UPDATE) keyed on the table's own
-#     (account_id, contact_id) primary key — re-running is always safe and
-#     converges to the same freshest-wins result.
+#   - Idempotent, and — since PR #210's `@rev` review — non-regressing: the
+#     write is `ON CONFLICT (account_id, contact_id) DO NOTHING`, so a row
+#     already present in `contact_dify_conversations` is left untouched. A
+#     naive `DO UPDATE` (the pre-#210 version of this script) would
+#     unconditionally overwrite with whatever `chatwoot.conversations`
+#     currently says is freshest, with no comparison against the target
+#     row's own `updated_at` — if live traffic already advanced that
+#     contact's row (via the handler's own persist path) since the last
+#     backfill run, a second run could silently revert it to a stale value
+#     still sitting in `custom_attributes`. `DO NOTHING` makes re-running
+#     this script strictly additive: it only fills gaps (contacts with no
+#     row yet), never regresses a contact the live handler has already
+#     progressed.
 #   - Reproducibility (AGENTS.md): no manual host intervention — this script
 #     IS the fix, versioned here, runnable against any environment's live
 #     Postgres via `docker exec`, same pattern as
@@ -97,10 +116,12 @@ if [[ "$APPLY" != "1" ]]; then
   exit 0
 fi
 
-# 2. Apply idempotently to `middleware`, one UPSERT per row, values passed as
-#    psql variables over stdin (never `-c` with `-v`, and never shell-
-#    interpolated into the SQL text) so a Dify-controlled conversation_id
-#    string can never be interpreted as SQL.
+# 2. Apply idempotently to `middleware`, one INSERT-or-skip per row, values
+#    passed as psql variables over stdin (never `-c` with `-v`, and never
+#    shell-interpolated into the SQL text) so a Dify-controlled
+#    conversation_id string can never be interpreted as SQL. `DO NOTHING`
+#    means a row already present (e.g. advanced by live traffic since a
+#    prior run) is never overwritten — see the SAFETY note above.
 APPLIED=0
 while IFS=$'\t' read -r ACCOUNT_ID CONTACT_ID DIFY_CONV_ID; do
   [[ -z "$ACCOUNT_ID" ]] && continue
@@ -109,11 +130,9 @@ while IFS=$'\t' read -r ACCOUNT_ID CONTACT_ID DIFY_CONV_ID; do
     -q <<'SQL' >/dev/null
 INSERT INTO contact_dify_conversations (account_id, contact_id, dify_conversation_id, updated_at)
 VALUES (:'account_id', :'contact_id', :'dify_conv', CURRENT_TIMESTAMP)
-ON CONFLICT (account_id, contact_id) DO UPDATE SET
-  dify_conversation_id = EXCLUDED.dify_conversation_id,
-  updated_at = CURRENT_TIMESTAMP;
+ON CONFLICT (account_id, contact_id) DO NOTHING;
 SQL
   APPLIED=$((APPLIED + 1))
 done <<< "$ROWS"
 
-echo "[backfill-contact-dify-conversations] aplicado(s) ${APPLIED} linha(s) em contact_dify_conversations (banco 'middleware')."
+echo "[backfill-contact-dify-conversations] processada(s) ${APPLIED} linha(s) candidata(s) contra contact_dify_conversations (banco 'middleware') — linhas já existentes foram preservadas (DO NOTHING)."

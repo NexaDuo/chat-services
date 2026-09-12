@@ -255,6 +255,11 @@ describe("registerChatwootWebhookRoute — burst dedup + watermark (issue #179)"
     // Exposed on the returned object so tests can assert on it directly.
     const contactDifyConversations = new Map<string, string>();
     let configsError: Error | null = null;
+    // Regression coverage for the `@rev` MEDIUM finding (PR #210): both the
+    // new table's read and write are wrapped/gated as non-fatal, but nothing
+    // pinned that. These let a test force either query to throw.
+    let contactDifyReadError: Error | null = null;
+    let contactDifyWriteError: Error | null = null;
     tenants.set("42", { dify_api_key: "test-dify-key", dify_app_type: "chatflow" });
 
     const query = vi.fn(async (sql: string, params: unknown[]) => {
@@ -275,6 +280,7 @@ describe("registerChatwootWebhookRoute — burst dedup + watermark (issue #179)"
         return { rows: [] };
       }
       if (sql.includes("FROM contact_dify_conversations")) {
+        if (contactDifyReadError) throw contactDifyReadError;
         // Never see a query for the shared "unknown" sentinel — pinned by a
         // dedicated test below via `pool.query` call assertions.
         const key = `${params[0]}:${params[1]}`;
@@ -282,6 +288,7 @@ describe("registerChatwootWebhookRoute — burst dedup + watermark (issue #179)"
         return { rows: value === undefined ? [] : [{ dify_conversation_id: value }] };
       }
       if (sql.includes("INSERT INTO contact_dify_conversations")) {
+        if (contactDifyWriteError) throw contactDifyWriteError;
         const key = `${params[0]}:${params[1]}`;
         contactDifyConversations.set(key, String(params[2]));
         return { rows: [] };
@@ -302,6 +309,12 @@ describe("registerChatwootWebhookRoute — burst dedup + watermark (issue #179)"
       contactDifyConversations,
       setConfigsError: (err: Error | null) => {
         configsError = err;
+      },
+      setContactDifyReadError: (err: Error | null) => {
+        contactDifyReadError = err;
+      },
+      setContactDifyWriteError: (err: Error | null) => {
+        contactDifyWriteError = err;
       },
     };
   }
@@ -853,7 +866,7 @@ describe("registerChatwootWebhookRoute — burst dedup + watermark (issue #179)"
       await app.close();
     });
 
-    it("falls back to the custom_attributes hint when the table has no row yet (transition compatibility)", async () => {
+    it("falls back to the custom_attributes hint when the table has no row yet (transition compatibility), AND writes it through to the table (`@rev` HIGH finding, PR #210)", async () => {
       const pool = buildFakePool();
       const chatwoot = buildFakeChatwoot();
       const app = await buildApp(pool, chatwoot);
@@ -861,6 +874,16 @@ describe("registerChatwootWebhookRoute — burst dedup + watermark (issue #179)"
       // Table is empty for this contact, but the webhook carries the OLD
       // per-conversation `dify_conversation_id` custom attribute — as would
       // happen right after this feature ships, before the backfill runs.
+      // Dify itself echoes back the same `conversation_id` it was given
+      // when continuing an existing conversation (real API behavior) — the
+      // mock mirrors that instead of the fixture's static "dify-conv-1", so
+      // the write-through assertion below reflects what Dify would actually
+      // return, not an artifact of the test double.
+      chatBlocking.mockResolvedValueOnce({
+        message_id: "m1",
+        conversation_id: "dify-conv-legacy-hint",
+        answer: "oi de volta",
+      });
       await app.inject({
         method: "POST",
         url: "/webhooks/chatwoot",
@@ -876,6 +899,34 @@ describe("registerChatwootWebhookRoute — burst dedup + watermark (issue #179)"
       await new Promise((resolve) => setTimeout(resolve, 200));
 
       expect(chatBlocking.mock.calls[0][0].conversationId).toBe("dify-conv-legacy-hint");
+
+      // Regression for the `@rev` HIGH finding on PR #210: before the fix, the
+      // persist call was gated on `!difyConvId`, which is false here (the
+      // hint resolved a truthy value) — so this table row was NEVER written,
+      // contradicting this file's and the backfill script's own comments
+      // that a future turn would "simply retry the write" / "repopulate the
+      // table on the next message". Without the fix this assertion fails:
+      // `pool.contactDifyConversations.get("42:701")` stays `undefined`.
+      expect(pool.contactDifyConversations.get("42:701")).toBe("dify-conv-legacy-hint");
+
+      // A SECOND Chatwoot conversation for the SAME contact, with no hint of
+      // its own, must now reuse the table row the first turn just wrote —
+      // proving the write-through actually restores continuity across
+      // conversations, not just satisfies the assertion above.
+      await app.inject({
+        method: "POST",
+        url: "/webhooks/chatwoot",
+        payload: chatwootMessageCreated({
+          id: 961,
+          content: "outra conversa, mesmo contato",
+          accountId: 42,
+          conversationId: 98,
+          contactId: 701,
+        }),
+      });
+      await new Promise((resolve) => setTimeout(resolve, 200));
+
+      expect(chatBlocking.mock.calls[1][0].conversationId).toBe("dify-conv-legacy-hint");
 
       await app.close();
     });
@@ -987,6 +1038,109 @@ describe("registerChatwootWebhookRoute — burst dedup + watermark (issue #179)"
       expect(chatBlocking).toHaveBeenCalledTimes(3);
       expect(chatBlocking.mock.calls[2][0].conversationId).toBe("dify-conv-unknown-10");
       expect(chatBlocking.mock.calls[2][0].conversationId).not.toBe("dify-conv-contact-10");
+
+      await app.close();
+    });
+
+    // `@rev` MEDIUM finding (PR #210): neither of the new table's two failure
+    // paths had coverage. Both must degrade gracefully — the reply still
+    // reaches the user — mirroring the existing `chatBlocking`/
+    // `chatwoot.postMessage` rejection tests already in this suite.
+    it("a transient read failure on contact_dify_conversations is NOT swallowed by flushGroup: it propagates uncaught to the debouncer, and the reply is never sent (documented pre-existing gap, `@rev` PR #210 finding 4.1 — same placement issue as readWatermark)", async () => {
+      const pool = buildFakePool();
+      pool.setContactDifyReadError(new Error("ECONNRESET reading contact_dify_conversations"));
+      const chatwoot = buildFakeChatwoot();
+      const app = await buildApp(pool, chatwoot);
+
+      await app.inject({
+        method: "POST",
+        url: "/webhooks/chatwoot",
+        payload: chatwootMessageCreated({
+          id: 999,
+          content: "oi",
+          accountId: 42,
+          conversationId: 199,
+          contactId: 1001,
+        }),
+      });
+      await new Promise((resolve) => setTimeout(resolve, 200));
+
+      // `readContactDifyConversationId` (called at the top of `flushGroup`,
+      // BEFORE the try/catch that starts around the Dify call) throws here.
+      // That's outside any try/catch in this function, so it propagates to
+      // the debouncer's `onError` (log-only) — Dify is never even called,
+      // and the user gets total silence rather than even the existing
+      // best-effort "processing failed" note (which only fires from the
+      // try/catch around the Dify call, further down). This pins the exact
+      // behavior `@rev` flagged in PR #210 review finding 4.1 as a real gap
+      // — NOT introduced by issue #204 (the pre-existing `readWatermark` call
+      // a few lines above has the identical placement issue) but newly
+      // exercised by this table. Fixing the placement is out of scope for
+      // this PR per `@techlead`'s task; this test exists so the behavior is
+      // pinned and visible instead of silently assumed.
+      expect(chatBlocking).not.toHaveBeenCalled();
+      expect(chatwoot.postMessage).not.toHaveBeenCalled();
+
+      await app.close();
+    });
+
+    it("a transient write failure on contact_dify_conversations is swallowed (logged, non-fatal): reply still posts and the in-memory cache still holds the value", async () => {
+      const pool = buildFakePool();
+      pool.setContactDifyWriteError(new Error("connection terminated writing contact_dify_conversations"));
+      const chatwoot = buildFakeChatwoot();
+      const app = await buildApp(pool, chatwoot);
+
+      chatBlocking.mockResolvedValueOnce({
+        message_id: "m1",
+        conversation_id: "dify-conv-write-fails",
+        answer: "primeira resposta",
+      });
+      await app.inject({
+        method: "POST",
+        url: "/webhooks/chatwoot",
+        payload: chatwootMessageCreated({
+          id: 1001,
+          content: "oi",
+          accountId: 42,
+          conversationId: 200,
+          contactId: 1002,
+        }),
+      });
+      await new Promise((resolve) => setTimeout(resolve, 200));
+
+      // The reply must still reach the user even though the table write blew up.
+      expect(chatwoot.postMessage).toHaveBeenCalledTimes(1);
+      expect(chatwoot.postMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ content: "primeira resposta" }),
+      );
+      // The write genuinely failed — the table has no row for this contact.
+      expect(pool.contactDifyConversations.has("42:1002")).toBe(false);
+
+      // But the in-memory cache absorbed the value anyway (the `finally`
+      // block runs regardless of the persist outcome — see the comment at
+      // the cache.set call site), so a SECOND conversation for the same
+      // contact within the same process still reuses it instead of starting
+      // a new Dify conversation.
+      pool.setContactDifyWriteError(null);
+      chatBlocking.mockResolvedValueOnce({
+        message_id: "m2",
+        conversation_id: "dify-conv-write-fails-should-not-be-used",
+        answer: "segunda resposta",
+      });
+      await app.inject({
+        method: "POST",
+        url: "/webhooks/chatwoot",
+        payload: chatwootMessageCreated({
+          id: 1002,
+          content: "voltei",
+          accountId: 42,
+          conversationId: 201,
+          contactId: 1002,
+        }),
+      });
+      await new Promise((resolve) => setTimeout(resolve, 200));
+
+      expect(chatBlocking.mock.calls[1][0].conversationId).toBe("dify-conv-write-fails");
 
       await app.close();
     });
