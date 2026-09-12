@@ -906,6 +906,90 @@ describe("registerChatwootWebhookRoute — burst dedup + watermark (issue #179)"
 
       await app.close();
     });
+
+    it("`@sec` regression: a contact_id numerically equal to an unrelated conversation_id never shares its Dify memory (issue #204 HIGH finding)", async () => {
+      // Before the fix, the cache key for an "unknown" contact was
+      // `group.key` = `accountId:conversationId`, and the cache key for a
+      // real contact was `accountId:contactId` — identical strings whenever
+      // `contactId === conversationId` numerically, since both are
+      // independent sequences in the same account. Here contact 10 and
+      // conversation 10 collide on purpose, exactly like production account 3
+      // (contact_ids 4..12 vs conversation_ids 4..16).
+      const pool = buildFakePool();
+      const chatwoot = buildFakeChatwoot();
+      const app = await buildApp(pool, chatwoot);
+
+      // (1) An "unknown"-contact message lands in conversation 10. Old code
+      // caches it under the colliding key `"42:10"`.
+      chatBlocking.mockResolvedValueOnce({
+        message_id: "m1",
+        conversation_id: "dify-conv-unknown-10",
+        answer: "resposta desconhecido",
+      });
+      await app.inject({
+        method: "POST",
+        url: "/webhooks/chatwoot",
+        payload: chatwootMessageCreated({
+          id: 980,
+          content: "oi",
+          accountId: 42,
+          conversationId: 10,
+          contactId: null,
+        }),
+      });
+      await new Promise((resolve) => setTimeout(resolve, 200));
+
+      // (2) A message from REAL contact 10, in an unrelated conversation
+      // (20), with no prior memory of its own. Under the collision, old code
+      // would read the "unknown" conversation's cached entry for `"42:10"`
+      // and hand contact 10's turn the wrong Dify `conversation_id`.
+      chatBlocking.mockResolvedValueOnce({
+        message_id: "m2",
+        conversation_id: "dify-conv-contact-10",
+        answer: "resposta contato 10",
+      });
+      await app.inject({
+        method: "POST",
+        url: "/webhooks/chatwoot",
+        payload: chatwootMessageCreated({
+          id: 990,
+          content: "oi, sou o contato 10",
+          accountId: 42,
+          conversationId: 20,
+          contactId: 10,
+        }),
+      });
+      await new Promise((resolve) => setTimeout(resolve, 200));
+
+      // Contact 10's first turn must start a BRAND NEW Dify conversation —
+      // never the "unknown" conversation's leaked id.
+      expect(chatBlocking.mock.calls[1][0].conversationId).not.toBe("dify-conv-unknown-10");
+      expect(chatBlocking.mock.calls[1][0].conversationId).toBeUndefined();
+      expect(pool.contactDifyConversations.get("42:10")).toBe("dify-conv-contact-10");
+
+      // (3) A second "unknown"-contact message, back in conversation 10, must
+      // still reuse ITS OWN memory ("dify-conv-unknown-10") — never contact
+      // 10's, which the collision could just as easily have leaked the other
+      // way.
+      await app.inject({
+        method: "POST",
+        url: "/webhooks/chatwoot",
+        payload: chatwootMessageCreated({
+          id: 981,
+          content: "voltei",
+          accountId: 42,
+          conversationId: 10,
+          contactId: null,
+        }),
+      });
+      await new Promise((resolve) => setTimeout(resolve, 200));
+
+      expect(chatBlocking).toHaveBeenCalledTimes(3);
+      expect(chatBlocking.mock.calls[2][0].conversationId).toBe("dify-conv-unknown-10");
+      expect(chatBlocking.mock.calls[2][0].conversationId).not.toBe("dify-conv-contact-10");
+
+      await app.close();
+    });
   });
 });
 

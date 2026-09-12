@@ -378,8 +378,18 @@ async function flushGroup(
   // — `group.key` is `accountId:conversationId` (see `watermarkKey`) — and
   // must never touch `contact_dify_conversations`, which would merge
   // different people's history under the shared sentinel row.
+  //
+  // `@sec` finding (issue #204 review): `contactId` and `conversationId` are
+  // independent numeric sequences within the same account, so an unprefixed
+  // `${accountIdStr}:${id}` key can collide (e.g. contact 10 and conversation
+  // 10 in the same account both render as `"3:10"`), leaking one person's
+  // Dify `conversation_id` into an unrelated conversation's reply. The
+  // `contact:`/`conv:` prefixes below make the two key spaces disjoint by
+  // construction — never remove them or reuse this cache without a prefix.
   const cacheKey =
-    contactId === "unknown" ? group.key : `${accountIdStr}:${contactId}`;
+    contactId === "unknown"
+      ? `conv:${group.key}`
+      : `contact:${accountIdStr}:${contactId}`;
 
   let difyConvId = difyConvIdCache.get(cacheKey);
   if (!difyConvId && contactId !== "unknown") {
@@ -660,9 +670,15 @@ export async function registerChatwootWebhookRoute(
   // dify_conversation_id cache, freshest-wins, so a burst that arrives
   // before the persisted write (table or custom_attributes) lands — or
   // before we've re-read it — still gets the right Dify thread. Keyed by
-  // `accountId:contactId` (per-contact memory, issue #204) EXCEPT when
-  // `contactId === "unknown"`, which keeps the old `accountId:conversationId`
-  // key so different people who all lack a `contact_id` never share a slot.
+  // `contact:<accountId>:<contactId>` (per-contact memory, issue #204) EXCEPT
+  // when `contactId === "unknown"`, which keeps the old per-conversation
+  // behavior under `conv:<accountId>:<conversationId>` so different people
+  // who all lack a `contact_id` never share a slot. The two prefixes are
+  // disjoint by construction (issue #204 `@sec` finding): `contactId` and
+  // `conversationId` are independent numeric sequences in the same account,
+  // so an unprefixed `${accountId}:${id}` could collide between a contact and
+  // an unrelated conversation with the same numeric id and leak one person's
+  // Dify memory into another's reply. Never drop these prefixes.
   const difyConvIdCache = new Map<string, string>();
 
   const debouncer = new ConversationDebouncer<BufferedIncomingMessage>(
