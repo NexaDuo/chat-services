@@ -211,8 +211,10 @@ Dumps: `~/nexaduo-local/dumps/<db>-<YYYY-MM-DD>-HHMM.sql.gz` (+ off-host mirror 
 
 ## Live gotchas
 - **Dify SSRF proxy (issue #222):** `deploy/squid/squid.conf` is the versioned
-  destination ACL, mounted read-only; API/worker/plugin daemon use SSRF proxy
-  URLs and sandbox uses HTTP(S)_PROXY without NO_PROXY bypasses. Public egress
+  destination ACL, mounted read-only; API/worker use SSRF proxy URLs and
+  sandbox uses HTTP(S)_PROXY without NO_PROXY bypasses. The plugin daemon is
+  NOT proxied (0.5.3 ignores SSRF_PROXY_*; HTTP(S)_PROXY would also route its
+  inner-API calls to dify-api into the deny ACL) — see #229. Public egress
   permits only 80/443 (CONNECT only 443), denying internal/reserved IPs even
   through DNS names. The only internal exception is an HTTP POST to
   `middleware:4000/tools/handoff`; middleware authentication still applies.

@@ -254,8 +254,9 @@ services:
     cpus: "2"
     environment:
       SERVER_KEY: ${DIFY_PLUGIN_DAEMON_KEY}
-      SSRF_PROXY_HTTP_URL: http://dify-ssrf-proxy:3128
-      SSRF_PROXY_HTTPS_URL: http://dify-ssrf-proxy:3128
+      # No SSRF_PROXY_* here: plugin-daemon 0.5.3 reads only HTTP(S)_PROXY, and
+      # those would also proxy its DIFY_INNER_API_URL calls (denied by the ACL).
+      # Plugin egress is NOT proxied today — tracked with network isolation (#229).
       DIFY_INNER_API_URL: http://dify-api:5001
       DIFY_INNER_API_KEY: '${DIFY_PLUGIN_DIFY_INNER_API_KEY}'
       DB_HOST: postgres

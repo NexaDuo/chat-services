@@ -30,7 +30,7 @@ probe() {
 
 # Assert wiring as well as proxy behavior: forced curl alone would not detect
 # a service silently losing its proxy environment during a compose merge.
-for service in dify-api dify-worker dify-plugin-daemon; do
+for service in dify-api dify-worker; do
   docker compose exec -T "$service" sh -c '
     test "$SSRF_PROXY_HTTP_URL" = http://dify-ssrf-proxy:3128 &&
     test "$SSRF_PROXY_HTTPS_URL" = http://dify-ssrf-proxy:3128
