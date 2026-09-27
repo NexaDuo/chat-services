@@ -82,6 +82,8 @@ services:
       - "traefik.http.services.dify-api.loadbalancer.server.port=5001"
     environment:
       MODE: api
+      SSRF_PROXY_HTTP_URL: http://dify-ssrf-proxy:3128
+      SSRF_PROXY_HTTPS_URL: http://dify-ssrf-proxy:3128
       MIGRATION_ENABLED: "true"
       SECRET_KEY: ${DIFY_SECRET_KEY}
       DB_USERNAME: postgres
@@ -139,6 +141,8 @@ services:
     mem_limit: 2176m
     environment:
       MODE: worker
+      SSRF_PROXY_HTTP_URL: http://dify-ssrf-proxy:3128
+      SSRF_PROXY_HTTPS_URL: http://dify-ssrf-proxy:3128
       SECRET_KEY: ${DIFY_SECRET_KEY}
       DB_USERNAME: postgres
       DB_PASSWORD: ${POSTGRES_PASSWORD}
@@ -230,6 +234,11 @@ services:
     cpus: "2"
     environment:
       API_KEY: ${DIFY_SANDBOX_API_KEY}
+      HTTP_PROXY: http://dify-ssrf-proxy:3128
+      HTTPS_PROXY: http://dify-ssrf-proxy:3128
+      # Upstream 1.13.3 has no sandbox bypass list. Keep it empty explicitly.
+      NO_PROXY: ""
+      no_proxy: ""
     networks:
       - chat-network
   dify-plugin-daemon:
@@ -245,6 +254,8 @@ services:
     cpus: "2"
     environment:
       SERVER_KEY: ${DIFY_PLUGIN_DAEMON_KEY}
+      SSRF_PROXY_HTTP_URL: http://dify-ssrf-proxy:3128
+      SSRF_PROXY_HTTPS_URL: http://dify-ssrf-proxy:3128
       DIFY_INNER_API_URL: http://dify-api:5001
       DIFY_INNER_API_KEY: '${DIFY_PLUGIN_DIFY_INNER_API_KEY}'
       DB_HOST: postgres
@@ -265,7 +276,12 @@ services:
     networks:
       - chat-network
   dify-ssrf-proxy:
-    image: ubuntu/squid:latest
+    # Dify 1.13.3 uses latest; this versioned tag resolved to the same index.
+    image: ubuntu/squid:6.6-24.04_beta@sha256:6a097f68bae708cedbabd6188d68c7e2e7a38cedd05a176e1cc0ba29e3bbe029
+    # Static config: no template expansion or permissive image conf.d includes.
+    entrypoint: ["/usr/sbin/squid", "-N", "-f", "/etc/squid/squid.conf"]
+    volumes:
+      - ${PWD}/deploy/squid/squid.conf:/etc/squid/squid.conf:ro
     restart: unless-stopped
     logging: *default-logging
     # Measured ~26MiB RSS; 4x rounds under the 128m floor.
