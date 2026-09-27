@@ -16,6 +16,84 @@ fail() {
   exit 1
 }
 
+# --host-only is the scheduled engine + backup probe; no container probes.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/host-health.sh
+source "$SCRIPT_DIR/lib/host-health.sh"
+show_health_failure
+require_desktop_engine || fail "Docker engine guard failed"
+case "${1:-}" in
+  ""|--host-only) ;;
+  *) fail "usage: $0 [--host-only]" ;;
+esac
+
+# ---------------------------------------------------------------------------
+# 6. Backup freshness (issue #121). The daily pg_dump cron failed SILENTLY for
+#    days because it pointed at a renamed script — no dump, no alarm. Flag if the
+#    newest dump in BACKUP_DIR is older than BACKUP_MAX_AGE_HOURS (default 26h =
+#    one 03:00 run + slack). This is the guard so a broken/stale backup never
+#    goes unnoticed again. Skippable via SKIP_BACKUP_CHECK=1 (e.g. ephemeral CI
+#    where no backups are expected).
+# ---------------------------------------------------------------------------
+check_backup_freshness() {
+  if [[ "${SKIP_BACKUP_CHECK:-0}" == "1" ]]; then
+    step "Skipping backup freshness check (SKIP_BACKUP_CHECK=1)"
+  else
+    BACKUP_DIR="${BACKUP_DIR:-${HOME}/nexaduo-local/dumps}"
+    BACKUP_MAX_AGE_HOURS="${BACKUP_MAX_AGE_HOURS:-26}"
+    step "Checking backup freshness in ${BACKUP_DIR} (max age ${BACKUP_MAX_AGE_HOURS}h)"
+    [[ -d "$BACKUP_DIR" ]] || fail "backup dir ${BACKUP_DIR} does not exist (no dumps ever taken?)"
+    newest_dump="$(find "$BACKUP_DIR" -type f -name '*.sql.gz' -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -n1)"
+    [[ -n "$newest_dump" ]] || fail "no *.sql.gz dumps in ${BACKUP_DIR} — daily backup cron is not producing dumps"
+    dump_epoch="${newest_dump%% *}"; dump_file="${newest_dump#* }"
+    dump_age_h=$(( ( $(date +%s) - ${dump_epoch%.*} ) / 3600 ))
+    if (( dump_age_h >= BACKUP_MAX_AGE_HOURS )); then
+      echo "newest dump: $(basename "$dump_file") is ${dump_age_h}h old" >&2
+      fail "STALE BACKUP: newest dump is ${dump_age_h}h old (>= ${BACKUP_MAX_AGE_HOURS}h). Daily cron likely broken — run 'scripts/run-stack.sh install-cron'."
+    fi
+    echo "  backup OK: newest dump $(basename "$dump_file") is ${dump_age_h}h old"
+
+    # Volume-archive freshness (issue #61). pg_dump does NOT capture Docker volumes
+    # (chatwoot-storage uploads, Dify RSA privkeys); backup-host.sh now tars them as
+    # *<suffix>-<ts>.tar.gz. A fresh DB dump while the volume archive is missing/stale
+    # is the exact gap that caused #61 (DB-only restore → FileNotFoundError 500s) —
+    # so gate on the volume archives too.
+    BACKUP_VOLUME_SUFFIXES="${BACKUP_VOLUME_SUFFIXES:-chatwoot-storage dify-api-storage}"
+    for suffix in $BACKUP_VOLUME_SUFFIXES; do
+      newest_vol="$(find "$BACKUP_DIR" -type f -name "*${suffix}-*.tar.gz" -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -n1)"
+      [[ -n "$newest_vol" ]] || fail "no volume archive *${suffix}-*.tar.gz in ${BACKUP_DIR} — backup is NOT capturing the '${suffix}' Docker volume (pg_dump ≠ full backup; issue #61)"
+      vol_epoch="${newest_vol%% *}"; vol_file="${newest_vol#* }"
+      vol_age_h=$(( ( $(date +%s) - ${vol_epoch%.*} ) / 3600 ))
+      if (( vol_age_h >= BACKUP_MAX_AGE_HOURS )); then
+        echo "newest ${suffix} archive: $(basename "$vol_file") is ${vol_age_h}h old" >&2
+        fail "STALE VOLUME BACKUP: newest '${suffix}' archive is ${vol_age_h}h old (>= ${BACKUP_MAX_AGE_HOURS}h). Volume archival broken — check scripts/backup-host.sh."
+      fi
+      echo "  volume backup OK: newest ${suffix} archive $(basename "$vol_file") is ${vol_age_h}h old"
+    done
+
+    # .env freshness — the host .env is production secrets (TUNNEL_TOKEN, DB
+    # passwords, Azure OpenAI creds) and is NOT in git; backup-host.sh archives it
+    # as env-<ts>.tar.gz alongside the dumps/volumes. Without it a DB+volume
+    # restore alone can't reconnect or reach the tunnel, so gate on it too.
+    newest_env="$(find "$BACKUP_DIR" -type f -name 'env-*.tar.gz' -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -n1)"
+    [[ -n "$newest_env" ]] || fail "no env-*.tar.gz in ${BACKUP_DIR} — backup is NOT capturing the host .env (production secrets)."
+    env_epoch="${newest_env%% *}"; env_file_found="${newest_env#* }"
+    env_age_h=$(( ( $(date +%s) - ${env_epoch%.*} ) / 3600 ))
+    if (( env_age_h >= BACKUP_MAX_AGE_HOURS )); then
+      echo "newest .env archive: $(basename "$env_file_found") is ${env_age_h}h old" >&2
+      fail "STALE ENV BACKUP: newest .env archive is ${env_age_h}h old (>= ${BACKUP_MAX_AGE_HOURS}h). Check scripts/backup-host.sh."
+    fi
+    echo "  env backup OK: newest .env archive $(basename "$env_file_found") is ${env_age_h}h old"
+  fi
+}
+
+
+if [[ "${1:-}" == "--host-only" ]]; then
+  check_backup_freshness
+  echo "OK host engine and backup freshness"
+  exit 0
+fi
+
 container_by_subname() {
   local subname="$1"
   local name
@@ -726,63 +804,9 @@ for required_subname in postgres chatwoot-rails dify-api middleware prometheus; 
   echo "$members" | grep -qw "$required_container" || fail "nexaduo-network missing ${required_subname} (${required_container})"
 done
 
-# ---------------------------------------------------------------------------
-# 6. Backup freshness (issue #121). The daily pg_dump cron failed SILENTLY for
-#    days because it pointed at a renamed script — no dump, no alarm. Flag if the
-#    newest dump in BACKUP_DIR is older than BACKUP_MAX_AGE_HOURS (default 26h =
-#    one 03:00 run + slack). This is the guard so a broken/stale backup never
-#    goes unnoticed again. Skippable via SKIP_BACKUP_CHECK=1 (e.g. ephemeral CI
-#    where no backups are expected).
-# ---------------------------------------------------------------------------
-if [[ "${SKIP_BACKUP_CHECK:-0}" == "1" ]]; then
-  step "Skipping backup freshness check (SKIP_BACKUP_CHECK=1)"
-else
-  BACKUP_DIR="${BACKUP_DIR:-${HOME}/nexaduo-local/dumps}"
-  BACKUP_MAX_AGE_HOURS="${BACKUP_MAX_AGE_HOURS:-26}"
-  step "Checking backup freshness in ${BACKUP_DIR} (max age ${BACKUP_MAX_AGE_HOURS}h)"
-  [[ -d "$BACKUP_DIR" ]] || fail "backup dir ${BACKUP_DIR} does not exist (no dumps ever taken?)"
-  newest_dump="$(find "$BACKUP_DIR" -type f -name '*.sql.gz' -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -n1)"
-  [[ -n "$newest_dump" ]] || fail "no *.sql.gz dumps in ${BACKUP_DIR} — daily backup cron is not producing dumps"
-  dump_epoch="${newest_dump%% *}"; dump_file="${newest_dump#* }"
-  dump_age_h=$(( ( $(date +%s) - ${dump_epoch%.*} ) / 3600 ))
-  if (( dump_age_h >= BACKUP_MAX_AGE_HOURS )); then
-    echo "newest dump: $(basename "$dump_file") is ${dump_age_h}h old" >&2
-    fail "STALE BACKUP: newest dump is ${dump_age_h}h old (>= ${BACKUP_MAX_AGE_HOURS}h). Daily cron likely broken — run 'scripts/run-stack.sh install-cron'."
-  fi
-  echo "  backup OK: newest dump $(basename "$dump_file") is ${dump_age_h}h old"
-
-  # Volume-archive freshness (issue #61). pg_dump does NOT capture Docker volumes
-  # (chatwoot-storage uploads, Dify RSA privkeys); backup-host.sh now tars them as
-  # *<suffix>-<ts>.tar.gz. A fresh DB dump while the volume archive is missing/stale
-  # is the exact gap that caused #61 (DB-only restore → FileNotFoundError 500s) —
-  # so gate on the volume archives too.
-  BACKUP_VOLUME_SUFFIXES="${BACKUP_VOLUME_SUFFIXES:-chatwoot-storage dify-api-storage}"
-  for suffix in $BACKUP_VOLUME_SUFFIXES; do
-    newest_vol="$(find "$BACKUP_DIR" -type f -name "*${suffix}-*.tar.gz" -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -n1)"
-    [[ -n "$newest_vol" ]] || fail "no volume archive *${suffix}-*.tar.gz in ${BACKUP_DIR} — backup is NOT capturing the '${suffix}' Docker volume (pg_dump ≠ full backup; issue #61)"
-    vol_epoch="${newest_vol%% *}"; vol_file="${newest_vol#* }"
-    vol_age_h=$(( ( $(date +%s) - ${vol_epoch%.*} ) / 3600 ))
-    if (( vol_age_h >= BACKUP_MAX_AGE_HOURS )); then
-      echo "newest ${suffix} archive: $(basename "$vol_file") is ${vol_age_h}h old" >&2
-      fail "STALE VOLUME BACKUP: newest '${suffix}' archive is ${vol_age_h}h old (>= ${BACKUP_MAX_AGE_HOURS}h). Volume archival broken — check scripts/backup-host.sh."
-    fi
-    echo "  volume backup OK: newest ${suffix} archive $(basename "$vol_file") is ${vol_age_h}h old"
-  done
-
-  # .env freshness — the host .env is production secrets (TUNNEL_TOKEN, DB
-  # passwords, Azure OpenAI creds) and is NOT in git; backup-host.sh archives it
-  # as env-<ts>.tar.gz alongside the dumps/volumes. Without it a DB+volume
-  # restore alone can't reconnect or reach the tunnel, so gate on it too.
-  newest_env="$(find "$BACKUP_DIR" -type f -name 'env-*.tar.gz' -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -n1)"
-  [[ -n "$newest_env" ]] || fail "no env-*.tar.gz in ${BACKUP_DIR} — backup is NOT capturing the host .env (production secrets)."
-  env_epoch="${newest_env%% *}"; env_file_found="${newest_env#* }"
-  env_age_h=$(( ( $(date +%s) - ${env_epoch%.*} ) / 3600 ))
-  if (( env_age_h >= BACKUP_MAX_AGE_HOURS )); then
-    echo "newest .env archive: $(basename "$env_file_found") is ${env_age_h}h old" >&2
-    fail "STALE ENV BACKUP: newest .env archive is ${env_age_h}h old (>= ${BACKUP_MAX_AGE_HOURS}h). Check scripts/backup-host.sh."
-  fi
-  echo "  env backup OK: newest .env archive $(basename "$env_file_found") is ${env_age_h}h old"
-fi
+# 6. Backup freshness — runs here on full runs so a stale backup never hides
+#    the container/routing checks above (e.g. right after a DR restore).
+check_backup_freshness
 
 # ---------------------------------------------------------------------------
 # 7. Grafana Dify token-usage alert rules (issue #182) must still be
