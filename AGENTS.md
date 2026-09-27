@@ -236,6 +236,17 @@ Dumps: `~/nexaduo-local/dumps/<db>-<YYYY-MM-DD>-HHMM.sql.gz` (+ off-host mirror 
    restored DB/volumes with.
 
 ## Live gotchas
+- **Dify SSRF proxy (issue #222):** `deploy/squid/squid.conf` is the versioned
+  destination ACL, mounted read-only; API/worker use SSRF proxy URLs and
+  sandbox uses HTTP(S)_PROXY without NO_PROXY bypasses. The plugin daemon is
+  NOT proxied (0.5.3 ignores SSRF_PROXY_*; HTTP(S)_PROXY would also route its
+  inner-API calls to dify-api into the deny ACL) — see #229. Public egress
+  permits only 80/443 (CONNECT only 443), denying internal/reserved IPs even
+  through DNS names. The only internal exception is an HTTP POST to
+  `middleware:4000/tools/handoff`; middleware authentication still applies.
+  `scripts/test-ssrf-proxy.sh` tests this policy in CI and can be run by the
+  operator with the production COMPOSE_FILE chain. Proxy envs are not a network
+  firewall: code that ignores them still needs separate network isolation.
 - **`docker logs --since` can lie on a container with a huge unrotated log buffer**
   (issue #151): `coolify-proxy`'s log file grew to 136k+ lines (a 68k-line retried-
   forever error burst); `docker logs --since <window>` against it returned 0 lines
