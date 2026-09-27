@@ -1,0 +1,68 @@
+version: 2
+
+# Container images are upgraded in the plan's dedicated waves, not by Dependabot.
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    # Keep decommissioned GCP workflows outside automated updates.
+    exclude-paths:
+      - ".github/workflows/deploy.yml"
+      - ".github/workflows/power.yml"
+      - ".github/workflows/publish-images.yml"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 3
+    groups:
+      minor-and-patch:
+        update-types:
+          - "minor"
+          - "patch"
+    # Major upgrades remain explicit, reviewed upgrade waves.
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+
+  - package-ecosystem: "npm"
+    directory: "/middleware"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 3
+    groups:
+      minor-and-patch:
+        update-types:
+          - "minor"
+          - "patch"
+    # Major upgrades remain explicit, reviewed upgrade waves.
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+
+  - package-ecosystem: "npm"
+    directory: "/agents/self-healing"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 3
+    groups:
+      minor-and-patch:
+        update-types:
+          - "minor"
+          - "patch"
+    # Major upgrades remain explicit, reviewed upgrade waves.
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+
+  - package-ecosystem: "npm"
+    directory: "/onboarding"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 3
+    groups:
+      minor-and-patch:
+        update-types:
+          - "minor"
+          - "patch"
+    # Major upgrades remain explicit, reviewed upgrade waves.
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
