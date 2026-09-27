@@ -43,6 +43,27 @@ The full four-service stack runs as Docker Compose on a single host (a WSL machi
 (`chat`/`dify`/`evolution`/`middleware`/`grafana.nexaduo.com`) through the production
 **Cloudflare tunnel** (`1eea65b4`, ingress → `coolify-proxy:80`).
 
+**Engine invariant (#218/#225):** Docker Desktop with WSL integration. The native
+distro `docker.service`/`docker.socket` stay masked, provisioned by
+[alexandre-machado/wsl-setup scripts/docker.sh](https://github.com/alexandre-machado/wsl-setup/blob/main/scripts/docker.sh).
+Diagnose with `docker info --format '{{.OperatingSystem}}'` (must start with
+`Docker Desktop`) and `systemctl is-enabled docker.socket docker` (both `masked`).
+Preflight and health checks reject other engines; `ALLOW_NON_DESKTOP_ENGINE=1`
+is CI-only. Current workflows and `deploy/docker-compose.ci.yml` do not invoke
+these host probes against the runner daemon, so no CI runtime override is needed;
+the shell regression suite exercises the override with a fake Docker CLI.
+
+Native → Desktop volume migration (#218), during an operator-coordinated outage:
+stop Postgres and all consumers on both engines, archive source volumes first,
+and use empty destination volumes (never merge into populated production data).
+With `set -o pipefail`, for each volume substitute `VOL`:
+`docker -H unix:///run/docker-native.sock run --rm -v VOL:/src alpine tar -C /src -cf - . | docker run --rm -i -v VOL:/dst alpine tar -C /dst -xf -`.
+Compare file counts per volume on both engines before starting consumers.
+Transfer local images using `docker -H unix:///run/docker-native.sock save <explicit nexaduo/*:local image list> | docker load`
+(`docker save` needs explicit image names, not a literal wildcard).
+Then `scripts/run-stack.sh up`, `scripts/run-stack.sh validate` and
+`scripts/health-check-all.sh`. Preserve source volumes until validation succeeds.
+
 Reproducible bootstrap (no manual drift — issue #109):
 1. **Inputs (operator-provided, NOT in git):**
    - `./.env` — real production secrets (incl. `CHATWOOT_FRONTEND_URL=https://chat.nexaduo.com`
@@ -77,7 +98,12 @@ Reproducible bootstrap (no manual drift — issue #109):
 4. **Validate:** `scripts/run-stack.sh validate` smoke-tests the real tunnel URLs and
    runs the Playwright connectivity + tenant-resolution suites against them.
 5. **Backup:** `scripts/backup-host.sh` (daily 03:00 cron via `run-stack.sh
-   install-cron`).
+   install-cron`), plus an hourly :15 engine + backup freshness probe with
+   `flock` and a 120s timeout. Log: `~/nexaduo-local/health-check.log`;
+   failure: `~/nexaduo-local/.health-last-fail`, highlighted by preflight/health-check
+   until a successful scheduled probe clears it. Promtail only collects container
+   logs; no host-log/metric collector or notification channel is provisioned.
+   This marker is local visibility, not an operator push notification (#197).
 6. **Host ports (isolated by default — #119, default since #145):**
    `scripts/run-stack.sh up` publishes **zero** host ports by default (via
    `deploy/docker-compose.isolated.yml`, `!reset []` merge — Compose 2.24.4+). Public

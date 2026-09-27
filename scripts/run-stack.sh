@@ -28,7 +28,7 @@
 #   validate    - smoke the real tunnel URLs + run Playwright against them
 #   backup      - run scripts/backup-host.sh once
 #   install-cron- install/converge the 03:00 daily backup cron (host); dedupes
-#                 stale/legacy entries (issue #121) so it self-heals to one line
+#                 + hourly host health check; dedupes stale/legacy entries
 #   reconcile-cron - alias of install-cron (run after a WSL/Docker restart)
 #   check-backup- fail if the newest dump is stale (default >= 26h old)
 #   down        - stop the stack (DOES NOT delete volumes; SACRED Postgres data)
@@ -43,6 +43,9 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
+
+# shellcheck source=lib/host-health.sh
+source "$REPO_ROOT/scripts/lib/host-health.sh"
 
 ENV_FILE="${ENV_FILE:-${REPO_ROOT}/.env}"
 DUMPS_DIR="${DUMPS_DIR:-${HOME}/nexaduo-local/dumps}"
@@ -93,7 +96,8 @@ die()  { echo -e "\033[0;31m[run-stack] ERROR:\033[0m $*" >&2; exit 1; }
 dc() { docker compose --env-file "$ENV_FILE" "${COMPOSE_FILES[@]}" "$@"; }
 
 preflight() {
-  command -v docker >/dev/null || die "docker not found"
+  show_health_failure
+  require_desktop_engine || die "Docker engine guard failed"
   docker compose version >/dev/null 2>&1 || die "docker compose v2 not found"
   [[ -f "$ENV_FILE" ]] || die "missing $ENV_FILE — restore the production .env (see .env.production.example)"
   # Guard against the dev default leaking in: prod must serve the real domain.
@@ -193,13 +197,26 @@ CRON_TAG="# nexaduo-backup (managed by run-stack.sh install-cron)"
 _strip_nexaduo_backup_cron() {
   crontab -l 2>/dev/null \
     | grep -vF "$CRON_TAG" \
-    | grep -vE 'backup-(host|local)\.sh' \
+    | grep -vE 'backup-(host|local)\.sh|scheduled-health-check\.sh|# chat-services-health' \
     || true
 }
 
 install_cron() {
   local line="0 3 * * * BACKUP_DIR=${DUMPS_DIR} ${BACKUP_RCLONE_REMOTE:+BACKUP_RCLONE_REMOTE=${BACKUP_RCLONE_REMOTE} }${REPO_ROOT}/scripts/backup-host.sh >> ${HOME}/nexaduo-backup.log 2>&1"
-  ( _strip_nexaduo_backup_cron; echo "$CRON_TAG"; echo "$line" ) | crontab -
+  command -v python3 >/dev/null || die "python3 is required to quote scheduled command paths safely"
+  command -v flock >/dev/null || die "flock is required for scheduled health checks (install util-linux)"
+  command -v timeout >/dev/null || die "timeout is required for scheduled health checks (install coreutils)"
+  mkdir -p "${HOME}/nexaduo-local"
+  # Quote paths for cron's /bin/sh and escape its special percent character.
+  local health_line health_command
+  health_command="$(python3 -c 'import shlex,sys; print(" ".join(shlex.quote(x) for x in sys.argv[1:]))' \
+    env "BACKUP_DIR=$DUMPS_DIR" /bin/bash "$REPO_ROOT/scripts/scheduled-health-check.sh")"
+  health_command="${health_command//%/\\%}"
+  health_line="15 * * * * $health_command"
+  ( _strip_nexaduo_backup_cron; echo "$CRON_TAG"; echo "$line"
+    echo "# chat-services-health (managed by run-stack.sh install-cron)"
+    echo "$health_line" ) | crontab -
+  log "installed hourly :15 engine + backup health cron (log: ~/nexaduo-local/health-check.log)"
   log "installed daily 03:00 backup cron (stale/duplicate nexaduo entries removed):"
   echo "  $line"
   # WSL/Docker-Desktop hosts (issue #121) restart often and cron may not be

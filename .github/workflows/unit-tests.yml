@@ -36,6 +36,11 @@ jobs:
           # lockfile lifecycle scripts (qodo finding on PR #159).
           persist-credentials: false
 
+      - name: Host script regressions (mock Docker only)
+        run: |
+          bash scripts/test-backup-volume-guard.sh
+          bash scripts/tests/test-host-health.sh
+
       - name: Setup Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
