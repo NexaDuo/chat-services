@@ -24,22 +24,22 @@ permissions:
 
 jobs:
   self-healing:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # The job only reads the repo (npm ci + npm test); it never pushes
           # or otherwise needs git credentials after checkout. Don't leave
-          # GITHUB_TOKEN sitting in .git/config while npm ci runs PR-controlled
+          # GITHUB_TOKEN available while npm ci runs PR-controlled
           # lockfile lifecycle scripts (qodo finding on PR #159).
           persist-credentials: false
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: '22'
+          node-version: '24'
           cache: 'npm'
           cache-dependency-path: agents/self-healing/package-lock.json
 
@@ -52,19 +52,19 @@ jobs:
         run: npm test
 
   middleware:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # See self-healing job: no git credentials needed after checkout.
           persist-credentials: false
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: '22'
+          node-version: '24'
           cache: 'npm'
           cache-dependency-path: middleware/package-lock.json
 
