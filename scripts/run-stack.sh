@@ -206,7 +206,7 @@ install_cron() {
   command -v python3 >/dev/null || die "python3 is required to quote scheduled command paths safely"
   command -v flock >/dev/null || die "flock is required for scheduled health checks (install util-linux)"
   command -v timeout >/dev/null || die "timeout is required for scheduled health checks (install coreutils)"
-  mkdir -p "${HOME}/nexaduo-local"
+  mkdir -p -m 700 "${HOME}/nexaduo-local"
   # Quote paths for cron's /bin/sh and escape its special percent character.
   local health_line health_command
   health_command="$(python3 -c 'import shlex,sys; print(" ".join(shlex.quote(x) for x in sys.argv[1:]))' \
