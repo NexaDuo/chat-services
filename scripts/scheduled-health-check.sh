@@ -3,8 +3,9 @@
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 STATE_DIR="${HOME}/nexaduo-local"
-mkdir -p "$STATE_DIR"
+# Before mkdir: on a fresh host this dir is the parent of the dumps (incl. .env archive).
 umask 077
+mkdir -p "$STATE_DIR"
 exec >> "$STATE_DIR/health-check.log" 2>&1
 
 finish() {
