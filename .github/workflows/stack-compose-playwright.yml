@@ -6,12 +6,15 @@ on:
     branches: [main]
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   # Fails a PR that commits a credential going forward (issue #135). Scans the
   # committed working tree (not git history — a history rewrite of the previously
   # leaked value is a separate operator decision) with gitleaks + .gitleaks.toml.
   secret-scan:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 10
     steps:
       - name: Checkout
@@ -31,6 +34,8 @@ jobs:
           ./gitleaks dir . --config .gitleaks.toml --redact --no-banner --exit-code 1 --verbose
 
   validate-stack:
+    # W0b: Playwright 1.59.1 (onboarding lockfile) cannot install on 26.04.
+    # Revisit with W10a: https://github.com/microsoft/playwright/issues/40117
     runs-on: ubuntu-24.04
     # issue #23 follow-up, 2026-08-07 (revised same day after a qodo bot review
     # caught a math error in the first revision): this budget is derived, not
