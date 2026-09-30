@@ -91,7 +91,7 @@ services:
     networks:
       - chat-network
   loki:
-    image: grafana/loki:3.2.0
+    image: grafana/loki:3.7.8@sha256:1107dd5274e0ada47e42472b7a7e71f3b2a2fe878878108f3e2f9e51528f0193
     restart: unless-stopped
     logging: *default-logging
     # Issue #157 priority group 3 (observability, grows with ingest volume
@@ -100,21 +100,11 @@ services:
     mem_limit: 512m
     user: "0"
     command: -config.file=/etc/loki/loki.yaml
-    # /ready is Loki's own real readiness endpoint (already reused by
-    # health-check-all.sh's Loki probe). No autoheal=true on any
-    # observability service in this file (issue #158, deliberate, not an
-    # oversight): they're off the user-facing critical path (a wedge here
-    # degrades visibility, not the product), and loki/tempo both flush
-    # buffered chunks/blocks to disk on their own schedule — an
-    # auto-restart mid-flush risks losing that in-flight data for no
-    # user-facing gain. Detection (this healthcheck + health-check-all.sh)
-    # is the goal here, not auto-remediation.
+    # Loki >=3.5.8 has no shell/wget and no binary readiness subcommand.
+    # health-check-all.sh probes /ready from middleware (also in isolated mode).
+    # No autoheal: observability restarts can interrupt buffered chunk flushes.
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "-T", "5", "http://127.0.0.1:3100/ready"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 45s
+      disable: true
     volumes:
       # Directory mount (not single-file) to survive the WSL stale-inode OCI
       # failure that killed the proxy/observability on host restart (#113/#116).
