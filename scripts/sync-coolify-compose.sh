@@ -174,7 +174,7 @@ assert_obs_up() {
   local uuid="$1" names status bad
   for _ in $(seq 1 18); do
     bad=""
-    for svc in loki promtail tempo prometheus otel-collector; do
+    for svc in loki alloy tempo prometheus otel-collector; do
       status=$(sudo docker ps -a --filter "name=^/${svc}-${uuid}$" --format '{{.Status}}' 2>/dev/null)
       case "${status}" in
         Up*) : ;;
@@ -216,7 +216,7 @@ if [ "${rc}" -eq 0 ]; then
   fi
 fi
 
-# Container health assertion (loki/promtail/tempo/prometheus/otel-collector Up).
+# Container health assertion (loki/alloy/tempo/prometheus/otel-collector Up).
 if [ "${rc}" -eq 0 ]; then
   up=$(assert_obs_up "${STRICT}")
   if [ -n "${up}" ]; then

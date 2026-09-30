@@ -25,7 +25,7 @@ WhatsApp ─▶ Evolution API ─▶ Chatwoot (Webhook) ─▶ Middleware (Adapt
 - **Middleware (Adapter)** — Node/TS: translates Chatwoot webhooks → Dify API calls,
   sends responses back, and is the centralized config provider for internal agents.
 - **Self-Healing Agent** — analyzes Loki logs via Dify to find root causes.
-- **Observability** — Loki, Promtail, Prometheus, Grafana.
+- **Observability** — Loki, Alloy, Prometheus, Grafana.
 - **Postgres 16+** (shared, separate DBs) + **pgvector** (primary vector store);
   **Redis 7+** (Sidekiq + Celery). **Azure OpenAI** — `gpt-4o` + `gpt-4o-mini`.
 
@@ -102,7 +102,7 @@ Reproducible bootstrap (no manual drift — issue #109):
    install-cron`), plus an hourly :15 engine + backup freshness probe with
    `flock` and a 120s timeout. Log: `~/nexaduo-local/health-check.log`;
    failure: `~/nexaduo-local/.health-last-fail`, highlighted by preflight/health-check
-   until a successful scheduled probe clears it. Promtail only collects container
+   until a successful scheduled probe clears it. Alloy only collects container
    logs; no host-log/metric collector or notification channel is provisioned.
    This marker is local visibility, not an operator push notification (#197).
 6. **Host ports (isolated by default — #119, default since #145):**
@@ -165,7 +165,12 @@ manual drift.
 - **Manual host intervention is a stopgap, never the fix** — backfill it into code in
   the same session. Real example that bit us: Promtail config reached the host but a
   running promtail never reloaded it (single-file bind-mount + inode swap) → the change
-  went "green" while inert. Fixed by a checksum-gated restart in bootstrap.
+  went "green" while inert. Fixed by a checksum-gated restart in bootstrap. Alloy now uses a directory
+  mount and `run-stack.sh up`/`bootstrap` (or `reload-alloy`) checks its config
+  checksum before restarting only Alloy. Native positions persist in `alloy-data`;
+  entries older than 1h are dropped before Loki (bounded overlap/loss on cutover).
+  Preserve `promtail-data` and the old config for rollback; stop Promtail with the
+  old compose chain before switching. See `observability/alloy/README.md`.
 
 ## SRE auditor agent
 Routine inspections use the workspace skill

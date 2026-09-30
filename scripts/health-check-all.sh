@@ -149,7 +149,7 @@ HEALTHCHECK_SUBNAMES=(
   dify-web
   evolution-api
   middleware
-  promtail
+  alloy
   grafana
   prometheus
   tempo
@@ -173,7 +173,7 @@ done
 RUNNING_SUBNAMES=(
   # dify-api moved to HEALTHCHECK_SUBNAMES above (now has a healthcheck, #41).
   # chatwoot-sidekiq/dify-web/dify-worker/evolution-api/middleware/
-  # promtail/grafana/prometheus/tempo/cloudflared moved there too (#158).
+  # alloy/grafana/prometheus/tempo/cloudflared moved there too (#158).
   # otel-collector deliberately stays here: its image has no exec tool for a
   # Docker-native healthcheck (see deploy/docker-compose.nexaduo.yml) — it's
   # probed separately below via a sibling container's curl/wget instead.
@@ -622,7 +622,7 @@ declare -A MEM_LIMIT_EXPECTED_MIB=(
   [evolution-api]=512
   [middleware]=256
   [loki]=512
-  [promtail]=384
+  [alloy]=768
   [grafana]=640
   [prometheus]=384
   [self-healing-agent]=128

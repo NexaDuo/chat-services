@@ -13,7 +13,7 @@ const logger = pino({
   level: process.env.LOG_LEVEL || 'info',
   base: { service: 'self-healing-agent' },
   // ISO 8601 timestamps so the `time` field matches the telemetry contract
-  // (and the middleware's output) for consistent Promtail parsing.
+  // (and the middleware's output) for consistent Alloy parsing.
   timestamp: () => `,"time":"${new Date().toISOString()}"`,
   // Inject the active OTel span context as trace_id/span_id so logs link to
   // traces in Grafana (matches the Loki derived field). No-op without a span.

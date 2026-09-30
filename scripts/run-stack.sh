@@ -32,6 +32,7 @@
 #   reconcile-cron - alias of install-cron (run after a WSL/Docker restart)
 #   check-backup- fail if the newest dump is stale (default >= 26h old)
 #   down        - stop the stack (DOES NOT delete volumes; SACRED Postgres data)
+#   reload-alloy- checksum-gated restart of only Alloy after a config edit
 #   status      - docker compose ps
 #
 # SAFETY: `down` never passes -v. The Postgres Docker volume (nexaduo_postgres-data)
@@ -46,6 +47,7 @@ cd "$REPO_ROOT"
 
 # shellcheck source=lib/host-health.sh
 source "$REPO_ROOT/scripts/lib/host-health.sh"
+source "$REPO_ROOT/scripts/lib/alloy-config.sh"
 
 ENV_FILE="${ENV_FILE:-${REPO_ROOT}/.env}"
 DUMPS_DIR="${DUMPS_DIR:-${HOME}/nexaduo-local/dumps}"
@@ -114,6 +116,7 @@ up() {
   log "bringing up the stack (project=$COMPOSE_PROJECT_NAME, isolated=$ISOLATED)"
   [[ "$ISOLATED" == "1" ]] && log "  isolation ON — no host ports published (access via tunnel URLs or 'docker exec')"
   dc up -d --remove-orphans
+  reload_alloy_config
   dc ps
   # Self-heal the backup schedule on every up (issue #121): WSL/Docker-Desktop
   # restarts drop the cron daemon and today's incident (a WSL restart) left the
@@ -277,12 +280,14 @@ case "${1:-}" in
   check-backup) check_backup ;;
   down)         down ;;
   status)       status ;;
+  reload-alloy) reload_alloy_config ;;
   *) cat >&2 <<EOF
-Usage: $0 [--no-isolated] {preflight|up|restore|bootstrap|validate|backup|install-cron|reconcile-cron|check-backup|down|status}
+Usage: $0 [--no-isolated] {preflight|up|restore|bootstrap|validate|backup|install-cron|reconcile-cron|check-backup|down|status|reload-alloy}
 
   bootstrap    clean rebuild: preflight + up + restore DBs from \$DUMPS_DIR
   up           bring up the stack (populated volume; no restore) + reconcile cron
   validate     smoke real tunnel URLs + Playwright against them
+  reload-alloy checksum-gated restart of only Alloy after a config edit
   backup       run scripts/backup-host.sh once
   install-cron install/converge the daily 03:00 backup cron (dedupes stale entries)
   reconcile-cron  alias of install-cron (idempotent; run after a WSL restart)

@@ -208,7 +208,7 @@ gcloud compute ssh "$SSH_USER@$VM_NAME" \
 # 3c. Upload Postgres init SQL and observability configs to the VM.
 # The shared/observability composes bind-mount these paths; if the host files
 # are absent when a container starts, Docker creates them as DIRECTORIES,
-# which breaks Postgres (01-init.sql) and Loki/Prometheus/Promtail. Seeding
+# which breaks Postgres (01-init.sql) and Loki/Prometheus/Alloy. Seeding
 # them here (bootstrap runs before the tenant deploy) keeps them as files.
 echo "Uploading 01-init.sql, observability configs, and Chatwoot initializers to the VM..."
 SEED_TMP="$(mktemp -d)"
@@ -242,7 +242,7 @@ gcloud compute ssh "$SSH_USER@$VM_NAME" \
     # are simply skipped and start fresh with the new config.
     SUMS=/opt/nexaduo/.obs-checksums
     sudo mkdir -p "$SUMS"
-    NEW_PROMTAIL_SHA="$(sha256sum /tmp/observability/promtail/promtail.yaml 2>/dev/null | awk "{print \$1}")"
+    NEW_ALLOY_SHA="$(sha256sum /tmp/observability/alloy/config.alloy 2>/dev/null | awk "{print \$1}")"
     NEW_OTELCOL_SHA="$(sha256sum /tmp/observability/otel-collector/config.yaml 2>/dev/null | awk "{print \$1}")"
     NEW_TEMPO_SHA="$(sha256sum /tmp/observability/tempo/tempo.yaml 2>/dev/null | awk "{print \$1}")"
     NEW_LOKI_SHA="$(sha256sum /tmp/observability/loki/loki.yaml 2>/dev/null | awk "{print \$1}")"
@@ -264,7 +264,7 @@ gcloud compute ssh "$SSH_USER@$VM_NAME" \
       echo "Observability config for $c changed; restarting to reload."
       sudo docker restart "$c" >/dev/null || true
     }
-    obs_restart_if_changed promtail "$NEW_PROMTAIL_SHA"
+    obs_restart_if_changed alloy "$NEW_ALLOY_SHA"
     obs_restart_if_changed otel-collector "$NEW_OTELCOL_SHA"
     obs_restart_if_changed tempo "$NEW_TEMPO_SHA"
     obs_restart_if_changed loki "$NEW_LOKI_SHA"

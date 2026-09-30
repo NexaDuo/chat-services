@@ -13,6 +13,10 @@
 # This override restores that host publish for CI only. Append it to COMPOSE_FILE
 # after docker-compose.yml in the workflow.
 services:
+  # Alloy uses the same real pipeline/readiness in CI; no host publish needed.
+  alloy:
+    ports: !reset []
+
   grafana:
     ports:
       - "3002:3000"

@@ -97,12 +97,11 @@ services:
       # Directory mount (not single-file) — WSL stale-inode hardening (#113/#116).
       - ${PWD}/observability/loki:/etc/loki:ro
 
-  promtail:
+  alloy:
     volumes:
       # Directory mount (not single-file) — WSL stale-inode hardening (#113/#116).
-      - ${PWD}/observability/promtail:/etc/promtail:ro
-      - promtail-data:/var/promtail
-      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - ${PWD}/observability/alloy:/etc/alloy:ro
+      - alloy-data:/var/lib/alloy
 
   grafana:
     # NO host port publish. Grafana is reached via Traefik on chat-network
@@ -142,5 +141,7 @@ services:
         condition: service_healthy
 
 volumes:
+  # Retain legacy positions for rollback.
   promtail-data:
+  alloy-data:
   postgres-data:
