@@ -149,7 +149,6 @@ HEALTHCHECK_SUBNAMES=(
   dify-web
   evolution-api
   middleware
-  loki
   promtail
   grafana
   prometheus
@@ -173,7 +172,7 @@ done
 # ---------------------------------------------------------------------------
 RUNNING_SUBNAMES=(
   # dify-api moved to HEALTHCHECK_SUBNAMES above (now has a healthcheck, #41).
-  # chatwoot-sidekiq/dify-web/dify-worker/evolution-api/middleware/loki/
+  # chatwoot-sidekiq/dify-web/dify-worker/evolution-api/middleware/
   # promtail/grafana/prometheus/tempo/cloudflared moved there too (#158).
   # otel-collector deliberately stays here: its image has no exec tool for a
   # Docker-native healthcheck (see deploy/docker-compose.nexaduo.yml) — it's
@@ -181,6 +180,7 @@ RUNNING_SUBNAMES=(
   dify-sandbox
   dify-plugin-daemon
   dify-ssrf-proxy
+  loki # Distroless; mandatory external /ready assertion below.
   otel-collector
   self-healing-agent
 )
@@ -297,17 +297,20 @@ else
   echo "WARN: skipping self-healing-agent config check (container not found)"
 fi
 
-# Loki is not host-published in production; probe from inside the container.
+# Loki has no shell/wget. Probe its real HTTP readiness through the shared
+# network from middleware, including when host ports are isolated.
 loki_container="$(require_container "loki")"
-step "Probing Loki readiness inside ${loki_container} (up to 1 min)"
+middleware_probe_container="$(require_container "middleware")"
+step "Probing Loki readiness from ${middleware_probe_container} (up to 1 min)"
+source "$SCRIPT_DIR/lib/loki-ready.sh"
 for i in $(seq 1 12); do
-  if docker exec "$loki_container" wget -qO- http://127.0.0.1:3100/ready >/dev/null 2>&1; then
+  if loki_ready "$middleware_probe_container"; then
     break
   fi
   sleep 5
 done
-docker exec "$loki_container" wget -qO- http://127.0.0.1:3100/ready >/dev/null 2>&1 \
-  || fail "Loki readiness probe failed inside container ${loki_container}"
+loki_ready "$middleware_probe_container" \
+  || fail "Loki readiness failed at http://loki:3100/ready (${loki_container})"
 
 # otel-collector (issue #158): its image is distroless (no shell/curl/wget
 # inside it — verified, every exec attempt fails with "executable file not
@@ -721,13 +724,13 @@ echo "  memory-limit coverage OK (${mem_containers_checked} checked, ${mem_conta
 # a reviewed PR, not a runtime knob.
 # ---------------------------------------------------------------------------
 step "Verifying every running chat-services-*/coolify-proxy container has a healthcheck AND reports healthy"
-# otel-collector: distroless image, no exec tool for a Docker-native
+# loki and otel-collector: distroless images, no exec tool for a Docker-native
 # healthcheck (see deploy/docker-compose.nexaduo.yml and the otel-collector
 # probe above, which covers it via a sibling container instead).
 # dify-sandbox/dify-plugin-daemon/dify-ssrf-proxy/self-healing-agent/autoheal:
 # out of scope for issue #158 (not in its affected-surface list); left for a
 # follow-up rather than folded in here undocumented.
-HEALTHCHECK_COVERAGE_SKIP_SUBNAMES=(otel-collector dify-sandbox dify-plugin-daemon dify-ssrf-proxy self-healing-agent autoheal)
+HEALTHCHECK_COVERAGE_SKIP_SUBNAMES=(loki otel-collector dify-sandbox dify-plugin-daemon dify-ssrf-proxy self-healing-agent autoheal)
 
 hc_bad=0
 hc_containers_found=0
