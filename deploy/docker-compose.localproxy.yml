@@ -56,9 +56,19 @@ services:
   # client ignores it and always sends v1.24 first. traefik:v3.6 (3.6.25)
   # vendors a newer docker client that pings first (`HEAD /_ping`, negotiates
   # to v1.54) and was confirmed error-free against the same socket. Pinning an
-  # exact tag (not the `v3.6` floating minor) for reproducibility.
+  # exact tag plus OCI index digest for reproducibility. W1b advances to
+  # 3.7.13; scripts/tests/test-traefik.sh independently proves @docker routing
+  # so the file fallback cannot conceal another negotiation regression.
+  #
+  # 3.7 migration review: https://doc.traefik.io/traefik/migrate/v3/
+  # No static/dynamic changes required: literal Hosts, HTTP backends, no
+  # StripPrefix/BasicAuth/TLS options. ipAllowList and api@internal stay valid.
+  # aliasHeadersStrategy defaults to keep (required for api_access_token);
+  # leave defaults intact. 3.7.13 strips h2c upgrade headers and rejects
+  # rootless request targets; neither is used by our configured HTTP routes.
+  # Live acceptance still needs SSE/WebSocket, redirects and cookie checks.
   coolify-proxy:
-    image: traefik:v3.6.25
+    image: traefik:v3.7.13@sha256:24841fe2de7304c149343d877d2923b4c8800a38ba015dea9174c23b20e344a0
     container_name: coolify-proxy
     restart: unless-stopped
     # Issue #157 "everything else" tier: measured ~44MiB RSS; limit = 4x

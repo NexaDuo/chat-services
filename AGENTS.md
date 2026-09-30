@@ -92,7 +92,8 @@ Reproducible bootstrap (no manual drift — issue #109):
    permanently down for weeks (a Docker API version-negotiation bug in
    `traefik:v3.4.5` against Docker Engine 29.x) with routing surviving only on
    this fallback, invisible because "documented as configured" was trusted
-   instead of verified live. Image pinned to `traefik:v3.6.25` (fixed) — see
+   instead of verified live. Image pinned to `traefik:v3.7.13` by digest (W1b;
+   `scripts/tests/test-traefik.sh` proves @docker routing + API boundary in CI) — see
    the root-cause comment in `deploy/docker-compose.localproxy.yml`. Don't
    trust "it's routing" as proof the Docker provider works; check the API.
 4. **Validate:** `scripts/run-stack.sh validate` smoke-tests the real tunnel URLs and
