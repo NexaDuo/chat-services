@@ -148,7 +148,7 @@ services:
       - chat-network
 
   cloudflared:
-    image: cloudflare/cloudflared:latest
+    image: cloudflare/cloudflared:2026.9.3@sha256:072c067d25ccbe61d46e18f0d0723255f2bb5304f7317caa95b27031520ff92c
     restart: unless-stopped
     logging: *default-logging
     # Measured ~22MiB RSS; 4x rounds under the 128m floor.
@@ -198,7 +198,7 @@ services:
   # `docker restart`s it once Docker marks it unhealthy — turning the healthcheck
   # into an actual self-recovery loop. Only labelled containers are touched.
   autoheal:
-    image: willfarrell/autoheal:1.2.0
+    image: willfarrell/autoheal:1.2.0@sha256:31f580ef0279eaced5b38d631b08c474d70d8403c1c2fdd6ddcf2e879d5f3f7c
     restart: unless-stopped
     logging: *default-logging
     # Measured ~4MiB RSS; 4x rounds under the 128m floor.
