@@ -26,7 +26,8 @@ trap 'exit 143' TERM
 config=$(docker compose --env-file /dev/null -p "$prefix" \
   -f "$ROOT/deploy/docker-compose.localproxy.yml" config --format json)
 image=$(jq -er '.services["coolify-proxy"].image' <<<"$config")
-[[ $image =~ ^traefik:v3\.7\.13@sha256:[a-f0-9]{64}$ ]]
+# Any digest-pinned v3 (the exact tag lives only in the compose file).
+[[ $image =~ ^traefik:v3\.[0-9]+\.[0-9]+@sha256:[a-f0-9]{64}$ ]]
 mapfile -t args < <(jq -r '.services["coolify-proxy"].command[]' <<<"$config")
 # Only the network changes; constrain discovery to this fixture on shared daemons.
 for i in "${!args[@]}"; do
