@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 # Hourly host-only probe, independent of the Docker daemon (issues #197/#225).
+# Alloy readiness/memory coverage is in the full health-check-all.sh run; this
+# schedule intentionally checks only engine + backup freshness, as before.
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 STATE_DIR="${HOME}/nexaduo-local"

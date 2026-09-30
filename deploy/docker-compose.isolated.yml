@@ -47,3 +47,5 @@ services:
     ports: !reset []
   postgres:
     ports: !reset []
+  alloy:
+    ports: !reset []

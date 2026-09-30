@@ -88,7 +88,7 @@ export function extractSeverity(line: string): Severity {
     return 'info';
   }
 
-  // 4. key=value logs (traefik/loki/promtail/grafana): `level=info` / `lvl=error`.
+  // 4. key=value logs (traefik/loki/alloy/grafana): `level=info` / `lvl=error`.
   const kv = text.match(/\b(?:level|lvl|severity)=("?)(trace|debug|info|warn(?:ing)?|error|err|fatal|panic|critical)\1/i);
   if (kv) return normalizeLevelWord(kv[2]);
 

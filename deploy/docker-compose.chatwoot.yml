@@ -14,9 +14,9 @@ x-logging: &default-logging
 # `docker logs` debugging window before rotation drops the oldest chunk.
 # Bumped to 20m x 4 = 80MB ≈ 3.6 days: still bounded (never unrotated again),
 # but keeps a useful multi-day local window for `docker logs`/`--since`
-# debugging without relying solely on a Loki query. Loki/Promtail retains the
-# FULL history regardless of this local buffer size — Promtail's docker_sd
-# scrape streams each line to Loki as it's written (the same continuous-tail
+# debugging without relying solely on a Loki query. Loki/Alloy retains the
+# forwarded history regardless of this local buffer size — Alloy's Docker
+# source streams each line to Loki as it's written (the same continuous-tail
 # mechanism as `docker logs -f`), so rotation dropping old on-disk chunks
 # does not shorten what's already been forwarded and indexed in Loki. Sized
 # up specifically for this one noisy service rather than raising the

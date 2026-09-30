@@ -112,28 +112,32 @@ services:
       - loki-data:/var/loki
     networks:
       - chat-network
-  promtail:
-    image: grafana/promtail:3.1.0
+  alloy:
+    # Upstream publishes v1.20.0, not 1.20.0; OCI multi-platform index pin.
+    image: grafana/alloy:v1.20.0@sha256:f111cce835516c5f99166342be7038496b52ced16667be5a11e19258a3e4cd30
     restart: unless-stopped
     logging: *default-logging
-    # Issue #157 priority group 3 (observability, 6x headroom — see loki
-    # above). Measured ~53MiB RSS; limit = 6x rounded up to the next 128MiB.
-    mem_limit: 384m
-    command: -config.file=/etc/promtail/promtail.yaml
-    # /ready is Promtail's own real readiness endpoint (verified: returns
-    # "Ready" 200). No autoheal — see the loki comment above (issue #158).
+    # #157 observability tier: provisional 128MiB budget x6 = 768MiB.
+    # Re-measure RSS/OOM under live load; Promtail's 53MiB is not an Alloy measurement.
+    mem_limit: 768m
+    command: ["run", "--server.http.listen-addr=127.0.0.1:12345", "--storage.path=/var/lib/alloy", "/etc/alloy/config.alloy"]
+    # Native positions persist in alloy-data. First start drops Docker entries
+    # older than 1h BEFORE Loki; at most 1h overlap (Loki drops exact duplicates).
+    # Do not import/mutate promtail-data: retain it + old config for rollback.
+    # No autoheal (#158 observability rule). Image has bash/timeout, no curl/wget.
+    # HTTP server (UI/API/pprof/reload) bound to loopback: not reachable from
+    # neighbours on the shared network (e.g. dify-sandbox) — @sec #239.
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "-T", "5", "http://127.0.0.1:9080/ready"]
+      test: ["CMD", "timeout", "5", "bash", "/etc/alloy/ready.sh"]
       interval: 30s
       timeout: 10s
       retries: 5
       start_period: 30s
     volumes:
-      # Directory mount (not single-file) — WSL stale-inode hardening (#113/#116).
-      - ${NEXADUO_CONF_PATH}/observability/promtail:/etc/promtail:ro
+      # Directory mount avoids single-file stale inodes (#113/#116).
+      - ${NEXADUO_CONF_PATH}/observability/alloy:/etc/alloy:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
-      - promtail-data:/var/promtail
-      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - alloy-data:/var/lib/alloy
     networks:
       - chat-network
   grafana:
@@ -307,7 +311,9 @@ volumes:
   loki-data:
   grafana-data:
   prometheus-data:
+  # Preserved Promtail positions for rollback; never prune/delete this volume.
   promtail-data:
+  alloy-data:
   tempo-data:
 networks:
   chat-network:
