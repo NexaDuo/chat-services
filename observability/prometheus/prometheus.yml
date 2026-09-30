@@ -36,3 +36,10 @@ scrape_configs:
           service: dify-api
     # Dify pushes to OTel Collector, which exposes /metrics on port 8889.
     # Enable via ENABLE_OTEL=true in Dify env.
+    # W2c (#219): collector >=0.12x adds otel_scope_{name,version,schema_url}
+    # labels to every series; drop them so series identity stays as on 0.111
+    # (no split series across the upgrade). scripts/tests/test-otel-collector.sh
+    # asserts these are the only difference.
+    metric_relabel_configs:
+      - action: labeldrop
+        regex: otel_scope_.*

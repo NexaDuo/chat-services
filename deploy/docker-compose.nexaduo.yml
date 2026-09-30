@@ -248,7 +248,7 @@ services:
     # Single OTLP collector on chat-network: Node apps push traces here
     # (otel-collector:4318), Dify pushes OTLP metrics; metrics → Prometheus
     # scrape (:8889), traces → Tempo (:4317).
-    image: otel/opentelemetry-collector-contrib:0.111.0
+    image: otel/opentelemetry-collector-contrib:0.161.0@sha256:fd328de2552466ad78385e1b1289c3f2402b1c45f265b252aab1955b42845ac1
     restart: unless-stopped
     logging: *default-logging
     # Issue #157 priority group 3 (observability, 6x headroom — see loki
