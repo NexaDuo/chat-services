@@ -40,6 +40,14 @@ for name, unit in [("middleware_dify_tokens_total", ""),
         "aggregationTemporality": 2, "isMonotonic": True,
         "dataPoints": [{"attributes": attrs, "startTimeUnixNano": "1700000000000000000",
                         "timeUnixNano": stamp, "asInt": "7"}]}})
+# Histogram + gauge mirror the live dify_request_duration_seconds and a gauge.
+metrics.append({"name": "fixture.request.duration", "unit": "s", "histogram": {
+    "aggregationTemporality": 2, "dataPoints": [{
+        "attributes": attrs, "startTimeUnixNano": "1700000000000000000",
+        "timeUnixNano": stamp, "count": "3", "sum": 1.5,
+        "bucketCounts": ["1", "1", "1"], "explicitBounds": [0.1, 1.0]}]}})
+metrics.append({"name": "fixture.queue.depth", "unit": "", "gauge": {
+    "dataPoints": [{"attributes": attrs, "timeUnixNano": stamp, "asInt": "4"}]}})
 response = json.loads(request(receiver + "/v1/metrics", {
     "resourceMetrics": [{"scopeMetrics": [{"scope": {"name": "w2c", "version": "1"},
                                           "metrics": metrics}]}]}))
@@ -57,6 +65,9 @@ def scrape():
         labels = dict(re.findall(r'(\w+)="([^"]*)"', matches[0]))
         labels = {k: v for k, v in labels.items() if not k.startswith("otel_scope_")}
         assert labels == {"account_id": "synthetic-219", "kind": "prompt"}, labels
+    assert "# TYPE dify_fixture_request_duration_seconds histogram\n" in text, text
+    assert re.search(r'^dify_fixture_request_duration_seconds_bucket\{[^}]*le="\+Inf"[^}]*\} 3 ', text, re.M), text
+    assert "# TYPE dify_fixture_queue_depth gauge\n" in text, text
     # Compare all emitted lines, including absence of accidental extra series.
     # Only normalization: otel_scope_* labels (added by newer exporters) are
     # stripped, mirroring the labeldrop in observability/prometheus/prometheus.yml.
