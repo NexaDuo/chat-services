@@ -116,7 +116,8 @@ up() {
   log "bringing up the stack (project=$COMPOSE_PROJECT_NAME, isolated=$ISOLATED)"
   [[ "$ISOLATED" == "1" ]] && log "  isolation ON — no host ports published (access via tunnel URLs or 'docker exec')"
   dc up -d --remove-orphans
-  reload_alloy_config
+  # Non-fatal: a stopped/absent alloy must not abort up before the cron self-heal.
+  reload_alloy_config || warn "alloy config reload skipped (alloy not running?) — run: $0 reload-alloy"
   dc ps
   # Self-heal the backup schedule on every up (issue #121): WSL/Docker-Desktop
   # restarts drop the cron daemon and today's incident (a WSL restart) left the

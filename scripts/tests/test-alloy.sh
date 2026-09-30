@@ -94,7 +94,7 @@ for ((i=0; i<20; i++)); do [[ ! -S "$tmp/docker.sock" ]] || break; sleep 0.1; do
 # Mount a restricted socket at the normal path: the production config is unchanged.
 docker run -d --name "$alloy" --network "$network" --memory 768m "${config[@]}" \
   --mount "type=bind,src=$tmp,dst=/var/run,readonly" --tmpfs /var/lib/alloy \
-  "$image" run --server.http.listen-addr=0.0.0.0:12345 \
+  "$image" run --server.http.listen-addr=127.0.0.1:12345 \
   --storage.path=/var/lib/alloy /etc/alloy/config.alloy >/dev/null
 ready=0
 for ((i=0; i<30; i++)); do

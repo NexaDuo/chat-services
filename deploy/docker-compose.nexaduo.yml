@@ -120,11 +120,13 @@ services:
     # #157 observability tier: provisional 128MiB budget x6 = 768MiB.
     # Re-measure RSS/OOM under live load; Promtail's 53MiB is not an Alloy measurement.
     mem_limit: 768m
-    command: ["run", "--server.http.listen-addr=0.0.0.0:12345", "--storage.path=/var/lib/alloy", "/etc/alloy/config.alloy"]
+    command: ["run", "--server.http.listen-addr=127.0.0.1:12345", "--storage.path=/var/lib/alloy", "/etc/alloy/config.alloy"]
     # Native positions persist in alloy-data. First start drops Docker entries
     # older than 1h BEFORE Loki; at most 1h overlap (Loki drops exact duplicates).
     # Do not import/mutate promtail-data: retain it + old config for rollback.
     # No autoheal (#158 observability rule). Image has bash/timeout, no curl/wget.
+    # HTTP server (UI/API/pprof/reload) bound to loopback: not reachable from
+    # neighbours on the shared network (e.g. dify-sandbox) — @sec #239.
     healthcheck:
       test: ["CMD", "timeout", "5", "bash", "/etc/alloy/ready.sh"]
       interval: 30s

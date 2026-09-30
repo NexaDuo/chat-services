@@ -63,7 +63,9 @@ Coordinate the window and prepare both images/config revisions first.
    config/image reference alongside the fresh validated wave backup. Include
    `promtail-data` with the existing critical volume suffixes in the one-off
    `BACKUP_VOLUME_SUFFIXES` override; do not replace/omit required app archives.
-   Never delete/prune a volume. Keep the stopped legacy container for rollback.
+   Never delete/prune a volume. The stopped legacy container is a convenience
+   only: the next `run-stack.sh up` removes it as an orphan, and rollback needs
+   just `promtail-data` + the old config/pin (both preserved).
 3. Switch to the new chain; `dc pull alloy`, then `dc up -d --no-deps alloy`.
    Do **not** run global `run-stack.sh up` (`--remove-orphans`) or bootstrap/restore
    during cutover. Once started, `scripts/run-stack.sh reload-alloy` records the
