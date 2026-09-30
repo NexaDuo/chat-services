@@ -18,13 +18,14 @@ processors:
 # distroless — no shell/curl/wget inside it for a Docker-native
 # `healthcheck:` to exec (verified: every exec attempt fails with
 # "executable file not found"). This exposes a real :13133/health HTTP
-# endpoint on chat-network instead; health-check-all.sh probes it from a
+# endpoint on nexaduo-network instead; health-check-all.sh probes it from a
 # sibling container that does have curl/wget, so a wedged collector is
 # still detected even without a Docker `(healthy)` status on this one
 # service.
 extensions:
   health_check:
     endpoint: "0.0.0.0:13133"
+    path: /health
 
 exporters:
   # Dify (and any OTLP-metrics source) → Prometheus scrape endpoint on :8889.
@@ -32,6 +33,10 @@ exporters:
     endpoint: "0.0.0.0:8889"
     namespace: dify
     send_timestamps: true
+    # W2c: keep 0.111's classic escaping, unit suffixes and counter _total.
+    # 0.132 introduced translation_strategy; 0.154 ignores the deprecated
+    # add_metric_suffixes flag by default. Do not opt into UTF-8 names.
+    translation_strategy: UnderscoreEscapingWithSuffixes
   # Node-app traces (middleware, self-healing-agent) → Tempo via OTLP/gRPC.
   otlp/tempo:
     endpoint: "tempo:4317"
