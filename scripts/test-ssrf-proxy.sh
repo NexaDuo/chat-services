@@ -63,3 +63,13 @@ probe 200 http://example.com/
 # HTTPS proves CONNECT 443 works; explicit CONNECT 80 must be rejected.
 probe 200 https://example.com/
 probe 403 http://example.com:80/ --request CONNECT --request-target example.com:80
+
+# A stale PID file once made squid refuse every restart ("Squid is already
+# running ... with PID 1") after a host reboot. Restart must come back serving.
+docker compose restart dify-ssrf-proxy
+for _ in $(seq 1 30); do
+  docker compose exec -T dify-api curl --silent --output /dev/null \
+    --proxy "$proxy" --noproxy '' --max-time 5 http://example.com/ && break
+  sleep 1
+done
+probe 200 http://example.com/
