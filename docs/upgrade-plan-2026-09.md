@@ -385,9 +385,12 @@ Operator-only apply (use the `dc` function in section 3; coordinate the outage):
    a timeout sufficient for completion; abort on forced termination. Confirm all
    named clients stopped, remaining queues/key counts stable and `CLIENT LIST`
    contains only operator probes. No separate beat service exists in this chain.
-3. With clients stopped, issue authenticated `SHUTDOWN SAVE` using `REDISCLI_AUTH`
-   supplied securely by the operator (never print the password). Confirm Redis exits
-   cleanly and stays stopped. Cold-backup `chat-services_redis-data`, including
+3. With clients stopped, issue an authenticated `SAVE` using `REDISCLI_AUTH`
+   supplied securely by the operator (never print the password), then `dc stop redis`.
+   Do **not** rely on `SHUTDOWN SAVE` alone: the service has `restart: unless-stopped`,
+   so Docker restarts it after a clean exit and the archive would be taken from a live
+   volume. Confirm state `exited` with exit code 0 before the backup. Cold-backup
+   `chat-services_redis-data`, including
    dump.rdb and the entire appendonlydir/manifest, with the one-off override:
    `BACKUP_VOLUME_SUFFIXES="chatwoot-storage dify-api-storage evolution-instances grafana-data redis-data" scripts/backup-host.sh`.
    Verify the exact volume selected, exit status, archive contents/integrity and

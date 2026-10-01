@@ -32,7 +32,11 @@ name = os.environ['REDIS_TEST_NAME']
 password = os.environ['REDIS_PASSWORD']
 started = time.monotonic()
 def docker(*args):
-    return subprocess.check_output(['docker', *args], text=True, timeout=15).strip()
+    try:
+        return subprocess.check_output(['docker', *args], text=True, timeout=15).strip()
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+        # argv carries the generated password (redis-server flag): never echo it.
+        raise RuntimeError(f'docker {args[0]} failed: {type(e).__name__}') from None
 
 class Client:
     """One client instance across the cutover; reconnect after socket loss."""
@@ -92,6 +96,9 @@ def start(image):
     finally: guest.close()
     info = dict(line.split(':', 1) for line in client.cmd('INFO', 'persistence').splitlines()
                 if ':' in line)
+    # Guard against both starts silently using the same image.
+    version = image.split(':', 1)[1].split('-', 1)[0]
+    assert f'redis_version:{version}\r\n' in client.cmd('INFO', 'server'), version
     for k, v in {'loading': '0', 'aof_enabled': '1', 'aof_last_write_status': 'ok'}.items():
         assert info[k] == v, (k, info[k])
     assert client.cmd('CONFIG', 'GET', 'maxmemory-policy') == ['maxmemory-policy', 'noeviction']
@@ -133,7 +140,9 @@ def seed():
 def verify(new=False):
     for db in (0, 1, 2):
         client.cmd('SELECT', db)
-        assert client.cmd('DBSIZE') == (6 if new else 5)
+        assert client.cmd('DBSIZE') == (7 if new else 6)
+        # Written after the AOF rewrite: only replay of the incremental tail restores it.
+        assert client.cmd('GET', 'tail') == f'tail-{db}'
         for key, typ in [('ttl', 'string'), ('queue', 'list'), ('scheduled', 'zset'),
                          ('hash', 'hash'), ('stream', 'stream')]:
             assert client.cmd('TYPE', key) == typ
@@ -149,7 +158,7 @@ def verify(new=False):
             assert client.cmd('TYPE', 'new') == 'string'
             assert client.cmd('GET', 'new') == f'new-{db}'
             assert client.cmd('PTTL', 'new') == -1
-        # Same client object reauthenticated after restart, exercising broker IO.
+        # Broker-shaped IO on the connection reopened after the restart.
         assert client.cmd('LPUSH', 'roundtrip', f'job-{db}') == 1
         assert client.cmd('BRPOP', 'roundtrip', 1) == ['roundtrip', f'job-{db}']
 
@@ -158,15 +167,22 @@ start(os.environ['REDIS_OLD_IMAGE'])
 seed()
 # Populate the RDB preamble inside multipart AOF, then leave an incremental tail.
 assert client.cmd('CONFIG', 'GET', 'aof-use-rdb-preamble') == ['aof-use-rdb-preamble', 'yes']
-client.cmd('BGREWRITEAOF')
+# Files are renamed mid-rewrite; a vanished glob match must not fail the poll.
+aof = lambda: docker('exec', name, 'sh', '-c', 'cd /data/appendonlydir && wc -c * 2>/dev/null || true')
+assert client.cmd('BGREWRITEAOF').startswith('Background append only file rewriting')
+# The rewrite bumps the multipart sequence: wait for base file 2, not a status
+# flag that is already "ok" before the rewrite starts.
 for _ in range(100):
-    info = client.cmd('INFO', 'persistence')
-    if 'aof_rewrite_in_progress:0' in info and 'aof_last_bgrewrite_status:ok' in info:
+    if '.2.base.rdb' in aof() and 'aof_rewrite_in_progress:0' in client.cmd('INFO', 'persistence'):
         break
     time.sleep(.1)
 else: raise AssertionError('AOF rewrite did not complete')
-client.cmd('SET', 'incremental-tail', 'synthetic')
-assert client.cmd('DEL', 'incremental-tail') == 1
+assert docker('exec', name, 'sh', '-c', 'head -c 5 /data/appendonlydir/*.2.base.rdb') == 'REDIS'
+for db in (0, 1, 2):
+    client.cmd('SELECT', db)
+    assert client.cmd('SET', 'tail', f'tail-{db}') == 'OK'
+tail = [l.split() for l in aof().splitlines() if '.2.incr.aof' in l]
+assert tail and int(tail[0][0]) > 0, tail
 verify()
 stop()
 start(cfg['image'])
