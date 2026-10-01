@@ -71,11 +71,21 @@ blocks > "$tmp/old-blocks"
 start "$new" "$image" observability/tempo/tempo.yaml
 python3 "$ROOT/scripts/tests/tempo-fixture.py" read "$new" "$tmp/bridge.json"
 python3 "$ROOT/scripts/tests/tempo-fixture.py" read "$new" "$tmp/old.json"
+t0=$(date -u +%Y-%m-%dT%H:%M:%S)
 python3 "$ROOT/scripts/tests/tempo-fixture.py" write3 "$new" "$tmp/new.json"
-# 3.0 removed /flush: wait for the real config to persist a backend block.
-for ((i=0; i<90; i++)); do
+# 3.0 removed /flush: wait for the real config to persist a backend block that
+# covers the new trace. A block compacted from the 2.x ones ends before t0 and
+# must not count, or the kill below would only prove WAL replay.
+fresh() {
+  docker exec "$probe" cat "$1" 2>/dev/null |
+    python3 -c 'import json,sys; m = json.load(sys.stdin); sys.exit(m["endTime"][:19] < sys.argv[1])' "$t0" 2>/dev/null
+}
+: > "$tmp/added"
+for ((i=0; i<120; i++)); do
   blocks > "$tmp/new-blocks"
-  comm -13 <(sort "$tmp/old-blocks") <(sort "$tmp/new-blocks") > "$tmp/added"
+  while IFS= read -r meta; do
+    if fresh "$meta"; then echo "$meta" >> "$tmp/added"; fi
+  done < <(comm -13 <(sort "$tmp/old-blocks") <(sort "$tmp/new-blocks"))
   [[ -s "$tmp/added" ]] && break
   sleep 0.5
 done

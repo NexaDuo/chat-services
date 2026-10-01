@@ -312,7 +312,7 @@ done
 loki_ready "$middleware_probe_container" \
   || fail "Loki readiness failed at http://loki:3100/ready (${loki_container})"
 
-# Tempo 2.10 has no wget/shell; require a real HTTP round-trip from a sibling
+# Tempo has no wget/shell; require a real HTTP round-trip from a sibling
 # (/api/echo, not /ready — see scripts/lib/tempo-ready.sh).
 tempo_container="$(require_container "tempo")"
 source "$SCRIPT_DIR/lib/tempo-ready.sh"
