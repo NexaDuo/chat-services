@@ -30,7 +30,16 @@ WhatsApp ─▶ Evolution API ─▶ Chatwoot (Webhook) ─▶ Middleware (Adapt
   **Redis 7+** (Sidekiq + Celery). **Azure OpenAI** — `gpt-4o` + `gpt-4o-mini`.
 
 **Human handoff** is a Dify tool (HTTP) that sets the Chatwoot conversation to `open`
-and adds the `atendimento-humano` label.
+and adds the `atendimento-humano` label. **Bot ownership (#250):** the global Chatwoot
+Agent Bot is enabled per inbox, declared in `provisioning/chatwoot-agent-bot.json`;
+`pending` with no human assignee belongs to the bot, `open` (or any other status) to
+humans. Missing ownership fails closed; buffered groups recheck live ownership.
+Contact replies use optional `CHATWOOT_BOT_TOKEN`; labels/reads keep the user token.
+Cutover: recreate only middleware (`--no-deps`, full compose chain), dry-run then
+`scripts/provision-chatwoot-bot.sh --apply` (atomic inbox attachment + account-webhook
+removal), then `run-stack.sh validate` + `health-check-all.sh`. See
+[`middleware/README.md`](middleware/README.md#agent-bot-cutover-250); no automatic
+conversion of existing conversations to `pending`.
 
 ## Deployment — host-local Docker Compose behind the Cloudflare tunnel
 > **GCP is decommissioned (`b02aa74`).** No cloud VM, no Secret Manager, no GCS/WIF.

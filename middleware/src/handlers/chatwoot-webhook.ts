@@ -83,6 +83,9 @@ const WebhookSchema = z
     conversation: z
       .object({
         id: z.union([z.number(), z.string()]),
+        // Optional at parse time so missing ownership returns a measured 200 skip.
+        status: z.unknown().optional(),
+        meta: z.unknown().optional(),
         custom_attributes: z
           .record(z.string(), z.unknown())
           .optional()
@@ -115,6 +118,54 @@ const WebhookSchema = z
     id: z.union([z.number(), z.string()]).optional(),
   })
   .passthrough();
+
+const OwnershipSchema = z.object({
+  status: z.enum(["pending", "open", "resolved", "snoozed"]),
+  meta: z.object({
+    assignee: z.object({ id: z.union([z.number(), z.string()]) }).nullable(),
+    assignee_type: z.enum(["User", "AgentBot"]).nullable(),
+  }),
+});
+
+function ownershipSkipReason(conversation: unknown): string | undefined {
+  const parsed = OwnershipSchema.safeParse(conversation);
+  if (!parsed.success) return "missing_ownership_fields";
+  const { status, meta } = parsed.data;
+  if (status !== "pending") return `conversation_${status}`;
+  if (meta.assignee_type === "User") return "human_assignee";
+  if ((meta.assignee === null) !== (meta.assignee_type === null)) return "missing_ownership_fields";
+  return undefined;
+}
+
+function recordOwnershipSkip(
+  metrics: Metrics,
+  log: FastifyBaseLogger,
+  accountId: string,
+  conversationId: number | string,
+  reason: string,
+): void {
+  metrics.botOwnershipSkipsTotal.inc({ account_id: accountId, reason });
+  // Only identifiers/reasons: payloads and Axios errors can contain secrets.
+  log.warn({ accountId, conversationId, reason }, "webhook: bot ownership check skipped reply");
+}
+
+async function stillOwnedByBot(
+  chatwoot: ChatwootClient,
+  metrics: Metrics,
+  log: FastifyBaseLogger,
+  accountId: string,
+  conversationId: number | string,
+): Promise<boolean> {
+  let reason: string | undefined;
+  try {
+    reason = ownershipSkipReason(await chatwoot.getConversation({ accountId, conversationId }));
+  } catch {
+    reason = "ownership_lookup_failed";
+  }
+  if (!reason) return true;
+  recordOwnershipSkip(metrics, log, accountId, conversationId, reason);
+  return false;
+}
 
 const DIFY_CONV_ID_ATTR = "dify_conversation_id";
 
@@ -370,6 +421,12 @@ async function flushGroup(
     return;
   }
 
+  // Re-read at flush, not the buffered snapshot: a handoff during debounce
+  // drops the group without a reply, private note, or watermark advance (#250).
+  // Check again before posting because Dify itself can request a handoff.
+  // The final GET/POST race is not atomic in Chatwoot's REST API.
+  if (!await stillOwnedByBot(chatwoot, metrics, log, accountIdStr, conversationId)) return;
+
   // Issue #204: the agent's memory is keyed by CONTACT, not by Chatwoot
   // conversation — a reused Dify `conversation_id` must follow the same
   // person across every Chatwoot conversation they ever open. ARMADILHA:
@@ -537,6 +594,8 @@ async function flushGroup(
       }
     }
 
+    if (!await stillOwnedByBot(chatwoot, metrics, log, accountIdStr, conversationId)) return;
+
     // Post the agent's answer back to the user — exactly once for the group.
     await chatwoot.postMessage({
       accountId: accountIdStr,
@@ -568,6 +627,8 @@ async function flushGroup(
       { err, accountId: accountIdStr, conversationId, isTimeout, groupSize: eligible.length },
       "webhook: dify call failed for group",
     );
+
+    if (!await stillOwnedByBot(chatwoot, metrics, log, accountIdStr, conversationId)) return;
 
     // Drop a private note so the human team has context. Best-effort: a
     // failure to post the note must not mask the original error.
@@ -805,6 +866,12 @@ export async function registerChatwootWebhookRoute(
     }
     const accountIdStr = String(accountId);
     const conversationId = evt.conversation.id;
+
+    const ownershipReason = ownershipSkipReason(evt.conversation);
+    if (ownershipReason) {
+      recordOwnershipSkip(metrics, req.log, accountIdStr, conversationId, ownershipReason);
+      return reply.code(200).send({ skipped: ownershipReason });
+    }
 
     let content = (evt.content ?? "").trim();
     const hasOriginalText = content.length > 0;

@@ -10,7 +10,7 @@ export type ChatwootMessageResponse = {
 };
 
 /**
- * Minimal Chatwoot REST client — user API (api_access_token).
+ * Minimal Chatwoot REST client — user token, optional bot identity for replies.
  * Scope limited to what the middleware needs:
  *   - post outgoing/private messages
  *   - read/write conversation custom_attributes
@@ -23,6 +23,7 @@ export class ChatwootClient {
     baseUrl: string,
     apiToken: string,
     private readonly logger: Logger,
+    private readonly botToken?: string,
   ) {
     this.http = axios.create({
       baseURL: baseUrl,
@@ -31,6 +32,12 @@ export class ChatwootClient {
         api_access_token: apiToken,
         "Content-Type": "application/json",
       },
+    });
+    this.http.interceptors.response.use(undefined, (error: unknown) => {
+      // Axios errors carry request headers (including either access token).
+      // Callers log errors and may include their message in a private note.
+      const status = axios.isAxiosError(error) ? error.response?.status : undefined;
+      throw new Error(`Chatwoot request failed${status ? ` (HTTP ${status})` : ""}`);
     });
   }
 
@@ -42,11 +49,16 @@ export class ChatwootClient {
     messageType?: "outgoing" | "incoming" | "template";
   }): Promise<ChatwootMessageResponse> {
     const url = `/api/v1/accounts/${params.accountId}/conversations/${params.conversationId}/messages`;
-    const response = await this.http.post<ChatwootMessageResponse>(url, {
-      content: params.content,
-      message_type: params.messageType ?? "outgoing",
-      private: params.private ?? false,
-    });
+    const useBotToken = this.botToken && !params.private && (params.messageType ?? "outgoing") === "outgoing";
+    const response = await this.http.post<ChatwootMessageResponse>(
+      url,
+      {
+        content: params.content,
+        message_type: params.messageType ?? "outgoing",
+        private: params.private ?? false,
+      },
+      useBotToken ? { headers: { api_access_token: this.botToken } } : undefined,
+    );
     this.logger.debug(
       {
         accountId: params.accountId,
@@ -56,6 +68,26 @@ export class ChatwootClient {
       "chatwoot: message posted",
     );
     return response.data;
+  }
+
+  async getConversation(params: {
+    accountId: number | string;
+    conversationId: number | string;
+  }): Promise<unknown> {
+    const url = `/api/v1/accounts/${params.accountId}/conversations/${params.conversationId}`;
+    const { data } = await this.http.get(url);
+    // v4.13 REST show omits both assignment keys for an unassigned conversation;
+    // EventDataPresenter (webhooks) emits explicit nulls. Normalize ONLY that
+    // documented REST shape, leaving partial/invalid metadata to fail closed.
+    if (
+      data?.meta && typeof data.meta === "object" &&
+      typeof data.meta.channel === "string" && data.meta.sender &&
+      Object.hasOwn(data.meta, "hmac_verified") &&
+      !Object.hasOwn(data.meta, "assignee") && !Object.hasOwn(data.meta, "assignee_type")
+    ) {
+      return { ...data, meta: { ...data.meta, assignee: null, assignee_type: null } };
+    }
+    return data;
   }
 
   async setConversationCustomAttributes(params: {
