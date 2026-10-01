@@ -266,32 +266,18 @@ services:
     networks:
       - chat-network
   tempo:
-    image: grafana/tempo:2.6.1
+    image: grafana/tempo:2.10.8@sha256:f0561deb1c68ec44d6e6e7e4487f30106c4e5e768642077695b37958b105812a
     restart: unless-stopped
     logging: *default-logging
     # Issue #157 priority group 3 (observability, 6x headroom — see loki
     # above). Measured ~128MiB RSS; limit = 6x rounded up to the next
     # 128MiB (already an exact multiple).
     mem_limit: 768m
+    # Preserve access to the existing root-owned 2.6.1 volume; image USER is 10001.
     user: "0"
     command: ["-config.file=/etc/tempo/tempo.yaml"]
-    # NOT /ready (issue #158, verified empirically): this single-binary
-    # Tempo deployment has no `memberlist`/ring config
-    # (observability/tempo/tempo.yaml), and Tempo's /ready gates on
-    # ring-based component membership — /ready returned a bare 503 on the
-    # live, functioning container (logs showed normal compaction/flush
-    # activity throughout) — a known single-binary-without-ring quirk, not a
-    # real problem. Using it would make this container permanently
-    # `unhealthy`, exactly the false-positive-flap risk called out in the
-    # issue. /metrics is a genuine HTTP round-trip through Tempo's own
-    # server + Prometheus registry (verified: 200 OK) and is the same
-    # endpoint already scraped by Prometheus.
-    healthcheck:
-      test: ["CMD", "wget", "-qO-", "-T", "5", "http://127.0.0.1:3200/metrics"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 30s
+    # W4a: distroless, no wget/shell. Mandatory sibling /ready probe in
+    # health-check-all.sh replaces the Docker healthcheck (as for Loki).
     volumes:
       # Directory mount (not single-file) — WSL stale-inode hardening (#113/#116).
       - ${NEXADUO_CONF_PATH}/observability/tempo:/etc/tempo:ro

@@ -26,6 +26,7 @@ trap 'exit 143' TERM
 image=$(sed -n 's/^    image: \(otel\/opentelemetry-collector-contrib:.*\)$/\1/p' "$ROOT/deploy/docker-compose.nexaduo.yml")
 [[ $image =~ ^otel/opentelemetry-collector-contrib:0\.[^@]+@sha256:[a-f0-9]{64}$ ]]
 tempo_image=$(sed -n 's/^    image: \(grafana\/tempo:.*\)$/\1/p' "$ROOT/deploy/docker-compose.nexaduo.yml")
+[[ $tempo_image =~ ^grafana/tempo:[0-9]+\.[^@]+@sha256:[a-f0-9]{64}$ ]]
 old_image=otel/opentelemetry-collector-contrib:0.111.0@sha256:a2a52e43c1a80aa94120ad78c2db68780eb90e6d11c8db5b3ce2f6a0cc6b5029
 probe_image=alpine:3.21@sha256:ce64758a109eb420d874a118f87920e625e12d3634e03b4a5573fd9f6e5d3507
 for img in "$image" "$old_image" "$tempo_image" "$probe_image"; do docker pull "$img" >/dev/null; done

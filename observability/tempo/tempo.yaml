@@ -1,6 +1,6 @@
 # Minimal single-binary Grafana Tempo for the multi-tenant chat-services stack.
 # Lean footprint for a shared 16GB VM: local filesystem backend, modest retention.
-# Pinned image: grafana/tempo:2.6.1 (see deploy/docker-compose.nexaduo.yml).
+# Pinned image: grafana/tempo:2.10.8 (see deploy/docker-compose.nexaduo.yml).
 
 stream_over_http_enabled: true
 
@@ -29,6 +29,9 @@ compactor:
 storage:
   trace:
     backend: local
+    block:
+      # W4a bridge: explicit format readable by the later Tempo 3.0 wave.
+      version: vParquet4
     wal:
       path: /var/tempo/wal
     local:

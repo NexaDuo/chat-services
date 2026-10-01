@@ -152,7 +152,6 @@ HEALTHCHECK_SUBNAMES=(
   alloy
   grafana
   prometheus
-  tempo
   cloudflared
 )
 
@@ -180,6 +179,7 @@ RUNNING_SUBNAMES=(
   dify-sandbox
   dify-plugin-daemon
   dify-ssrf-proxy
+  tempo # Distroless; mandatory external /ready assertion below.
   loki # Distroless; mandatory external /ready assertion below.
   otel-collector
   self-healing-agent
@@ -311,6 +311,17 @@ for i in $(seq 1 12); do
 done
 loki_ready "$middleware_probe_container" \
   || fail "Loki readiness failed at http://loki:3100/ready (${loki_container})"
+
+# Tempo 2.10 has no wget/shell; require actual HTTP readiness from a sibling.
+tempo_container="$(require_container "tempo")"
+source "$SCRIPT_DIR/lib/tempo-ready.sh"
+step "Probing Tempo readiness from ${middleware_probe_container} (up to 1 min)"
+for i in $(seq 1 12); do
+  if tempo_ready "$middleware_probe_container"; then break; fi
+  sleep 5
+done
+tempo_ready "$middleware_probe_container" \
+  || fail "Tempo readiness failed at http://tempo:3200/ready (${tempo_container})"
 
 # otel-collector (issue #158): its image is distroless (no shell/curl/wget
 # inside it — verified, every exec attempt fails with "executable file not
@@ -724,13 +735,13 @@ echo "  memory-limit coverage OK (${mem_containers_checked} checked, ${mem_conta
 # a reviewed PR, not a runtime knob.
 # ---------------------------------------------------------------------------
 step "Verifying every running chat-services-*/coolify-proxy container has a healthcheck AND reports healthy"
-# loki and otel-collector: distroless images, no exec tool for a Docker-native
+# tempo, loki and otel-collector: distroless images, no exec tool for a Docker-native
 # healthcheck (see deploy/docker-compose.nexaduo.yml and the otel-collector
 # probe above, which covers it via a sibling container instead).
 # dify-sandbox/dify-plugin-daemon/dify-ssrf-proxy/self-healing-agent/autoheal:
 # out of scope for issue #158 (not in its affected-surface list); left for a
 # follow-up rather than folded in here undocumented.
-HEALTHCHECK_COVERAGE_SKIP_SUBNAMES=(loki otel-collector dify-sandbox dify-plugin-daemon dify-ssrf-proxy self-healing-agent autoheal)
+HEALTHCHECK_COVERAGE_SKIP_SUBNAMES=(tempo loki otel-collector dify-sandbox dify-plugin-daemon dify-ssrf-proxy self-healing-agent autoheal)
 
 hc_bad=0
 hc_containers_found=0
