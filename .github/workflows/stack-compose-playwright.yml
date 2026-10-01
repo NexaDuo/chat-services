@@ -101,7 +101,7 @@ jobs:
           bash scripts/tests/test-prometheus.sh
 
       # Internal OTLP/storage regression; no browser flow (Playwright N/A).
-      - name: Test isolated Tempo storage upgrade (under 150s after pulls)
+      - name: Test isolated Tempo storage upgrade (under 200s after pulls)
         run: bash scripts/tests/test-tempo.sh
 
       # Synthetic Postgres migration and real file provisioning; no live services.
