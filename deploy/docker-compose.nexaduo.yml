@@ -196,7 +196,7 @@ services:
     networks:
       - chat-network
   prometheus:
-    image: prom/prometheus:v2.55.0
+    image: prom/prometheus:v3.15.0@sha256:efd719c99d83b060d9daefdcf00360461adf279f45ef5391f8d111892118753e
     restart: unless-stopped
     logging: *default-logging
     # Issue #157 priority group 3 (observability, 6x headroom — see loki

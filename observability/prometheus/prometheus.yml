@@ -11,6 +11,8 @@
 # =============================================================================
 
 global:
+  # W3a: preserve classic metric/label names across the UTF-8 default change.
+  metric_name_validation_scheme: legacy
   scrape_interval: 15s
   evaluation_interval: 15s
   external_labels:

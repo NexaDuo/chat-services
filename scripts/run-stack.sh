@@ -32,6 +32,7 @@
 #   reconcile-cron - alias of install-cron (run after a WSL/Docker restart)
 #   check-backup- fail if the newest dump is stale (default >= 26h old)
 #   down        - stop the stack (DOES NOT delete volumes; SACRED Postgres data)
+#   reload-prometheus - checksum-gated restart of only Prometheus
 #   reload-alloy- checksum-gated restart of only Alloy after a config edit
 #   status      - docker compose ps
 #
@@ -48,6 +49,7 @@ cd "$REPO_ROOT"
 # shellcheck source=lib/host-health.sh
 source "$REPO_ROOT/scripts/lib/host-health.sh"
 source "$REPO_ROOT/scripts/lib/alloy-config.sh"
+source "$REPO_ROOT/scripts/lib/prometheus-config.sh"
 
 ENV_FILE="${ENV_FILE:-${REPO_ROOT}/.env}"
 DUMPS_DIR="${DUMPS_DIR:-${HOME}/nexaduo-local/dumps}"
@@ -118,6 +120,7 @@ up() {
   dc up -d --remove-orphans
   # Non-fatal: a stopped/absent alloy must not abort up before the cron self-heal.
   reload_alloy_config || warn "alloy config reload skipped (alloy not running?) — run: $0 reload-alloy"
+  reload_prometheus_config || warn "prometheus config reload failed — run: $0 reload-prometheus"
   dc ps
   # Self-heal the backup schedule on every up (issue #121): WSL/Docker-Desktop
   # restarts drop the cron daemon and today's incident (a WSL restart) left the
@@ -282,12 +285,14 @@ case "${1:-}" in
   down)         down ;;
   status)       status ;;
   reload-alloy) reload_alloy_config ;;
+  reload-prometheus) reload_prometheus_config ;;
   *) cat >&2 <<EOF
-Usage: $0 [--no-isolated] {preflight|up|restore|bootstrap|validate|backup|install-cron|reconcile-cron|check-backup|down|status|reload-alloy}
+Usage: $0 [--no-isolated] {preflight|up|restore|bootstrap|validate|backup|install-cron|reconcile-cron|check-backup|down|status|reload-alloy|reload-prometheus}
 
   bootstrap    clean rebuild: preflight + up + restore DBs from \$DUMPS_DIR
   up           bring up the stack (populated volume; no restore) + reconcile cron
   validate     smoke real tunnel URLs + Playwright against them
+  reload-prometheus checksum-gated restart of only Prometheus after a config edit
   reload-alloy checksum-gated restart of only Alloy after a config edit
   backup       run scripts/backup-host.sh once
   install-cron install/converge the daily 03:00 backup cron (dedupes stale entries)
