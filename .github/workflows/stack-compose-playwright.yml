@@ -108,6 +108,10 @@ jobs:
       - name: Test isolated Grafana 11 to 12 to 13 upgrade (under 180s after pulls)
         run: bash scripts/tests/test-grafana.sh
 
+      # Internal broker persistence/reconnection; Playwright N/A.
+      - name: Test isolated Redis 7.2 patch upgrade (under 120s after pulls)
+        run: bash scripts/tests/test-redis.sh
+
       - name: Setup Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:

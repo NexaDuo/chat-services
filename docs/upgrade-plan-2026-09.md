@@ -32,7 +32,7 @@ Legenda: **T** = tag de versão explícita, ainda mutável; **F** = flutuante (l
 | `deploy/docker-compose.nexaduo.yml:257` | `otel/opentelemetry-collector-contrib:0.111.0` | T |
 | `deploy/docker-compose.nexaduo.yml:283` | `grafana/tempo:2.6.1` | T |
 | `deploy/docker-compose.shared.yml:55` | `pgvector/pgvector:pg16` | F |
-| `deploy/docker-compose.shared.yml:90` | `redis:7.2.4-alpine` | T |
+| `deploy/docker-compose.shared.yml:90` | `redis:7.2.16-alpine@sha256:29e8589c3f9ba699b5f7aa4b3c7733c58852a3626439e619aa0ee78de08c6ca0` (W5a; prior inventory: 7.2.4) | D |
 | `deploy/docker-compose.shared.yml:151` | `cloudflare/cloudflared:latest` | F |
 | `deploy/docker-compose.shared.yml:201` | `willfarrell/autoheal:1.2.0` | T |
 | `middleware/Dockerfile:8,15,24,31` | `node:22-alpine` | F |
@@ -337,3 +337,73 @@ Sources pinned to the deployed tag: [migration](https://github.com/grafana/tempo
   3.x; pulls precede a 180s deadline plus 15s cleanup grace. No browser regression
   is needed for this internal storage/OTLP change. Production apply and live
   validation must be performed separately by the operator.
+
+
+### W5a — Redis 7.2 patch operational contract
+
+Compose pins `redis:7.2.16-alpine@sha256:29e8589c3f9ba699b5f7aa4b3c7733c58852a3626439e619aa0ee78de08c6ca0`
+(index resolved with `docker buildx imagetools inspect`). The historical CI/R1 pin is
+`redis:7.2.4-alpine@sha256:c8bb255c3559b3e458766db810aa7b3c7af1235b204cfdb304e79ff388fe1a5a`.
+W5b remains a separate, conditional wave.
+
+Reviewed [all 7.2.5–7.2.16 release notes](https://github.com/redis/redis/blob/7.2.16/00-RELEASENOTES):
+security fixes cover Lua RCE, ACL bypass/DoS, unauthenticated output-buffer growth,
+HyperLogLog, error-reply injection, RESTORE/stream and blocked-client use-after-free,
+TLS connection handling, and redis-check-aof. Relevant correctness fixes include
+blocking-command timeout reset (7.2.5), AOF manifest detection in redis-check-aof
+(7.2.5), and stream lag accounting (7.2.7/7.2.9). These patches announce no new
+AOF/RDB format or configuration-default change requiring service changes; RDB v11
+was introduced in 7.2.0, before both endpoints. Keep requirepass, appendonly,
+150mb maxmemory, noeviction, 256m mem_limit and healthcheck unchanged.
+
+`scripts/tests/test-redis.sh` extracts the service command/memory/image from Compose,
+uses runtime-generated credentials and isolated disposable resources, and checks
+DBs 0/1/2, all broker data types, exact expiration timestamps, populated RDB/AOF
+persistence, authentication, client reconnection and a second restart. Pulls precede
+the <120s bounded test/cleanup. Internal broker regression: Playwright N/A.
+The root/CI Compose files inherit the shared pin. Historical logs remain historical.
+`health-check-all.sh` checks Redis service health and memory; `run-stack.sh` uses the
+shared Compose definition; `backup-host.sh` supports a one-off volume override and
+has no Redis-version dependency. No daily backup defaults or freshness gates change.
+
+Operator-only apply (use the `dc` function in section 3; coordinate the outage):
+
+1. Pass CI/reviews, pre-pull `dc pull redis`, record old pin and queue/key counts.
+   Block external webhooks/UI/API ingress and pause external scheduled producers.
+   Stop `autoheal` during maintenance. Stop `self-healing-agent`, `middleware`, and
+   `evolution-api` (the first two are indirect API producers, not Redis clients).
+   Let in-flight API work settle, then stop `chatwoot-rails` and `dify-api`.
+   Keep `chatwoot-init` stopped/completed: it also has REDIS_URL, but is a one-shot.
+2. Drain with `chatwoot-sidekiq`, `dify-worker`, and `dify-plugin-daemon` still up.
+   Check Sidekiq Queue sizes and ProcessSet busy counts via `sidekiq/api` (DB1);
+   inspect Celery `active`, `reserved`, `scheduled`, and `active_queues` via
+   `celery -A app.celery inspect` in `dify-worker` (DB0). Require no active/reserved
+   tasks and ready queues empty, including Celery priority queue lists. Inventory
+   Sidekiq retry/scheduled sets and Celery future ETA tasks; do not purge them to
+   obtain zero. Wait for or deliberately preserve future work with no task in flight.
+   Gracefully stop `chatwoot-sidekiq`, `dify-worker`, then `dify-plugin-daemon` with
+   a timeout sufficient for completion; abort on forced termination. Confirm all
+   named clients stopped, remaining queues/key counts stable and `CLIENT LIST`
+   contains only operator probes. No separate beat service exists in this chain.
+3. With clients stopped, issue authenticated `SHUTDOWN SAVE` using `REDISCLI_AUTH`
+   supplied securely by the operator (never print the password). Confirm Redis exits
+   cleanly and stays stopped. Cold-backup `chat-services_redis-data`, including
+   dump.rdb and the entire appendonlydir/manifest, with the one-off override:
+   `BACKUP_VOLUME_SUFFIXES="chatwoot-storage dify-api-storage evolution-instances grafana-data redis-data" scripts/backup-host.sh`.
+   Verify the exact volume selected, exit status, archive contents/integrity and
+   off-host copy; do not add redis-data to daily defaults.
+4. `dc up -d --no-deps redis`. Check authenticated PING, unauthenticated NOAUTH,
+   `INFO persistence` loading=0, aof_enabled=1, aof_last_write_status=ok, and
+   `CONFIG GET maxmemory maxmemory-policy` = 157286400/noeviction. Compare preserved
+   queue/key counts and expirations before reopening writers.
+5. Start stopped services in dependency order: `dc start dify-plugin-daemon`, then
+   `dc start dify-worker chatwoot-sidekiq`, then `dc start dify-api chatwoot-rails`,
+   then `dc start evolution-api middleware self-healing-agent`. Confirm health,
+   resume `autoheal` and ingress, and verify real Sidekiq/Celery tasks reach terminal
+   success, reconnects succeed, and no auth/AOF/OOM or rising backlog appears.
+   Run section 3 live validation/health checks and observe a load/backup cycle.
+6. R1 rollback: quiesce the same writers again, stop Redis cleanly, archive failed
+   post-upgrade state, restore the cold redis-data archive into an empty replacement
+   volume (never overlay AOF files), reinstate the immutable 7.2.4 pin above, recreate
+   only Redis with `--no-deps`, and repeat startup/verification. Reconcile all writes
+   since the backup before reopening traffic. Never touch the Postgres volume.
