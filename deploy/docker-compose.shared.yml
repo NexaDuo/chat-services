@@ -87,7 +87,7 @@ services:
       - chat-network
 
   redis:
-    image: redis:7.2.4-alpine
+    image: redis:7.2.16-alpine@sha256:29e8589c3f9ba699b5f7aa4b3c7733c58852a3626439e619aa0ee78de08c6ca0
     restart: unless-stopped
     logging: *default-logging
     # Measured ~9MiB RSS. Given floor of 256m (not the bare 4x/128m floor
