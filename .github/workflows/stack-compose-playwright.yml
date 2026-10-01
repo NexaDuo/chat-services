@@ -101,7 +101,7 @@ jobs:
           bash scripts/tests/test-prometheus.sh
 
       # Synthetic Postgres migration and real file provisioning; no live services.
-      - name: Test isolated Grafana 11 to 12 upgrade (under 150s after pulls)
+      - name: Test isolated Grafana 11 to 12 to 13 upgrade (under 180s after pulls)
         run: bash scripts/tests/test-grafana.sh
 
       - name: Setup Node.js
