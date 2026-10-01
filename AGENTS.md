@@ -453,3 +453,11 @@ fields you need.
   value's meaning). A wrong assumption once cost a whole reverted migration.
 - **No premature success on async flows.** Confirm the terminal state (status/log/job
   result), not the enqueue step.
+
+## Tempo 3.0 monolithic operations
+Tempo is pinned to 3.0.3; Kafka is not required (`target: all`). Backend scheduler
+and worker enforce 120h retention and compaction. Keep the root-owned volume and
+`/api/echo` sibling probe. Drain 2.x and cold-backup `tempo-data` before upgrading;
+rollback requires restoring that backup plus the 2.10.8 config/pin, not an in-place
+downgrade. WAL paths, durability and memory caveats: see the W4b operational
+contract in [the upgrade plan](docs/upgrade-plan-2026-09.md#w4b--tempo-30-operational-contract).

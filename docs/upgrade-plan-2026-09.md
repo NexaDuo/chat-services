@@ -86,7 +86,7 @@ Abreviação `TF` = `infrastructure/terraform`; `P` = `TF/envs/production`. Vers
 | Dify DSL / plugin | `dify-apps/Self-Healing Agent Analysis.yml:13,16`: Azure plugin `0.0.50@61cf7ba70e80065c6828d21d0bb2c0f1a76c99d599c5266fe86f4fe135c27880` (**D**), DSL `0.6.0` | Manter no primeiro upgrade; latest publicado no Marketplace **ASSUMED**, validar import/export |
 | Edge | `edge/cloudflare-worker/wrangler.jsonc:5`: `compatibility_date=2026-04-14` | Data de contrato, não release; manter até testes próprios |
 
-Tempo `observability/tempo/tempo.yaml:3` repete o pin `2.6.1` em comentário. Collector, Prometheus e provisioning usam configurações sem pin adicional de software. Azure `gpt-4o`/`gpt-4o-mini` são deployments externos: versão real, API version e disponibilidade **ASSUMED**, não são imagens a atualizar via Compose.
+Tempo `observability/tempo/tempo.yaml:3` acompanha o pin `3.0.3` após W4b (fixtures 2.6.1 e 2.10.8 preservadas nos testes). Collector, Prometheus e provisioning usam configurações sem pin adicional de software. Azure `gpt-4o`/`gpt-4o-mini` são deployments externos: versão real, API version e disponibilidade **ASSUMED**, não são imagens a atualizar via Compose.
 
 ### npm: todos os pins diretos, locks e alvo
 
@@ -176,7 +176,7 @@ O conjunto Dify proposto está confirmado no [Compose oficial 1.17.1](https://gi
 - **Loki:** [guia de upgrade](https://grafana.com/docs/loki/latest/setup/upgrade/) registra remoção de BusyBox desde 3.5.8; `deploy/docker-compose.nexaduo.yml:113` e `scripts/health-check-all.sh:226,231` dependem de wget interno e quebrariam. Trocar por sonda HTTP externa verificável e ajustar a regra de cobertura, sem declarar saudável só pelo processo. Já existe TSDB/v13; manter períodos históricos. `table_manager` não comprova retenção TSDB: validar/configurar compactor antes de deletar dados. Bloom experimental não está habilitado.
 - **Prometheus:** [migração 3.0](https://prometheus.io/docs/prometheus/latest/migration/) muda regex/range semantics e exige Content-Type de scrape válido. Comparar séries e alertas antes/depois, inclusive token usage por account_id; não mascarar endpoint errado com fallback indiscriminado. Preservar snapshot TSDB porque voltar a v2 não significa que WAL novo seja legível.
 - **Grafana:** [v12](https://grafana.com/docs/grafana/latest/upgrade-guide/upgrade-v12.0/) migra annotations e exige UIDs válidos; UIDs locais `loki`, `tempo`, `prometheus`, `postgres-self-healing-v2` são compatíveis em formato. [v13](https://grafana.com/docs/grafana/latest/upgrade-guide/upgrade-v13.0/) muda armazenamento de dashboards/folders, remove comandos `grafana-cli/server` e renderer plugin, desabilita datasource API por ID numérico. Usar 13.2.2, não 13.0.0 retirado. Banco real aqui é PostgreSQL, não apenas `grafana-data`.
-- **Tempo:** [migração](https://grafana.com/docs/tempo/latest/set-up-for-tracing/setup-tempo/upgrade/) exige vParquet4+, remove blocos `ingester`/`compactor` presentes no YAML local e não oferece downgrade 3→2. Fazer ponte 2.10.8, verificar blocos em disco e migrar config monolítica. [Collector changelog](https://github.com/open-telemetry/opentelemetry-collector-contrib/blob/v0.161.0/CHANGELOG.md): normalização de nomes/sufixos Prometheus e mudanças health_check requerem comparação; não usamos os exporters removidos Loki/Jaeger.
+- **Tempo:** [migração v3.0.3](https://github.com/grafana/tempo/blob/v3.0.3/docs/sources/tempo/set-up-for-tracing/setup-tempo/migrate-to-3.md) exige vParquet4+, remove blocos `ingester`/`compactor` (migrados em W4b) e não oferece downgrade 3→2. Fazer ponte 2.10.8, verificar blocos em disco e migrar config monolítica. [Collector changelog](https://github.com/open-telemetry/opentelemetry-collector-contrib/blob/v0.161.0/CHANGELOG.md): normalização de nomes/sufixos Prometheus e mudanças health_check requerem comparação; não usamos os exporters removidos Loki/Jaeger.
 - **Proxy:** [Traefik 3.7](https://doc.traefik.io/traefik/v3.7/migrate/v3/) altera normalização/headers, incluindo h2c; verificar SSE, WebSocket, downloads e headers de autenticação. Cloudflared publica principalmente checksums, sem narrativa completa de migração: diff desde o digest realmente instalado permanece **ASSUMED**.
 - **Redis/PG:** Redis mantém fila durável, `noeviction`, 150 MB/256 MB; testar AOF/RDB e reconexões. Revisar [notas 7.2](https://github.com/redis/redis/releases/tag/7.2.16), [8.10](https://github.com/redis/redis/blob/8.10.2/00-RELEASENOTES) e licenças antes da major. [PG17](https://www.postgresql.org/docs/release/17.0/)/[PG18](https://www.postgresql.org/docs/release/18.0/) mudam manutenção/search_path e checksums/auth MD5; major exige migração, e neste plano exclusivamente dump/restore em volume novo. pgvector 0.8.2–0.8.6 corrige HNSW/IVFFlat; versão instalada da extensão é **ASSUMED** até `pg_extension`, distinta da biblioteca presente na imagem.
 
@@ -288,3 +288,52 @@ Em W14, parar **todos** os consumidores para snapshot final consistente; criar v
 6. **W7b (Dify):** colocar `MIGRATION_ENABLED=false` no `dify-api` durante o cutover, para o boot não re-executar a migração depois do `flask db upgrade` avulso. Com `--no-deps`, o `dify-init` não roda, então fazer o `chown` de storage explicitamente, se necessário.
 7. **AGENTS.md desatualizado** sobre a cobertura de volumes do `backup-host.sh`: corrigir em PR de follow-up.
 8. **SSRF (Squid) sem ACL:** tratado agora na issue #222, fora das ondas.
+
+### W4b — Tempo 3.0 operational contract
+
+Sources pinned to the deployed tag: [migration](https://github.com/grafana/tempo/blob/v3.0.3/docs/sources/tempo/set-up-for-tracing/setup-tempo/migrate-to-3.md),
+[configuration](https://github.com/grafana/tempo/blob/v3.0.3/docs/sources/tempo/configuration/_index.md),
+[module wiring](https://github.com/grafana/tempo/blob/v3.0.3/cmd/tempo/app/modules.go).
+
+- `target: all` explicitly selects Kafka-free monolithic mode. No command or port
+  changes: OTLP binds `0.0.0.0:4317/4318`, API `3200`, internal gRPC `9095`.
+  Collector exporter, Grafana datasource UID/URL, logs→traces links and HTTP
+  streaming remain unchanged. The sibling `/api/echo` probe is retained; storage
+  and ingest correctness are separately tested, not inferred from this liveness probe.
+- `ingester.max_block_duration` moves to `live_store.max_block_duration: 30s` (the 3.0 default, tighter than the old
+  five-minute upper bound; more frequent, smaller blocks).
+  `compactor` is removed: the in-process backend scheduler creates maintenance
+  jobs and backend worker executes compaction/retention on the local backend.
+  Scheduler provider compaction settings and worker compaction settings retain
+  `block_retention: 120h`; retention scheduling defaults to hourly (expiry is
+  asynchronous, with compacted-block cleanup grace). The regression checks both
+  modules start and the retention provider runs, not a five-day expiry simulation.
+- `query_frontend.query_end_cutoff: 0s` disables the new default 30-second search
+  exclusion; `live_store.fail_on_high_lag: false` pairs with that setting in the
+  synchronous Kafka-free mode. Immediate TraceQL search remains available.
+- Keep vParquet4, `/var/tempo/blocks`, the `/var/tempo` volume and `user: "0"`.
+  Live-store WAL is explicitly `/var/tempo/live-store/traces`, with shutdown markers
+  under `/var/tempo/live-store/shutdown-marker`; scheduler work cache is `/var/tempo`.
+  The legacy `storage.trace.wal.path` remains but is not the new live-store WAL.
+  The 3.x `/flush` endpoint is removed; shutdown cuts traces to WAL; block completion may be cancelled and replayed on restart.
+  Drain/flush 2.x before switching: do not assume its pending WAL is migrated.
+  Live-store replays its own WAL on restart; accepted spans still in memory can be
+  lost on a crash before WAL flush (default idle 5s / maximum live 30s, plus sweep).
+  There is no Kafka durability layer. Memory now includes live-store buffers,
+  concurrent queries and backend-worker compaction: the existing 768MiB limit is
+  unchanged and needs operator load/OOM monitoring; the former 2.x RSS is no sizing proof.
+- Trace IDs in vParquet4+ blocks remain readable. TraceQL metrics only read RF1
+  blocks; historical RF3 data from 2.x is not retroactively available to metrics queries.
+- Future live apply (not part of this worktree task): coordinate an ingest pause,
+  flush/drain and stop only Tempo; take and verify a **cold** `tempo-data` archive
+  off-host together with the 2.10.8 pin/config. Use a wave-specific backup override,
+  never change daily backup defaults or freshness gates. With the established
+  production Compose chain, run `docker compose up -d --no-deps tempo`. Verify old
+  and new trace IDs, new TraceQL search, `/api/echo`, maintenance services/logs and
+  health; resume ingestion and monitor memory. No in-place downgrade: stop Tempo,
+  restore the cold volume backup and saved 2.10.8 config/pin, then recreate only Tempo.
+  Traces accepted after the backup are not recovered by that rollback.
+- CI uses one synthetic throwaway volume through 2.6.1 → 2.10.8 → compose-pinned
+  3.x; pulls precede a 180s deadline plus 15s cleanup grace. No browser regression
+  is needed for this internal storage/OTLP change. Production apply and live
+  validation must be performed separately by the operator.

@@ -1,12 +1,17 @@
 # Minimal single-binary Grafana Tempo for the multi-tenant chat-services stack.
 # Lean footprint for a shared 16GB VM: local filesystem backend, modest retention.
-# Pinned image: grafana/tempo:2.10.8 (see deploy/docker-compose.nexaduo.yml).
+# Pinned image: grafana/tempo:3.0.3 (see deploy/docker-compose.nexaduo.yml).
 
+target: all # Monolithic: direct in-process ingest, no Kafka.
 stream_over_http_enabled: true
 
 server:
   http_listen_port: 3200
   grpc_listen_port: 9095
+
+# Preserve immediate TraceQL search in this synchronous, Kafka-free deployment.
+query_frontend:
+  query_end_cutoff: 0s
 
 distributor:
   receivers:
@@ -17,20 +22,31 @@ distributor:
         http:
           endpoint: "0.0.0.0:4318"
 
-ingester:
-  # Flush traces to the WAL/blocks promptly so memory stays bounded.
-  max_block_duration: 5m
+# v3.0.3 configuration reference: live-store replaces the ingester.
+live_store:
+  fail_on_high_lag: false # No Kafka lag; pairs with query_end_cutoff: 0s.
+  max_block_duration: 30s # 3.0 default; tighter than the former 5m bound.
+  wal:
+    # Separate from the legacy ingester WAL; drain 2.x before upgrading.
+    path: /var/tempo/live-store/traces
+  shutdown_marker_dir: /var/tempo/live-store/shutdown-marker
 
-compactor:
+# Scheduler plans maintenance; worker executes retention and compaction.
+backend_scheduler:
+  local_work_path: /var/tempo
+  provider:
+    compaction:
+      compaction:
+        block_retention: 120h
+backend_worker:
   compaction:
-    # Retention: 120h (5 days). Within the 72h–168h target for the VM.
     block_retention: 120h
 
 storage:
   trace:
     backend: local
     block:
-      # W4a bridge: explicit format readable by the later Tempo 3.0 wave.
+      # Preserve compatibility with persisted bridge blocks.
       version: vParquet4
     wal:
       path: /var/tempo/wal

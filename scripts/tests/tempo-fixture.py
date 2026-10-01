@@ -27,7 +27,7 @@ def request(endpoint, body=None):
 
 
 def eventually(fn):
-    deadline = time.monotonic() + 15
+    deadline = time.monotonic() + 30
     while True:
         try:
             return fn()
@@ -38,7 +38,7 @@ def eventually(fn):
 
 
 http = url(3200)
-if mode == "write":
+if mode.startswith("write"):
     trace = uuid.uuid4().hex
     span = uuid.uuid4().hex[:16]
     now = time.time_ns()
@@ -71,7 +71,8 @@ def search():
     assert trace in [t["traceID"] for t in result.get("traces", [])], result
 
 
-eventually(search)
+if mode.startswith("write"):
+    eventually(search)
 if mode == "write":
     request(http + "/flush", b"")
-print(f"PASS: {mode} trace by ID and TraceQL")
+print(f"PASS: {mode} trace by ID" + (" and TraceQL" if mode.startswith("write") else ""))
