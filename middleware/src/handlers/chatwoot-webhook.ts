@@ -9,6 +9,7 @@ import type { ChatwootClient } from "../chatwoot.js";
 import { DifyClient } from "../dify.js";
 import { timingSafeEqual } from "node:crypto";
 import { ConversationDebouncer } from "../conversation-debouncer.js";
+import { beginDifyTurn } from "../in-turn-handoff.js";
 
 /**
  * Constant-time token comparison. A plain `!==` leaks the length of the
@@ -85,7 +86,6 @@ const WebhookSchema = z
         id: z.union([z.number(), z.string()]),
         // Optional at parse time so missing ownership returns a measured 200 skip.
         status: z.unknown().optional(),
-        meta: z.unknown().optional(),
         custom_attributes: z
           .record(z.string(), z.unknown())
           .optional()
@@ -121,19 +121,13 @@ const WebhookSchema = z
 
 const OwnershipSchema = z.object({
   status: z.enum(["pending", "open", "resolved", "snoozed"]),
-  meta: z.object({
-    assignee: z.object({ id: z.union([z.number(), z.string()]) }).nullable(),
-    assignee_type: z.enum(["User", "AgentBot"]).nullable(),
-  }),
 });
 
 function ownershipSkipReason(conversation: unknown): string | undefined {
   const parsed = OwnershipSchema.safeParse(conversation);
   if (!parsed.success) return "missing_ownership_fields";
-  const { status, meta } = parsed.data;
+  const { status } = parsed.data;
   if (status !== "pending") return `conversation_${status}`;
-  if (meta.assignee_type === "User") return "human_assignee";
-  if ((meta.assignee === null) !== (meta.assignee_type === null)) return "missing_ownership_fields";
   return undefined;
 }
 
@@ -146,7 +140,8 @@ function recordOwnershipSkip(
 ): void {
   metrics.botOwnershipSkipsTotal.inc({ account_id: accountId, reason });
   // Only identifiers/reasons: payloads and Axios errors can contain secrets.
-  log.warn({ accountId, conversationId, reason }, "webhook: bot ownership check skipped reply");
+  const level = reason === "missing_ownership_fields" || reason === "ownership_lookup_failed" ? "warn" : "info";
+  log[level]({ accountId, conversationId, reason }, "webhook: bot ownership check skipped reply");
 }
 
 async function stillOwnedByBot(
@@ -155,6 +150,7 @@ async function stillOwnedByBot(
   log: FastifyBaseLogger,
   accountId: string,
   conversationId: number | string,
+  handedOffInTurn = false,
 ): Promise<boolean> {
   let reason: string | undefined;
   try {
@@ -162,7 +158,7 @@ async function stillOwnedByBot(
   } catch {
     reason = "ownership_lookup_failed";
   }
-  if (!reason) return true;
+  if (!reason || (reason === "conversation_open" && handedOffInTurn)) return true;
   recordOwnershipSkip(metrics, log, accountId, conversationId, reason);
   return false;
 }
@@ -423,7 +419,7 @@ async function flushGroup(
 
   // Re-read at flush, not the buffered snapshot: a handoff during debounce
   // drops the group without a reply, private note, or watermark advance (#250).
-  // Check again before posting because Dify itself can request a handoff.
+  // Check again before posting; only our own in-turn handoff permits a final answer.
   // The final GET/POST race is not atomic in Chatwoot's REST API.
   if (!await stillOwnedByBot(chatwoot, metrics, log, accountIdStr, conversationId)) return;
 
@@ -495,9 +491,17 @@ async function flushGroup(
         chatwoot_contact_id: String(contactId),
       },
     };
-    const difyResp = tenant.appType === "agent"
-      ? await dify.chatStreaming(chatReq)
-      : await dify.chatBlocking(chatReq);
+    const turn = beginDifyTurn(app, accountIdStr, conversationId);
+    const difyResp = await (async () => {
+      try {
+        return tenant.appType === "agent"
+          ? await dify.chatStreaming(chatReq)
+          : await dify.chatBlocking(chatReq);
+      } finally {
+        // Stop accepting handoffs as soon as Dify settles, even on failure.
+        turn.finish();
+      }
+    })();
 
     const durationS = Number(process.hrtime.bigint() - start) / 1_000_000_000;
     metrics.difyRequestsTotal.inc({ account_id: accountIdStr, status: "ok" });
@@ -594,7 +598,7 @@ async function flushGroup(
       }
     }
 
-    if (!await stillOwnedByBot(chatwoot, metrics, log, accountIdStr, conversationId)) return;
+    if (!await stillOwnedByBot(chatwoot, metrics, log, accountIdStr, conversationId, turn.handedOff)) return;
 
     // Post the agent's answer back to the user — exactly once for the group.
     await chatwoot.postMessage({
@@ -825,6 +829,14 @@ export async function registerChatwootWebhookRoute(
       req.log.warn("webhook: CHATWOOT_WEBHOOK_TOKEN not configured, skipping auth");
     }
 
+    // Agent Bot conversation events contain top-level conversation fields,
+    // not the nested message shape. Authenticate first, then dispatch by event.
+    if (typeof req.body !== "object" || req.body === null || Array.isArray(req.body)) {
+      return reply.code(400).send({ error: "invalid_payload" });
+    }
+    if ((req.body as { event?: unknown }).event !== "message_created") {
+      return reply.code(200).send({ skipped: "not_message_created" });
+    }
     const parsed = WebhookSchema.safeParse(req.body);
     if (!parsed.success) {
       req.log.warn({ issues: parsed.error.issues }, "webhook: invalid payload");
@@ -833,9 +845,6 @@ export async function registerChatwootWebhookRoute(
     const evt = parsed.data;
 
     // Only react to fresh incoming messages from real contacts.
-    if (evt.event !== "message_created") {
-      return reply.code(200).send({ skipped: "not_message_created" });
-    }
     if (evt.message_type !== "incoming") {
       return reply.code(200).send({ skipped: "not_incoming" });
     }

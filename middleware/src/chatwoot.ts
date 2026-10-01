@@ -76,17 +76,6 @@ export class ChatwootClient {
   }): Promise<unknown> {
     const url = `/api/v1/accounts/${params.accountId}/conversations/${params.conversationId}`;
     const { data } = await this.http.get(url);
-    // v4.13 REST show omits both assignment keys for an unassigned conversation;
-    // EventDataPresenter (webhooks) emits explicit nulls. Normalize ONLY that
-    // documented REST shape, leaving partial/invalid metadata to fail closed.
-    if (
-      data?.meta && typeof data.meta === "object" &&
-      typeof data.meta.channel === "string" && data.meta.sender &&
-      Object.hasOwn(data.meta, "hmac_verified") &&
-      !Object.hasOwn(data.meta, "assignee") && !Object.hasOwn(data.meta, "assignee_type")
-    ) {
-      return { ...data, meta: { ...data.meta, assignee: null, assignee_type: null } };
-    }
     return data;
   }
 

@@ -131,7 +131,6 @@ function chatwootMessageCreated(params: {
       id: params.conversationId,
       inbox_id: 7,
       status: "pending",
-      meta: { assignee: null, assignee_type: null },
       agent_last_seen_at: 0,
       contact_last_seen_at: 0,
       timestamp: Math.floor(Date.now() / 1000),
@@ -148,7 +147,7 @@ function chatwootMessageCreated(params: {
 /**
  * Real payload captured from Chatwoot message 174 (production DB, account 3
  * / tenant `duda`, conversation 16, contact Gabriela Andretta, 2026-09-10),
- * adapted to pending/unassigned bot ownership from issue #203 with only the Meta `signature=...`
+ * adapted to pending bot ownership from issue #203 with only the Meta `signature=...`
  * query-string values redacted (they are per-request signed URLs, not
  * secrets that identify anything reusable, but AGENTS.md's rule is never to
  * print them regardless). This is the exact case that used to go silent:
@@ -186,7 +185,6 @@ const REAL_MSG_174_STORY_REPLY_PAYLOAD = {
     id: 16,
     inbox_id: 7,
     status: "pending",
-      meta: { assignee: null, assignee_type: null },
     agent_last_seen_at: 0,
     contact_last_seen_at: 0,
     timestamp: Math.floor(Date.now() / 1000),
@@ -199,7 +197,7 @@ const REAL_MSG_174_STORY_REPLY_PAYLOAD = {
 
 /**
  * Real payload captured from Chatwoot message 182 (production DB, account 3
- * / tenant `duda`, conversation 10, contact 4, 2026-09-11 14:23), adapted to pending/unassigned bot ownership
+ * / tenant `duda`, conversation 10, contact 4, 2026-09-11 14:23), adapted to pending bot ownership
  * from issue #208 with only the Meta `signature=...` query-string
  * values redacted. Unlike msg 174, `content` is NOT empty ("😍") — this is
  * the exact case that used to reach Dify as the bare emoji with no story
@@ -237,7 +235,6 @@ const REAL_MSG_182_STORY_REPLY_WITH_TEXT_PAYLOAD = {
     id: 10,
     inbox_id: 7,
     status: "pending",
-      meta: { assignee: null, assignee_type: null },
     agent_last_seen_at: 0,
     contact_last_seen_at: 0,
     timestamp: Math.floor(Date.now() / 1000),
@@ -327,7 +324,7 @@ describe("registerChatwootWebhookRoute — burst dedup + watermark (issue #179)"
 
   function buildFakeChatwoot() {
     return {
-      getConversation: vi.fn().mockResolvedValue({ status: "pending", meta: { assignee: null, assignee_type: null } }),
+      getConversation: vi.fn().mockResolvedValue({ status: "pending" }),
       postMessage: vi.fn().mockResolvedValue({ id: 1, content: "", private: false, message_type: "outgoing", created_at: "" }),
       setConversationCustomAttributes: vi.fn().mockResolvedValue({}),
     };
@@ -1203,7 +1200,7 @@ describe("registerChatwootWebhookRoute — empty content marker (issue #203)", (
 
   function buildFakeChatwoot() {
     return {
-      getConversation: vi.fn().mockResolvedValue({ status: "pending", meta: { assignee: null, assignee_type: null } }),
+      getConversation: vi.fn().mockResolvedValue({ status: "pending" }),
       postMessage: vi.fn().mockResolvedValue({
         id: 1,
         content: "",
@@ -1348,7 +1345,7 @@ describe("registerChatwootWebhookRoute — empty content marker (issue #203)", (
         attachments: [{ file_type: 999, external_url: "https://example.com/x" }],
         private: false,
         sender: { id: 1, type: "contact" },
-        conversation: { status: "pending", meta: { assignee: null, assignee_type: null }, id: 50, custom_attributes: {}, contact_inbox: { contact_id: 1 } },
+        conversation: { status: "pending", id: 50, custom_attributes: {}, contact_inbox: { contact_id: 1 } },
         account: { id: 42 },
         event: "message_created",
       },
@@ -1377,7 +1374,7 @@ describe("registerChatwootWebhookRoute — empty content marker (issue #203)", (
         content_attributes: {},
         private: false,
         sender: { id: 1, type: "contact" },
-        conversation: { status: "pending", meta: { assignee: null, assignee_type: null }, id: 51, custom_attributes: {}, contact_inbox: { contact_id: 1 } },
+        conversation: { status: "pending", id: 51, custom_attributes: {}, contact_inbox: { contact_id: 1 } },
         account: { id: 42 },
         event: "message_created",
       },
@@ -1413,7 +1410,7 @@ describe("registerChatwootWebhookRoute — empty content marker (issue #203)", (
         content_attributes: {},
         private: false,
         sender: { id: 1, type: "contact" },
-        conversation: { status: "pending", meta: { assignee: null, assignee_type: null }, id: 52, custom_attributes: {}, contact_inbox: { contact_id: 1 } },
+        conversation: { status: "pending", id: 52, custom_attributes: {}, contact_inbox: { contact_id: 1 } },
         account: { id: 42 },
         event: "message_created",
       },
@@ -1525,7 +1522,7 @@ describe("registerChatwootWebhookRoute — empty content marker (issue #203)", (
         },
         private: false,
         sender: { id: 1, type: "contact" },
-        conversation: { status: "pending", meta: { assignee: null, assignee_type: null }, id: 53, custom_attributes: {}, contact_inbox: { contact_id: 1 } },
+        conversation: { status: "pending", id: 53, custom_attributes: {}, contact_inbox: { contact_id: 1 } },
         account: { id: 42 },
         event: "message_created",
       },
@@ -1558,7 +1555,7 @@ describe("registerChatwootWebhookRoute — empty content marker (issue #203)", (
         content_attributes: { story_id: "   " },
         private: false,
         sender: { id: 1, type: "contact" },
-        conversation: { status: "pending", meta: { assignee: null, assignee_type: null }, id: 54, custom_attributes: {}, contact_inbox: { contact_id: 1 } },
+        conversation: { status: "pending", id: 54, custom_attributes: {}, contact_inbox: { contact_id: 1 } },
         account: { id: 42 },
         event: "message_created",
       },
@@ -1595,7 +1592,7 @@ describe("registerChatwootWebhookRoute — empty content marker (issue #203)", (
         content_attributes: {},
         private: false,
         sender: { id: 1, type: "contact" },
-        conversation: { status: "pending", meta: { assignee: null, assignee_type: null }, id: 55, custom_attributes: {}, contact_inbox: { contact_id: 1 } },
+        conversation: { status: "pending", id: 55, custom_attributes: {}, contact_inbox: { contact_id: 1 } },
         // No `account` object and no top-level `account_id` at all.
         event: "message_created",
       },
@@ -1642,7 +1639,7 @@ describe("registerChatwootWebhookRoute — empty content marker (issue #203)", (
         content_attributes: {},
         private: false,
         sender: { id: 9001, type: "contact" },
-        conversation: { status: "pending", meta: { assignee: null, assignee_type: null }, id: 60, custom_attributes: {}, contact_inbox: { contact_id: 9001 } },
+        conversation: { status: "pending", id: 60, custom_attributes: {}, contact_inbox: { contact_id: 9001 } },
         account: { id: 42 },
         event: "message_created",
       },
@@ -1732,7 +1729,7 @@ describe("registerChatwootWebhookRoute — empty content marker (issue #203)", (
         content_attributes: {},
         private: false,
         sender: { id: 4, type: "contact" },
-        conversation: { status: "pending", meta: { assignee: null, assignee_type: null }, id: 80, custom_attributes: {}, contact_inbox: { contact_id: 4 } },
+        conversation: { status: "pending", id: 80, custom_attributes: {}, contact_inbox: { contact_id: 4 } },
         account: { id: 42 },
         event: "message_created",
       },
@@ -1793,7 +1790,7 @@ describe("registerChatwootWebhookRoute — empty content marker (issue #203)", (
 
 /** Ownership is independent of content, grouping and the tenant mapping (#250). */
 describe("Agent Bot ownership", () => {
-  const pending = { status: "pending", meta: { assignee: null, assignee_type: null } };
+  const pending = { status: "pending" };
 
   async function setup(client?: any) {
     const app = Fastify({ logger: false });
@@ -1802,6 +1799,8 @@ describe("Agent Bot ownership", () => {
       getConversation: vi.fn().mockResolvedValue(pending),
       postMessage: vi.fn().mockResolvedValue({ id: 100 }),
       setConversationCustomAttributes: vi.fn().mockResolvedValue({}),
+      toggleConversationStatus: vi.fn().mockResolvedValue({ status: "open" }),
+      addLabels: vi.fn().mockResolvedValue({}),
     };
     const pool = {
       query: vi.fn(async (sql: string) => ({
@@ -1816,10 +1815,10 @@ describe("Agent Bot ownership", () => {
     } as AppConfig;
     await registerChatwootWebhookRoute(app, config, metrics, chatwoot, pool as any);
     await registerHandoffRoute(app, config, metrics, chatwoot);
-    const send = (ownership: Record<string, unknown> = pending) => app.inject({
+    const send = (ownership: Record<string, unknown> = pending, id = 1) => app.inject({
       method: "POST", url: "/webhooks/chatwoot?token=test-webhook",
       payload: {
-        ...chatwootMessageCreated({ id: 1, content: "hello", accountId: 42, conversationId: 8 }),
+        ...chatwootMessageCreated({ id, content: "hello", accountId: 42, conversationId: 8 }),
         conversation: { id: 8, contact_inbox: { contact_id: 501 }, ...ownership },
       },
     });
@@ -1836,17 +1835,12 @@ describe("Agent Bot ownership", () => {
     ["open", { ...pending, status: "open" }, "conversation_open"],
     ["resolved", { ...pending, status: "resolved" }, "conversation_resolved"],
     ["snoozed", { ...pending, status: "snoozed" }, "conversation_snoozed"],
-    ["human assigned", { ...pending, meta: { assignee: { id: 7 }, assignee_type: "User" } }, "human_assignee"],
-    ["missing status", { meta: pending.meta }, "missing_ownership_fields"],
-    ["missing meta", { status: "pending" }, "missing_ownership_fields"],
-    ["missing assignee", { ...pending, meta: { assignee_type: null } }, "missing_ownership_fields"],
-    ["missing assignee type", { ...pending, meta: { assignee: null } }, "missing_ownership_fields"],
-    ["inconsistent assignment", { ...pending, meta: { assignee: { id: 1 }, assignee_type: null } }, "missing_ownership_fields"],
+    ["missing status", {}, "missing_ownership_fields"],
     ["unknown status", { ...pending, status: "future" }, "missing_ownership_fields"],
-    ["malformed meta", { ...pending, meta: "invalid" }, "missing_ownership_fields"],
   ])("skips %s before buffering, with metric and no note", async (_name, ownership, reason) => {
     const { app, send, metrics, chatwoot, pool } = await setup();
     const warn = vi.spyOn(app.log, "warn");
+    const info = vi.spyOn(app.log, "info");
     const response = await send(ownership);
     expect(response.statusCode).toBe(200);
     expect(response.json()).toEqual({ skipped: reason });
@@ -1858,12 +1852,17 @@ describe("Agent Bot ownership", () => {
     expect((await metrics.botOwnershipSkipsTotal.get()).values).toEqual([
       expect.objectContaining({ labels: { account_id: "42", reason }, value: 1 }),
     ]);
-    expect(warn).toHaveBeenCalled();
+    if (reason === "missing_ownership_fields") expect(warn).toHaveBeenCalled();
+    else {
+      expect(warn).not.toHaveBeenCalled();
+      expect(info).toHaveBeenCalled();
+    }
     await app.close();
   });
 
   it.each([
-    ["unassigned", pending],
+    ["without assignment metadata", pending],
+    ["assigned to a human", { ...pending, meta: { assignee: { id: 7 }, assignee_type: "User" } }],
     ["assigned to a bot", { ...pending, meta: { assignee: { id: 7 }, assignee_type: "AgentBot" } }],
   ])("replies when pending and %s", async (_name, ownership) => {
     const { app, send, chatwoot } = await setup();
@@ -1876,7 +1875,6 @@ describe("Agent Bot ownership", () => {
 
   it.each([
     ["handoff", { ...pending, status: "open" }, "conversation_open"],
-    ["human assignment", { ...pending, meta: { assignee: { id: 9 }, assignee_type: "User" } }, "human_assignee"],
     ["missing ownership", {}, "missing_ownership_fields"],
   ])("drops a buffered group after %s without advancing its watermark", async (_name, latest, reason) => {
     const { app, send, chatwoot, metrics, pool } = await setup();
@@ -1887,6 +1885,12 @@ describe("Agent Bot ownership", () => {
     expect(chatwoot.postMessage).not.toHaveBeenCalled();
     expect(pool.query.mock.calls.some(([sql]) => sql.includes("INSERT INTO conversation_watermarks"))).toBe(false);
     expect((await metrics.botOwnershipSkipsTotal.get()).values[0].labels.reason).toBe(reason);
+    // A skipped flush must release the debouncer slot for the next pending turn.
+    chatwoot.getConversation.mockResolvedValue(pending);
+    await send(pending, 2);
+    await vi.waitFor(() => expect(chatwoot.postMessage).toHaveBeenCalledOnce());
+    expect(chatBlocking).toHaveBeenCalledOnce();
+    expect(pool.query.mock.calls.some(([sql]) => sql.includes("INSERT INTO conversation_watermarks"))).toBe(true);
     await app.close();
   });
 
@@ -1903,7 +1907,7 @@ describe("Agent Bot ownership", () => {
     await app.close();
   });
 
-  it("suppresses the answer when Dify hands off during its call", async () => {
+  it("suppresses the answer when a human opens the conversation during the Dify call", async () => {
     const { app, send, chatwoot } = await setup();
     chatBlocking.mockImplementation(async () => {
       chatwoot.getConversation.mockResolvedValue({ ...pending, status: "open" });
@@ -1913,6 +1917,101 @@ describe("Agent Bot ownership", () => {
     await vi.waitFor(() => expect(chatwoot.getConversation).toHaveBeenCalledTimes(2));
     expect(chatBlocking).toHaveBeenCalledOnce();
     expect(chatwoot.postMessage).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it.each([
+    "conversation_opened", "conversation_resolved", "conversation_status_changed",
+    "conversation_updated", "webwidget_triggered", "message_updated", "future_event",
+  ])("acknowledges %s without requiring a nested conversation", async (event) => {
+    const { app, chatwoot, pool } = await setup();
+    const payload = { event, id: 8, status: "open", account_id: 42, changed_attributes: [{ status: { previous_value: "pending", current_value: "open" } }] };
+    const unauthorized = await app.inject({ method: "POST", url: "/webhooks/chatwoot", payload });
+    expect(unauthorized.statusCode).toBe(401);
+    const response = await app.inject({
+      method: "POST", url: "/webhooks/chatwoot", headers: { "x-chatwoot-webhook-token": "test-webhook" }, payload,
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ skipped: "not_message_created" });
+    expect(chatBlocking).not.toHaveBeenCalled();
+    expect(chatwoot.getConversation).not.toHaveBeenCalled();
+    expect(pool.query).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it.each([null, [], "text", 1, { event: "message_created" }].map((payload) => [payload]))("rejects malformed message/body %j", async (payload) => {
+    const { app } = await setup();
+    const response = await app.inject({
+      method: "POST", url: "/webhooks/chatwoot",
+      headers: { "x-chatwoot-webhook-token": "test-webhook", "content-type": "application/json" },
+      payload: JSON.stringify(payload),
+    });
+    expect(response.statusCode).toBe(400);
+    await app.close();
+  });
+
+  it("posts the final answer after its own in-turn handoff, but ignores later open messages", async () => {
+    const { app, send, chatwoot, pool } = await setup();
+    chatwoot.toggleConversationStatus.mockImplementation(async () => {
+      chatwoot.getConversation.mockResolvedValue({ status: "open" });
+      return { status: "open" };
+    });
+    chatBlocking.mockImplementation(async () => {
+      const response = await app.inject({
+        method: "POST", url: "/tools/handoff", headers: { "x-handoff-secret": "test-handoff-secret" },
+        payload: { account_id: 42, conversation_id: 8, summary: "Help needed" },
+      });
+      expect(response.statusCode).toBe(200);
+      return { answer: "A human will help you" };
+    });
+    await send();
+    await vi.waitFor(() => expect(chatwoot.postMessage).toHaveBeenCalledTimes(2));
+    expect(chatwoot.postMessage).toHaveBeenLastCalledWith(expect.objectContaining({ content: "A human will help you", messageType: "outgoing" }));
+    expect(pool.query.mock.calls.some(([sql]) => sql.includes("INSERT INTO conversation_watermarks"))).toBe(true);
+    expect((await send({ status: "open" }, 2)).json()).toEqual({ skipped: "conversation_open" });
+    expect(chatBlocking).toHaveBeenCalledOnce();
+    // The first turn's marker cannot excuse a human opening the next turn.
+    chatwoot.getConversation.mockResolvedValue(pending);
+    chatBlocking.mockImplementation(async () => {
+      chatwoot.getConversation.mockResolvedValue({ status: "open" });
+      return { answer: "must stay silent" };
+    });
+    await send(pending, 3);
+    await vi.waitFor(() => expect(chatwoot.getConversation).toHaveBeenCalledTimes(4));
+    expect(chatwoot.postMessage).toHaveBeenCalledTimes(2);
+    await app.close();
+  });
+
+  it.each(["open", "resolved", "snoozed"])("suppresses the failure note after status changes to %s", async (status) => {
+    const { app, send, chatwoot, pool } = await setup();
+    chatBlocking.mockImplementation(async () => {
+      chatwoot.getConversation.mockResolvedValue({ status });
+      throw new Error("Dify failed");
+    });
+    await send();
+    await vi.waitFor(() => expect(chatwoot.getConversation).toHaveBeenCalledTimes(2));
+    expect(chatwoot.postMessage).not.toHaveBeenCalled();
+    expect(pool.query.mock.calls.some(([sql]) => sql.includes("INSERT INTO conversation_watermarks"))).toBe(false);
+    await app.close();
+  });
+
+  it.each(["resolved", "missing", "lookup_failed", "dify_failed"])("does not let an in-turn handoff override %s", async (outcome) => {
+    const { app, send, chatwoot } = await setup();
+    chatBlocking.mockImplementation(async () => {
+      await app.inject({
+        method: "POST", url: "/tools/handoff", headers: { "x-handoff-secret": "test-handoff-secret" },
+        payload: { account_id: 42, conversation_id: 8, summary: "Help needed" },
+      });
+      if (outcome === "lookup_failed") chatwoot.getConversation.mockRejectedValue(new Error("lookup failed"));
+      else chatwoot.getConversation.mockResolvedValue(outcome === "missing" ? {} : { status: outcome === "dify_failed" ? "open" : "resolved" });
+      if (outcome === "dify_failed") throw new Error("Dify failed after handoff");
+      return { answer: "must stay silent" };
+    });
+    await send();
+    await vi.waitFor(() => expect(chatwoot.getConversation).toHaveBeenCalledTimes(2));
+    // Only the handoff route's summary, never an answer or a failure note.
+    expect(chatwoot.postMessage).toHaveBeenCalledOnce();
+    expect(chatwoot.postMessage).toHaveBeenCalledWith(expect.objectContaining({ private: true, content: expect.stringContaining("Help needed") }));
     await app.close();
   });
 
@@ -1945,28 +2044,19 @@ describe("Agent Bot ownership", () => {
   });
 });
 
-// REST show uses a different null convention from EventDataPresenter webhooks.
 describe("Chatwoot ownership reads and credential safety", () => {
   afterEach(() => vi.restoreAllMocks());
   const logger = { trace: vi.fn(), debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn(), fatal: vi.fn() };
 
-  it.each([
-    [{ channel: "Channel::Api", sender: { id: 1 }, hmac_verified: false }, true],
-    [{ channel: "Channel::Api", sender: { id: 1 }, hmac_verified: null }, true],
-    [{}, false],
-    [{ channel: "Channel::Api", sender: { id: 1 }, hmac_verified: false, assignee: { id: 7 } }, false],
-  ])("normalizes only a complete unassigned REST shape (%j)", async (meta, normalizes) => {
+  it("returns the conversation status without REST assignment normalization", async () => {
+    const data = { status: "pending" };
     const create = axios.create.bind(axios);
     vi.spyOn(axios, "create").mockImplementation((options) => create({
       ...options,
-      adapter: async (config) => ({ data: { status: "pending", meta }, status: 200, statusText: "OK", headers: {}, config }),
+      adapter: async (config) => ({ data, status: 200, statusText: "OK", headers: {}, config }),
     }));
-    const client = new ChatwootClient("https://chat.example", "test-user", logger, "test-bot");
-    const result = await client.getConversation({ accountId: 42, conversationId: 8 });
-    expect(result).toEqual({
-      status: "pending",
-      meta: normalizes ? { ...meta, assignee: null, assignee_type: null } : meta,
-    });
+    const client = new ChatwootClient("https://chat.example", "test-user", logger);
+    expect(await client.getConversation({ accountId: 42, conversationId: 8 })).toEqual(data);
   });
 
   it("strips credential-bearing Axios errors before handlers can log or post them", async () => {

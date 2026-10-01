@@ -15,8 +15,10 @@ begin
     uri = URI.parse(value)
     raise BotProvisioningError, 'Invalid endpoint' unless %w[http https].include?(uri.scheme) && uri.host &&
                                     uri.path == '/webhooks/chatwoot' && !uri.userinfo && !uri.fragment
-    [uri.scheme, uri.host, uri.port, uri.path]
+    [uri.scheme, uri.host.downcase, uri.port, uri.path]
   end
+  token = config.fetch('bot_token')
+  raise BotProvisioningError, 'Bot token must be at least 24 characters' unless token.empty? || token.length >= 24
   endpoint_key.call(config.fetch('endpoint'))
   uri = URI.parse(config.fetch('endpoint'))
   raise BotProvisioningError, 'Endpoint must not contain a query' if uri.query
@@ -61,18 +63,20 @@ begin
     end
     stale = bot.persisted? ? bot.agent_bot_inboxes.where.not(inbox_id: inboxes.map(&:id)).to_a : []
     puts "[agent-bot] #{config['apply'] ? 'APPLY' : 'DRY-RUN'}: global bot #{bot.persisted? ? 'update' : 'create'}"
-    inboxes.each { |inbox| puts "[agent-bot] attach account_id=#{inbox.account_id} inbox_id=#{inbox.id}" }
-    stale.each { |binding| puts "[agent-bot] deactivate inbox_id=#{binding.inbox_id}" }
+    changed_inboxes = inboxes.reject do |inbox|
+      bot.persisted? && AgentBotInbox.exists?(inbox_id: inbox.id, agent_bot_id: bot.id, status: :active)
+    end
+    changed_inboxes.each { |inbox| puts "[agent-bot] attach account_id=#{inbox.account_id} inbox_id=#{inbox.id}" }
+    stale.each { |binding| puts "[agent-bot] remove binding inbox_id=#{binding.inbox_id}" }
     hooks.each { |hook| puts "[agent-bot] remove account webhook account_id=#{hook.account_id} id=#{hook.id}" }
     if config['apply']
       bot.update!(outgoing_url: uri.to_s, bot_type: :webhook)
-      token = config.fetch('bot_token')
       bot.access_token.update!(token: token) unless token.empty? || bot.access_token.token == token
-      inboxes.each do |inbox|
+      changed_inboxes.each do |inbox|
         binding = AgentBotInbox.find_or_initialize_by(inbox_id: inbox.id)
         binding.update!(agent_bot: bot, status: :active)
       end
-      stale.each { |binding| binding.update!(status: :inactive) }
+      stale.each(&:destroy!)
       hooks.each(&:destroy!)
     end
   end

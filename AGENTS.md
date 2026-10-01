@@ -32,8 +32,11 @@ WhatsApp ─▶ Evolution API ─▶ Chatwoot (Webhook) ─▶ Middleware (Adapt
 **Human handoff** is a Dify tool (HTTP) that sets the Chatwoot conversation to `open`
 and adds the `atendimento-humano` label. **Bot ownership (#250):** the global Chatwoot
 Agent Bot is enabled per inbox, declared in `provisioning/chatwoot-agent-bot.json`;
-`pending` with no human assignee belongs to the bot, `open` (or any other status) to
-humans. Missing ownership fails closed; buffered groups recheck live ownership.
+`pending` belongs to the bot regardless of assignee, `open` (or any other status) to
+humans. A human takes over by opening the conversation; assignment alone is not enough.
+Missing/invalid status fails closed; buffered groups recheck live ownership. Only a
+handoff by our route during the current Dify call allows that turn's final answer
+while the conversation is `open`.
 Contact replies use optional `CHATWOOT_BOT_TOKEN`; labels/reads keep the user token.
 Cutover: recreate only middleware (`--no-deps`, full compose chain), dry-run then
 `scripts/provision-chatwoot-bot.sh --apply` (atomic inbox attachment + account-webhook

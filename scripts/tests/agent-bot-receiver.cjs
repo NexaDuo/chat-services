@@ -19,18 +19,17 @@ http.createServer(async (req, res) => {
     const response = await fetch(url, {
       method: 'POST', headers: { 'content-type': 'application/json' }, body,
     });
-    const result = await response.json();
-    if (event.event === 'message_created' && event.message_type === 'incoming') {
-      events.push({
-        id: event.id, account_id: event.account?.id,
-        status: event.conversation?.status,
-        meta: {
-          assignee: event.conversation?.meta?.assignee,
-          assignee_type: event.conversation?.meta?.assignee_type,
-        },
-        http_status: response.status, result,
-      });
-    }
+    // Record every response before decoding the result, including non-message
+    // events and malformed responses. Never retain the delivery URL or token.
+    const delivery = {
+      event: event.event, id: event.id, account_id: event.account?.id,
+      message_type: event.message_type,
+      conversation_id: event.conversation?.id ?? event.id,
+      status: event.conversation?.status ?? event.status,
+      http_status: response.status,
+    };
+    events.push(delivery);
+    delivery.result = await response.json();
     res.statusCode = response.status;
     res.end('{}');
   } catch {
