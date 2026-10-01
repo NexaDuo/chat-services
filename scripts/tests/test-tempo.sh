@@ -42,7 +42,7 @@ start() {
     --user "$user" -v "$volume:/var/tempo" --publish 127.0.0.1::3200 --publish 127.0.0.1::4318 \
     --mount "type=bind,src=$ROOT/observability/tempo/tempo.yaml,dst=/etc/tempo.yaml,readonly" \
     "$2" -config.file=/etc/tempo.yaml >/dev/null
-  for ((i=0; i<40; i++)); do
+  for ((i=0; i<80; i++)); do
     if tempo_ready "$probe"; then break; fi
     sleep 0.5
   done
@@ -72,4 +72,4 @@ while IFS= read -r meta; do
   [[ $(docker exec "$probe" stat -c %u "$meta") == 0 ]]
 done < "$tmp/added"
 tempo_ready "$probe"
-echo 'PASS: old persisted trace, new OTLP trace + TraceQL, /ready, vParquet4 blocks and root-owned volume reuse'
+echo 'PASS: old persisted trace, new OTLP trace + TraceQL, /api/echo probe, vParquet4 blocks and root-owned volume reuse'

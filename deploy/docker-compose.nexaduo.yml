@@ -276,8 +276,10 @@ services:
     # Preserve access to the existing root-owned 2.6.1 volume; image USER is 10001.
     user: "0"
     command: ["-config.file=/etc/tempo/tempo.yaml"]
-    # W4a: distroless, no wget/shell. Mandatory sibling /ready probe in
-    # health-check-all.sh replaces the Docker healthcheck (as for Loki).
+    # W4a: distroless, no wget/shell. A mandatory sibling probe in
+    # health-check-all.sh replaces the Docker healthcheck (as for Loki). It
+    # uses /api/echo, NOT /ready: this ring-less single-binary answers 503 on
+    # /ready while fully functional (issue #158, re-observed 2026-10-01).
     volumes:
       # Directory mount (not single-file) — WSL stale-inode hardening (#113/#116).
       - ${NEXADUO_CONF_PATH}/observability/tempo:/etc/tempo:ro

@@ -179,7 +179,7 @@ RUNNING_SUBNAMES=(
   dify-sandbox
   dify-plugin-daemon
   dify-ssrf-proxy
-  tempo # Distroless; mandatory external /ready assertion below.
+  tempo # Distroless; mandatory external /api/echo assertion below.
   loki # Distroless; mandatory external /ready assertion below.
   otel-collector
   self-healing-agent
@@ -312,16 +312,17 @@ done
 loki_ready "$middleware_probe_container" \
   || fail "Loki readiness failed at http://loki:3100/ready (${loki_container})"
 
-# Tempo 2.10 has no wget/shell; require actual HTTP readiness from a sibling.
+# Tempo 2.10 has no wget/shell; require a real HTTP round-trip from a sibling
+# (/api/echo, not /ready — see scripts/lib/tempo-ready.sh).
 tempo_container="$(require_container "tempo")"
 source "$SCRIPT_DIR/lib/tempo-ready.sh"
-step "Probing Tempo readiness from ${middleware_probe_container} (up to 1 min)"
+step "Probing Tempo /api/echo from ${middleware_probe_container} (up to 1 min)"
 for i in $(seq 1 12); do
   if tempo_ready "$middleware_probe_container"; then break; fi
   sleep 5
 done
 tempo_ready "$middleware_probe_container" \
-  || fail "Tempo readiness failed at http://tempo:3200/ready (${tempo_container})"
+  || fail "Tempo probe failed at http://tempo:3200/api/echo (${tempo_container})"
 
 # otel-collector (issue #158): its image is distroless (no shell/curl/wget
 # inside it — verified, every exec attempt fails with "executable file not
