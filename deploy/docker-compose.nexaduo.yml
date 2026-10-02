@@ -11,9 +11,8 @@ x-logging: &default-logging
 
 services:
   evolution-api:
-    # Evolution API's official image moved to evoapicloud/* — atendai/evolution-api
-    # now denies pulls and broke CI/redeploys. Same pinned version (v2.1.1).
-    image: evoapicloud/evolution-api:v2.1.1
+    # W6: official v-prefixed tag; immutable multi-platform index (Prisma R1 rollback).
+    image: evoapicloud/evolution-api:v2.3.7@sha256:1bd8afc4a6cf48822e6cf02469aeae7bd35a12a6b616eacd1291926307f4d339
     restart: unless-stopped
     logging: *default-logging
     # Issue #157 "everything else" tier: measured ~97MiB RSS; limit = 4x
@@ -26,15 +25,18 @@ services:
       DATABASE_PROVIDER: postgresql
       DATABASE_CONNECTION_URI: 'postgresql://postgres:${POSTGRES_PASSWORD}@postgres:5432/evolution'
       CACHE_REDIS_URI: 'redis://:${REDIS_PASSWORD}@redis:6379/2'
+      # 2.3.x enables outbound telemetry by default.
+      TELEMETRY_ENABLED: 'false'
     volumes:
       - 'evolution-instances:/evolution/instances'
-    # Root path is Evolution's own app-level status response (JSON:
-    # status/message/version), served by its request router — not just a
-    # TCP accept (verified: no dedicated /health route exists, it 404s;
-    # "/" is the real app-served endpoint, same one health-check-all.sh
-    # already probes).
+    # Authenticated instance listing: exercises the router, the apikey guard
+    # and Postgres with no outbound call. Since 2.3.x "/" fetches the WhatsApp
+    # Web version from the internet on every request, so probing it would let
+    # an egress outage mark the container unhealthy and trigger autoheal.
+    # $$ defers expansion to the container shell: the key never reaches
+    # `docker inspect`.
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "-T", "5", "http://127.0.0.1:8080/"]
+      test: ["CMD-SHELL", "wget -qO /dev/null -T 5 --header \"apikey: $$AUTHENTICATION_API_KEY\" http://127.0.0.1:8080/instance/fetchInstances"]
       interval: 20s
       timeout: 10s
       retries: 5
