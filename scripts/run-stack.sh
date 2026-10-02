@@ -134,7 +134,8 @@ up() {
 
 restore() {
   [[ -d "$DUMPS_DIR" ]] || die "DUMPS_DIR not found: $DUMPS_DIR"
-  local pg; pg="$(docker ps --filter 'name=postgres' --filter 'ancestor=pgvector/pgvector:pg16' --format '{{.Names}}' | head -n1)"
+  # Exact Compose name: not the image (it changes with upgrades), not a loose match.
+  local pg; pg="$(docker ps --filter "name=^/${COMPOSE_PROJECT_NAME}-postgres-1$" --format '{{.Names}}' | head -n1)"
   [[ -n "$pg" ]] || die "Postgres container not running — run '$0 up' first"
   log "restoring DBs from $DUMPS_DIR into $pg"
   # Sync the postgres password to the env (the named volume may have been init'd

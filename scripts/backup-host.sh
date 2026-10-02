@@ -122,11 +122,10 @@ if [[ "${BACKUP_HOST_TEST_MODE:-0}" == "1" ]]; then
   exit 1
 fi
 
-# 1. Locate the Postgres container (compose name chat-services-postgres-1, or by image).
-PG="$(docker ps --filter 'name=postgres' --filter 'ancestor=pgvector/pgvector:pg16' --format '{{.Names}}' | head -n1)"
-if [[ -z "$PG" ]]; then
-  PG="$(docker ps --filter 'name=^/chat-services-postgres' --format '{{.Names}}' | head -n1)"
-fi
+# 1. Locate the Postgres container by its exact Compose name. Not by image
+#    (the pin changes with upgrades) and not by a loose `name=postgres` match
+#    (an upgrade rehearsal runs a throwaway "...-postgres" container too).
+PG="$(docker ps --filter "name=^/${COMPOSE_PROJECT_NAME:-chat-services}-postgres-1$" --format '{{.Names}}' | head -n1)"
 if [[ -z "$PG" ]]; then
   log "ERRO: container Postgres não encontrado (docker ps name=postgres)."
   exit 1

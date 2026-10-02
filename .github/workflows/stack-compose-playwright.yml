@@ -113,6 +113,10 @@ jobs:
       - name: Test isolated Redis 7.2 to 8.10 upgrade (under 120s after pulls)
         run: bash scripts/tests/test-redis.sh
 
+      # Internal database image/backup regression; Playwright N/A.
+      - name: Test pinned Postgres image and dump/restore with pgvector (under 60s after pulls)
+        run: bash scripts/tests/test-postgres.sh
+
       # Synthetic Prisma migration/config persistence; no WhatsApp session required.
       - name: Test isolated Evolution 2.1.1 to 2.3.7 upgrade (under 240s after pulls)
         run: bash scripts/tests/test-evolution.sh
