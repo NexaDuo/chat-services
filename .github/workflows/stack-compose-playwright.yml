@@ -237,15 +237,41 @@ jobs:
           # control. This reduces (does not eliminate) the flake rate; a
           # rerun remains the correct response if it still times out (tracked
           # in issue #23).
+          #
+          # issue #249: contention is not the only cause. Three timeouts in a
+          # week showed the migrations finishing and gunicorn logging
+          # "Listening at" with no "Booting worker" ever following: the
+          # worker-less master of issue #41. Production recycles it through
+          # autoheal, which CI scales to 0 (see "Start Stack"), so nothing
+          # ever restarted it and the loop burned its full 20 min. The loop
+          # now does what autoheal would: once the master has been listening
+          # without a worker for 60s, restart dify-api (at most 3 times). It
+          # cannot fire mid-migration, because "Listening at" is only logged
+          # after the migration ends.
           echo "Waiting for Dify API (127.0.0.1:5001)..."
           dify_deadline=1200  # 20 min
           start=$SECONDS
+          workerless_since=""
+          recycles=0
           while true; do
             code=$(curl -sS -o /dev/null -w "%{http_code}" --connect-timeout 3 --max-time 5 http://127.0.0.1:5001/console/api/setup 2>/dev/null || echo "000")
             elapsed=$((SECONDS - start))
             echo "  t+${elapsed}s/${dify_deadline}s: 127.0.0.1:5001 -> ${code}"
             case "${code}" in 2*|3*|4*) echo "Dify API ready."; break ;; esac
             (( elapsed >= dify_deadline )) && break
+            workerless=$(docker compose logs --no-color dify-api 2>/dev/null \
+              | awk '/Listening at:/ {l=NR} /Booting worker/ {b=NR} END {print (l && b < l) ? 1 : 0}')
+            if [[ "${workerless}" == 1 ]]; then
+              : "${workerless_since:=$SECONDS}"
+              if (( SECONDS - workerless_since >= 60 && recycles < 3 )); then
+                recycles=$((recycles + 1))
+                echo "::warning::dify-api listening with no worker for 60s (issue #41); restart ${recycles}/3"
+                docker compose restart dify-api
+                workerless_since=""
+              fi
+            else
+              workerless_since=""
+            fi
             sleep 5
           done
           [[ "${code}" =~ ^[234] ]] || { echo "::error::Dify API did not become ready in time."; exit 1; }
