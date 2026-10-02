@@ -2,7 +2,7 @@ import { chromium } from 'playwright';
 import dotenv from 'dotenv';
 import path from 'path';
 
-dotenv.config({ path: path.resolve(process.cwd(), '../.env') });
+dotenv.config({ path: path.resolve(process.cwd(), '../.env'), quiet: true });
 
 const GRAFANA_URL = process.env.GRAFANA_URL || 'https://grafana.nexaduo.com';
 const GRAFANA_USER = process.env.GRAFANA_ADMIN_USER;

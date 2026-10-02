@@ -3,7 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import dotenv from 'dotenv';
 
-dotenv.config();
+dotenv.config({ quiet: true });
 
 const BACKUP_DIR = process.env.BACKUP_DIR || './backups';
 const KEEP_DAYS = parseInt(process.env.BACKUP_KEEP_DAYS || '14', 10);

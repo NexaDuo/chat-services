@@ -2,7 +2,7 @@ import { chromium } from 'playwright';
 import dotenv from 'dotenv';
 import path from 'path';
 
-dotenv.config({ path: path.resolve(process.cwd(), '../.env') });
+dotenv.config({ path: path.resolve(process.cwd(), '../.env'), quiet: true });
 
 const DIFY_URL = process.env.DIFY_CONSOLE_WEB_URL || 'http://localhost:3001';
 

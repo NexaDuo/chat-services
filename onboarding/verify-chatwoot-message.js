@@ -3,7 +3,7 @@ import dotenv from 'dotenv';
 import path from 'path';
 import { execSync } from 'child_process';
 
-dotenv.config({ path: path.resolve(process.cwd(), '../.env') });
+dotenv.config({ path: path.resolve(process.cwd(), '../.env'), quiet: true });
 
 const CHATWOOT_URL = process.env.CHATWOOT_FRONTEND_URL || 'http://localhost:3000';
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL;
