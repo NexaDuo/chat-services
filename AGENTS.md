@@ -262,6 +262,8 @@ Dumps: `~/nexaduo-local/dumps/<db>-<YYYY-MM-DD>-HHMM.sql.gz` (+ off-host mirror 
   permits only 80/443 (CONNECT only 443), denying internal/reserved IPs even
   through DNS names. The only internal exception is an HTTP POST to
   `middleware:4000/tools/handoff`; middleware authentication still applies.
+  The proxy is Squid 7.7 built locally from `deploy/squid/Dockerfile` (W7a; no
+  published image carries 7.x); `scripts/tests/test-squid.sh` covers the build.
   `scripts/test-ssrf-proxy.sh` tests this policy in CI and can be run by the
   operator with the production COMPOSE_FILE chain. Proxy envs are not a network
   firewall: code that ignores them still needs separate network isolation.

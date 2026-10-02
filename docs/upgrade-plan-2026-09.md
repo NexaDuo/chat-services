@@ -20,7 +20,7 @@ Legenda: **T** = tag de versão explícita, ainda mutável; **F** = flutuante (l
 | `deploy/docker-compose.dify.yml:180` | `langgenius/dify-web:1.13.3` | T |
 | `deploy/docker-compose.dify.yml:217` | `langgenius/dify-sandbox:0.2.14` | T |
 | `deploy/docker-compose.dify.yml:236` | `langgenius/dify-plugin-daemon:0.5.3-local` | T |
-| `deploy/docker-compose.dify.yml:268` | `ubuntu/squid:latest` | F |
+| `deploy/docker-compose.dify.yml:268` | `nexaduo/squid:7.7-local`, build local de `deploy/squid/Dockerfile` (W7a; antes `ubuntu/squid`) | D (tarball por SHA-256 + assinatura, base por digest) |
 | `deploy/docker-compose.localproxy.yml:61` | `traefik:v3.6.25` | T |
 | `deploy/docker-compose.nexaduo.yml:16` | `evoapicloud/evolution-api:v2.3.7@sha256:1bd8afc4a6cf48822e6cf02469aeae7bd35a12a6b616eacd1291926307f4d339` (W6; prior inventory: 2.1.1) | D |
 | `deploy/docker-compose.nexaduo.yml:54` | `${MIDDLEWARE_IMAGE}` | V |
@@ -146,7 +146,7 @@ Consulta às APIs públicas de releases do GitHub, registry npm, catálogo Docke
 | Dify api/web/worker | [1.17.1](https://github.com/langgenius/dify/releases/tag/1.17.1) → `langgenius/dify-{api,web}:1.17.1` | **Alto**: Alembic + migração de dados/provider; worker usa imagem api; não habilitar Agent Beta automaticamente |
 | Dify sandbox | [0.2.15](https://github.com/langgenius/dify-sandbox/releases/tag/0.2.15) → `langgenius/dify-sandbox:0.2.15` | **Médio**: execução via fd3, seccomp, ordem de redução de privilégios e UIDs por execução |
 | Dify plugin-daemon | [0.6.10](https://github.com/langgenius/dify-plugin-daemon/releases/tag/0.6.10) → `langgenius/dify-plugin-daemon:0.6.10-local` | **Alto**: storage, DB/plugin API; tipo `date-picker` renomeado `date-range`; manter variante `-local` |
-| Dify ssrf-proxy | [Squid 7.7](https://www.squid-cache.org/Versions/) | **Alto/condicional**: nenhuma imagem `ubuntu/squid` stable 7.7 verificada; não inventar tag nem adotar beta como estável. W7a propõe build versionado de Squid 7.7; digest/build **ASSUMED** |
+| Dify ssrf-proxy | [Squid 7.7](https://www.squid-cache.org/Versions/) | **Resolvido na W7a**: nenhuma imagem `ubuntu/squid` traz 7.x, então a imagem é construída no repo a partir do tarball oficial verificado |
 | Dify init / helper backup | [Alpine 3.24.2](https://alpinelinux.org/releases/) → `alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6` | **Baixo**: tar/chown, UID 1001 e permissões; imagens auxiliares também precisam digest |
 | Evolution API | [2.3.7](https://github.com/evolution-foundation/evolution-api/releases/tag/2.3.7) → `evoapicloud/evolution-api:v2.3.7` | **Alto**, embora ordenado antes de Dify: Prisma, Baileys, LID/JID, sessões e integração Chatwoot |
 | PostgreSQL + pgvector | [PG 18.6; PG16 16.15](https://www.postgresql.org/support/versioning/) + [vector 0.8.6](https://github.com/pgvector/pgvector/blob/master/CHANGELOG.md) | **Crítico**: primeiro fixar PG16 + vector 0.8.6; major 18.6 apenas W14 opcional, dump/restore |
@@ -241,7 +241,7 @@ Todos os pré-passos, gates, validações e rollback comuns acima são parte de 
 | **W5b — Redis8.10.2-alpine, condicional** | S, documentação de clientes/licença | Só após provar compatibilidade dos clientes atuais; novo backup frio; `dc up -d --no-deps redis`; mesmas verificações, sem aumentar memória implicitamente | R1 dados7.2.16+pin, nunca abrir AOF8 com7; **CI muda**, se falhar adiar até após Chatwoot |
 | **W6 — Evolution2.3.7** | N, fixture Prisma/API, CI; contrato abaixo (sem nova chave de operador) | Backup DB evolution + volume/sessões Redis; suspender autoheal durante migrations; `dc up -d --no-deps evolution-api`; esperar Prisma e reconectar instância; texto/áudio/documento inbound/outbound pelo Chatwoot, sem contatos duplicados | R1 evolution/instances/chaves Redis da instância +2.1.1; **CI muda**, migrations/fixtures, Meta validado live |
 | **W6b — Alpine3.24.2** | D, backup-host.sh, sondas Tempo/Collector | Init em fixture, round-trip de arquivo; nada recriado live; próximo backup usa o helper novo | R0 referências anteriores; CI: `test-alpine-helpers.sh` + guard de backup |
-| **W7a — Squid7.7** | D, futura receita `deploy/squid/Dockerfile` + config/entrypoint, exemplos | **Bloqueada para release até imagem reproduzível verificada.** Build Squid7.7 com checksums, ACL e proxy envs; `dc up -d --no-deps dify-ssrf-proxy`; Alpine separado em W6b | R0 imagem/config anterior capturada; **CI muda** ACL, HTTP tool e sandbox |
+| **W7a — Squid7.7** | D, `deploy/squid/Dockerfile` + `squid.conf`, CI; contrato abaixo | Build Squid7.7 com checksum e assinatura, ACL e proxy envs; `dc build dify-ssrf-proxy` e `dc up -d --no-deps dify-ssrf-proxy`; Alpine separado em W6b | R0 imagem/config anterior capturada; **CI muda** ACL, HTTP tool e sandbox |
 | **W7b — Dify1.17.1 + sandbox0.2.15 + plugin0.6.10-local** | D, root/isolated/CI override se serviços mudarem, `.env.production.example`, dify-apps, clients/testes middleware/admin | Backup `dify`, `dify_plugin`, api-storage+plugin-storage; sequência detalhada abaixo; checks RAG/Azure/SSE/handoff/config; init Alpine já fixado em W6b | R1 dois DBs+volumes+pins1.13.3/0.2.14/0.5.3-local; **CI muda**, upgrade fixture e readiness |
 | **W8 — Chatwoot4.18.0-ce (3 pins)** | C, ai_agents.rb se necessário, onboarding/fixtures webhook | Backup chatwoot+storage; migrar antes de rails/sidekiq, sequência abaixo; login/admin/Platform API/attachments/WhatsApp/Instagram/handoff | R1 DB+storage+4.13.0-ce; **CI muda**, fixture Rails/CE e onboarding |
 | **W9 — Node24.21.0-alpine3.24; npm compatíveis** | Dois Dockerfiles, M/S/R/O/P manifests+locks, engines/types24.19.0, workflows ativos, exemplos de imagem | Axios1.20.0, Fastify5.12.5, pg8.23.0, OTel conjunto da tabela; demais updates dentro da mesma major da tabela (sensible6.0.6, types/pg8.23.1, tsx4.23.15, yaml2.9.1); manter por ora os majors separados em W10. Builds por commit+digest; `dc up -d --no-deps middleware self-healing-agent`; testar ESM/CJS, Config API fail-loud, auth/redaction/debounce | R0 imagens anteriores; **CI muda**, npm ci/build/typecheck/unit nos dois pacotes |
@@ -274,7 +274,7 @@ Em W14, parar **todos** os consumidores para snapshot final consistente; criar v
 
 - **Verificado:** pins/linhas dos arquivos, ranges e locks diretos, contratos citados, releases e conjunto Dify upstream. Exemplos de digests confirmados pelo catálogo: Node24.21.0-alpine3.24 `sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1`; Chatwoot4.18.0-ce `sha256:faaa58a911cda8f2ab9d717ddf8ca4332163b07da4c5da10711d896e5d667442`; Evolution2.3.7 `sha256:1bd8afc4a6cf48822e6cf02469aeae7bd35a12a6b616eacd1291926307f4d339`. Revalidar manifests/plataforma no PR usando as páginas de [Node](https://hub.docker.com/_/node/tags), [Chatwoot](https://hub.docker.com/r/chatwoot/chatwoot/tags), [Evolution](https://hub.docker.com/r/evoapicloud/evolution-api/tags).
 - **ASSUMED — runtime:** imagens efetivas/digests anteriores, patch PG/Redis, extensions, plugins instalados, recursos/filas/volume sizes, cron/off-host e estado real de branch protection. Nenhum comando Docker nem probe live foi feito por instrução do usuário. `.env` não foi inspecionado: variáveis externas podem alterar o comportamento inventariado.
-- **ASSUMED — Squid:** catálogo/README divergiram sobre destino de latest (README7.2-beta, API aponta digest também associado6.6-beta). Não escolher versão a partir desse alias. Release7.7 é comprovada, mas build/container/entrypoint/ACL ainda precisam implementação e teste; W7a fica bloqueada até então. Não declarar a atual proteção SSRF funcional só pela existência do container.
+- **ASSUMED — Squid:** catálogo/README divergiram sobre destino de latest (README7.2-beta, API aponta digest também associado6.6-beta). Não escolher versão a partir desse alias. Release7.7 é comprovada; build, entrypoint e ACL foram implementados e testados na W7a (contrato abaixo). Não declarar a proteção SSRF funcional só pela existência do container: rodar `scripts/test-ssrf-proxy.sh`.
 - **ASSUMED — cobertura upstream:** notas consultadas nos marcos intermediários e changelogs/guia de migração; não foi feita auditoria integral de cada commit ou patch desde todas as versões flutuantes. Autoheal não oferece release notes formais; patches finais Promtail não mudam seu EOL; latest Azure plugin no Marketplace não confirmado. Material upstream de branches `main/master/latest` deve ser congelado na tag de destino no PR.
 - **ASSUMED — compatibilidade:** restore com bases reais, orçamento RAM/CPU (~31GB compartilhados), clientes Redis8, lock/toolchain TS7/ts-node, API interna Dify e tasks beat, sessão WhatsApp, callbacks Meta, rota Worker e migração state Cloudflare. Esses itens têm testes/gates nas ondas; não são autorizados por ausência de erro na leitura estática.
 - Cloudflare4→5 é migração de recursos/state: [guia na tag5.26.0](https://github.com/cloudflare/terraform-provider-cloudflare/blob/v5.26.0/templates/guides/version-5-upgrade.md) renomeia `cloudflare_record` para `cloudflare_dns_record` e altera schemas. Manter ID do túnel e tokens; abortar plan com replacement/destruction. Descobrir raiz/state ativos sem acionar módulos GCP descomissionados.
@@ -588,3 +588,65 @@ Rollback restores the previous references: Dify `alpine:3.19`, backup default
 `alpine:3.21@sha256:ce64758a109eb420d874a118f87920e625e12d3634e03b4a5573fd9f6e5d3507`;
 the first two were unpinned, so retain their pre-change image IDs for exact rollback.
 Production backup/apply/validation is operator-only and was not run in this worktree.
+
+### W7a — Squid 7.7 operational contract
+
+No published `ubuntu/squid` image carries Squid 7.x, and Alpine 3.24 packages
+7.6 rather than 7.7, so `deploy/squid/Dockerfile` builds it. Provenance:
+
+- Source: `squid-7.7.tar.xz` from the upstream GitHub release `SQUID_7_7`
+  (published 2026-08-24), SHA-256
+  `e3bd613b91b1c498ec2992276063342a85cd6edddd5521294e04f44bc055da9b`. The value
+  matches the asset digest GitHub reports for that release.
+- Signature: the detached `.asc` is verified during the build against
+  `deploy/squid/release-key.asc` (public key, fingerprint
+  `29B4 B1F7 CE03 D1B1 DED2 2F30 28F8 5029 FEF6 E865`, upstream release signing key).
+  The build fails if either the checksum or the signature does not verify.
+- Base: `alpine:3.24.2` by digest for both stages (musl; nothing in our config
+  needs glibc). Build tools come from `apk` at build time and are not version
+  pinned, so the image is reproducible in source and behaviour, not bit for bit.
+- Configure: forward proxy only. Disabled: auth, every helper class, disk
+  stores and disk I/O, ICAP, WCCP, SNMP, HTCP, EUI, QoS marking, and all TLS
+  libraries (CONNECT is an opaque tunnel; nothing is bumped).
+- Runtime image: about 25 MB, `libstdc++` plus the stripped binary, error pages
+  and `mime.conf`; runs as uid/gid 10001, static entrypoint, no shell templating.
+
+`deploy/squid/squid.conf` keeps every ACL unchanged; `squid -k parse` passes on
+7.7 with no removed or renamed directive. One addition, valid for 6.x and 7.x:
+`max_filedescriptors 4096`. Squid sizes its descriptor tables from
+`RLIMIT_NOFILE`, which Docker sets to about a million. Measured without the cap:
+~125 MiB resident while idle on 7.7, and ~93 MiB anonymous memory on the live
+6.13 container, which had hit its 128 MiB cgroup limit hundreds of times since
+boot. With the cap, 7.7 stays at ~13 MiB idle, after the ACL suite and under 16
+concurrent CONNECT tunnels. The mount stays read-only, so the config can change
+without a rebuild.
+
+Compose names the image `nexaduo/squid:7.7-local` with a `build:` context and
+no `pull_policy: build`: `up` builds only when the tag is missing, so a boot
+after an engine restart never needs the network. Bump the tag whenever the
+Dockerfile changes. CI builds it explicitly before starting the stack.
+
+`scripts/tests/test-squid.sh` builds the image and a TLS fixture, then on two
+internal throwaway networks asserts the version, a non-root PID 1, `squid -k
+parse`, the full `scripts/test-ssrf-proxy.sh` suite (the same script CI and the
+operator run against the real stack), 16 concurrent tunnels and a peak RSS
+under 64 MiB. About 10s after the builds; a cold build takes 2 to 5 minutes.
+Playwright N/A: proxy policy is not observable in the web flow.
+
+Operator-only apply (use section 3's `dc`, from the main checkout):
+
+1. Pass the four CI gates and reviews. Record the running image reference for
+   R0. `dc build dify-ssrf-proxy`; confirm `squid -v` in the new image says 7.7.
+2. `dc up -d --no-deps dify-ssrf-proxy`. Nothing else is recreated; the proxy
+   holds no state. Dify HTTP tools and sandbox egress fail for the few seconds
+   it is down.
+3. Verify: `squid -v` reports 7.7, PID 1 is not root, memory well under the
+   128 MiB limit, no restart loop; `scripts/test-ssrf-proxy.sh` with the
+   production `COMPOSE_FILE` chain; then `scripts/run-stack.sh validate` and
+   `scripts/health-check-all.sh`. A Dify HTTP tool call and the handoff tool
+   are only exercised by real conversations: watch the proxy and middleware
+   logs on the next one.
+4. **R0:** set the image back to
+   `ubuntu/squid:6.6-24.04_beta@sha256:6a097f68bae708cedbabd6188d68c7e2e7a38cedd05a176e1cc0ba29e3bbe029`,
+   drop the `build:` line, and `dc up -d --no-deps dify-ssrf-proxy`. The
+   `max_filedescriptors` line is valid on 6.13 and should stay.
