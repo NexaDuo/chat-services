@@ -247,26 +247,30 @@ jobs:
           # now does what autoheal would: once the master has been listening
           # without a worker for 60s, restart dify-api (at most 3 times). It
           # cannot fire mid-migration, because "Listening at" is only logged
-          # after the migration ends.
+          # after the migration ends; after a restart only the log of the new
+          # boot is read, so the stale line cannot re-arm the timer.
           echo "Waiting for Dify API (127.0.0.1:5001)..."
           dify_deadline=1200  # 20 min
           start=$SECONDS
           workerless_since=""
           recycles=0
+          boot_since="1970-01-01T00:00:00Z"
           while true; do
             code=$(curl -sS -o /dev/null -w "%{http_code}" --connect-timeout 3 --max-time 5 http://127.0.0.1:5001/console/api/setup 2>/dev/null || echo "000")
             elapsed=$((SECONDS - start))
             echo "  t+${elapsed}s/${dify_deadline}s: 127.0.0.1:5001 -> ${code}"
             case "${code}" in 2*|3*|4*) echo "Dify API ready."; break ;; esac
             (( elapsed >= dify_deadline )) && break
-            workerless=$(docker compose logs --no-color dify-api 2>/dev/null \
+            # `|| true`: a failed log read skips detection, it must not abort the step.
+            workerless=$( { docker compose logs --no-color --since "${boot_since}" dify-api 2>/dev/null || true; } \
               | awk '/Listening at:/ {l=NR} /Booting worker/ {b=NR} END {print (l && b < l) ? 1 : 0}')
             if [[ "${workerless}" == 1 ]]; then
               : "${workerless_since:=$SECONDS}"
               if (( SECONDS - workerless_since >= 60 && recycles < 3 )); then
                 recycles=$((recycles + 1))
                 echo "::warning::dify-api listening with no worker for 60s (issue #41); restart ${recycles}/3"
-                docker compose restart dify-api
+                boot_since=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+                docker compose restart dify-api || echo "::warning::dify-api restart failed"
                 workerless_since=""
               fi
             else
