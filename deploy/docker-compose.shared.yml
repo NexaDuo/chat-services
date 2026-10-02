@@ -87,10 +87,10 @@ services:
       - chat-network
 
   redis:
-    image: redis:7.2.16-alpine@sha256:29e8589c3f9ba699b5f7aa4b3c7733c58852a3626439e619aa0ee78de08c6ca0
+    image: redis:8.10.2-alpine@sha256:3811787313eba226a2ef38658c6ccb91cd5e110edc89c37767de373120a0e5a0
     restart: unless-stopped
     logging: *default-logging
-    # Measured ~9MiB RSS. Given floor of 256m (not the bare 4x/128m floor
+    # Measured ~9MiB RSS on 7.2 and ~28MiB on 8.10 (bundled modules load). Given floor of 256m (not the bare 4x/128m floor
     # every other tiny service gets) because redis is the shared broker for
     # BOTH Sidekiq (chatwoot) and Celery (dify) plus a cache — a
     # single-tenant idle sample undersells its role under multi-tenant load.

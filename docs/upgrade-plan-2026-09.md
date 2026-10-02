@@ -32,7 +32,7 @@ Legenda: **T** = tag de versão explícita, ainda mutável; **F** = flutuante (l
 | `deploy/docker-compose.nexaduo.yml:257` | `otel/opentelemetry-collector-contrib:0.111.0` | T |
 | `deploy/docker-compose.nexaduo.yml:283` | `grafana/tempo:2.6.1` | T |
 | `deploy/docker-compose.shared.yml:55` | `pgvector/pgvector:pg16` | F |
-| `deploy/docker-compose.shared.yml:90` | `redis:7.2.16-alpine@sha256:29e8589c3f9ba699b5f7aa4b3c7733c58852a3626439e619aa0ee78de08c6ca0` (W5a; prior inventory: 7.2.4) | D |
+| `deploy/docker-compose.shared.yml:90` | `redis:8.10.2-alpine@sha256:38117873…` (W5b; antes 7.2.16-alpine) | D |
 | `deploy/docker-compose.shared.yml:151` | `cloudflare/cloudflared:latest` | F |
 | `deploy/docker-compose.shared.yml:201` | `willfarrell/autoheal:1.2.0` | T |
 | `middleware/Dockerfile:8,15,24,31` | `node:22-alpine` | F |
@@ -238,7 +238,7 @@ Todos os pré-passos, gates, validações e rollback comuns acima são parte de 
 | **W4a — Tempo2.10.8** | N, `observability/tempo/tempo.yaml` | Backup `tempo-data`; `dc up -d --no-deps tempo`; traces novos e históricos, preparar blocos vParquet4+ sem perder retenção120h | R1 volume +2.6.1; **CI muda** teste TraceQL/OTLP |
 | **W4b — Tempo3.0.3** | N, YAML Tempo, dashboards/health se necessário | Novo backup; migrar config monolítica, remover ingester/compactor; `dc up -d --no-deps tempo`; testar ingestão e busca de traces antigos/novos | **R1 obrigatório**, restaurar backup2.10.8; **CI muda** fixture de blocos e config |
 | **W5a — Redis7.2.16-alpine** | S | Drenar filas/parar produtores e consumidores, backup frio redis-data; `dc up -d --no-deps redis`; PING auth, AOF OK, noeviction, tarefas Sidekiq/Celery concluídas após restart | R1 Redis7.2.4+AOF/RDB; CI: simular persistência/reconexão |
-| **W5b — Redis8.10.2-alpine, condicional** | S, documentação de clientes/licença | Só após provar compatibilidade dos clientes atuais; novo backup frio; `dc up -d --no-deps redis`; mesmas verificações, sem aumentar memória implicitamente | R1 dados7.2.16+pin, nunca abrir AOF8 com7; **CI muda**, se falhar adiar até após Chatwoot |
+| **W5b — Redis8.10.2-alpine** (evidência no contrato abaixo) | S, documentação de clientes/licença | Só após provar compatibilidade dos clientes atuais; novo backup frio; `dc up -d --no-deps redis`; mesmas verificações, sem aumentar memória implicitamente | R1 dados7.2.16+pin, nunca abrir AOF8 com7; **CI muda**, se falhar adiar até após Chatwoot |
 | **W6 — Evolution2.3.7** | N, fixture Prisma/API, CI; contrato abaixo (sem nova chave de operador) | Backup DB evolution + volume/sessões Redis; suspender autoheal durante migrations; `dc up -d --no-deps evolution-api`; esperar Prisma e reconectar instância; texto/áudio/documento inbound/outbound pelo Chatwoot, sem contatos duplicados | R1 evolution/instances/chaves Redis da instância +2.1.1; **CI muda**, migrations/fixtures, Meta validado live |
 | **W6b — Alpine3.24.2** | D, backup-host.sh, sondas Tempo/Collector | Init em fixture, round-trip de arquivo; nada recriado live; próximo backup usa o helper novo | R0 referências anteriores; CI: `test-alpine-helpers.sh` + guard de backup |
 | **W7a — Squid7.7** | D, `deploy/squid/Dockerfile` + `squid.conf`, CI; contrato abaixo | Build Squid7.7 com checksum e assinatura, ACL e proxy envs; `dc build dify-ssrf-proxy` e `dc up -d --no-deps dify-ssrf-proxy`; Alpine separado em W6b | R0 imagem/config anterior capturada; **CI muda** ACL, HTTP tool e sandbox |
@@ -863,3 +863,62 @@ Operator-only apply (use section 3's `dc`, from the main checkout):
    `dc up -d --no-deps chatwoot-rails chatwoot-sidekiq`; verify. Messages that
    arrived after the backup are lost in Chatwoot and must be recovered from the
    channels.
+
+### W5b — Redis 8.10.2 operational contract
+
+Compose pins `redis:8.10.2-alpine@sha256:3811787313eba226a2ef38658c6ccb91cd5e110edc89c37767de373120a0e5a0`
+(index digest, verified with `docker buildx imagetools inspect`; 8.10.2 is the
+newest 8.10 patch, released 2026-09-17). Flags, `maxmemory` 150mb, `noeviction`,
+AOF, the 256 MiB limit and the healthcheck are unchanged. W5b was deferred until
+after W8 so the evidence would cover the client versions that now run.
+
+Client compatibility, exercised from this branch against a real 8.10.2 server
+(each rehearsal prints the broker version it ran against):
+
+- **Chatwoot 4.18.0-ce** (Sidekiq 7.3.10): `scripts/rehearse-chatwoot-upgrade.sh`
+  passes on a copy of production data, including Sidekiq registration, inline
+  and queued jobs, and the Agent Bot delivery.
+- **Dify 1.17.1** (Celery worker, API cache and locks, plugin daemon):
+  `scripts/rehearse-dify-upgrade.sh --invoke` passes, including the migration
+  lock, the Celery ping, a document indexed by the worker and one real request
+  per app.
+- **Evolution 2.3.7**: `scripts/tests/test-evolution.sh` passes with the
+  compose-pinned Redis as its cache.
+- **Persistence**: `scripts/tests/test-redis.sh` now boots 7.2.16 with the
+  compose flags, writes strings, lists, sorted sets, hashes and streams with
+  TTLs in DBs 0/1/2, forces a multipart AOF rewrite plus an incremental tail,
+  and reopens the same volume with 8.10.x; everything is preserved across the
+  upgrade and a second restart.
+
+What changes with 8.x:
+
+- **Licence**: Redis 8 is offered under RSALv2, SSPLv1 or AGPLv3. This stack
+  only runs the unmodified image as an internal broker and does not offer Redis
+  as a service, so no option restricts it; recorded for the operator.
+- **Bundled modules**: the image now loads search, JSON, time series,
+  probabilistic and vector set modules. Nothing here uses them. Idle footprint
+  rises from about 10 MiB to about 28 MiB of the 256 MiB limit.
+- **One-way data files**: an 8.x server can read the 7.2 AOF/RDB, but 7.2 must
+  never be started on files written by 8.x. Rollback is the cold backup.
+
+Operator-only apply (use section 3's `dc`; same shape as W5a):
+
+1. Four CI gates and both reviews pass. `dc pull redis`. Record key counts per
+   DB.
+2. Kill switch on. Stop `autoheal`, then `self-healing-agent`, `middleware`,
+   `evolution-api`; then `chatwoot-rails` and `dify-api`. Confirm the Sidekiq
+   and Celery queues are quiescent without purging anything; stop
+   `chatwoot-sidekiq`, `dify-worker`, `dify-plugin-daemon`.
+3. Authenticated `SAVE`, then `dc stop redis`; confirm it exited with code 0.
+   Cold-archive the whole `redis-data` volume; verify the archive.
+4. `dc up -d --no-deps redis`. Verify the version, authenticated `PING`,
+   `NOAUTH` without credentials, `loading:0`, AOF enabled with last write `ok`,
+   `maxmemory` 157286400 with `noeviction`, and the key counts.
+5. Start `dify-plugin-daemon`, then `dify-worker chatwoot-sidekiq`, then
+   `dify-api chatwoot-rails`, then `evolution-api middleware
+   self-healing-agent`, then `autoheal`. Kill switch off.
+   `scripts/run-stack.sh validate` and `scripts/health-check-all.sh`; confirm
+   Sidekiq and Celery process work.
+6. **R1:** quiesce again, stop Redis, set the 8.x volume aside, restore the
+   cold archive into an empty volume, reinstate the 7.2.16 pin, recreate only
+   Redis. Never open 8.x files with 7.2. Never touch the Postgres volume.
