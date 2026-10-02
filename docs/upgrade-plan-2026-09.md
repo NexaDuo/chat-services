@@ -35,8 +35,8 @@ Legenda: **T** = tag de versão explícita, ainda mutável; **F** = flutuante (l
 | `deploy/docker-compose.shared.yml:90` | `redis:8.10.2-alpine@sha256:38117873…` (W5b; antes 7.2.16-alpine) | D |
 | `deploy/docker-compose.shared.yml:151` | `cloudflare/cloudflared:latest` | F |
 | `deploy/docker-compose.shared.yml:201` | `willfarrell/autoheal:1.2.0` | T |
-| `middleware/Dockerfile:8,15,24,31` | `node:22-alpine` | F |
-| `agents/self-healing/Dockerfile:1,9` | `node:20-alpine` | F |
+| `middleware/Dockerfile:8,15,24,31` | `node:24.21.0-alpine3.24@sha256:ebfe2f90…` (W9; antes node:22-alpine) | D |
+| `agents/self-healing/Dockerfile:1,9` | `node:24.21.0-alpine3.24@sha256:ebfe2f90…` (W9; antes node:20-alpine) | D |
 | `scripts/backup-host.sh:56` | `BACKUP_HELPER_IMAGE=alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6` | D (W6b) |
 | `scripts/tests/test-tempo.sh:9`, `scripts/tests/test-otel-collector.sh:31` | `alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6` | D (W6b) |
 | `.env.production.example:112,113` | `ghcr.io/nexaduo/{middleware,self-healing-agent}:latest` | F, exemplos |
@@ -922,3 +922,58 @@ Operator-only apply (use section 3's `dc`; same shape as W5a):
 6. **R1:** quiesce again, stop Redis, set the 8.x volume aside, restore the
    cold archive into an empty volume, reinstate the 7.2.16 pin, recreate only
    Redis. Never open 8.x files with 7.2. Never touch the Postgres volume.
+
+### W9 — Node 24 operational contract
+
+Both Dockerfiles use `node:24.21.0-alpine3.24@sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1`
+(index digest, verified with `docker buildx imagetools inspect`) in every stage:
+middleware moves from Node 22, self-healing from Node 20. CI moves to Node 24
+in the same change (`stack-compose-playwright`, `unit-tests`,
+`validate-tenants`), so CI never tests a runtime that production does not run.
+The dead GCP workflows are left alone.
+
+Dependency updates stay inside the current majors (majors are W10):
+
+- middleware and self-healing: axios 1.20, pg 8.23, the OpenTelemetry set
+  (sdk-node, OTLP HTTP exporter and http instrumentation 0.222; pg
+  instrumentation 0.74; pino instrumentation 0.68; resources and
+  sdk-trace-base 2.11; semantic conventions 1.43), `@types/node` 24,
+  `@types/pg` 8.23; `engines.node` is now `>=24.0.0` in both.
+- middleware only: fastify 5.12.5, `@fastify/sensible` 6.0.6, tsx 4.23.15.
+  `@opentelemetry/instrumentation-fastify` stays at 0.57.0, the newest
+  published.
+- root, provisioning and onboarding (tooling, not deployed): `@types/node` 24
+  where present, axios 1.20, pg 8.23, tsx 4.23.15, yaml 2.9.1, and fastify
+  5.12.5 in onboarding.
+- Unchanged on purpose: vitest (4.x in middleware, 2.x in self-healing),
+  Playwright, React, Vite, zod, pino, TypeScript 5.9: all W10.
+
+Checked under the pinned Node 24 image: middleware `typecheck`, `build` and
+107 unit tests; self-healing `typecheck`, `build` and 24 unit tests; root
+`typecheck`; provisioning `build`; both images build and run as non-root on
+v24.21.0. npm 11 (shipped with Node 24) warns on install that protobufjs's
+postinstall script is not approved; that script only checks a version and the
+OpenTelemetry exporter works without it (telemetry preload exercised under
+Node 24). `npm audit --omit=dev` is clean for self-healing. For middleware the
+`fast-uri` advisories were fixed in the lockfile (3.1.0 to 3.1.8); the
+remaining one is `@fastify/static` 8.x, whose fix is the 10.x major scheduled
+for W10b. Its exposure here is low: the plugin only serves the public admin
+assets, with no directory listing and no guarded route behind it.
+
+Operator-only apply (use section 3's `dc`, from the main checkout):
+
+1. Four CI gates and both reviews pass. Record the image IDs of
+   `nexaduo/middleware:local` and `nexaduo/self-healing-agent:local` and tag
+   them `:pre-w9` for R0.
+2. Build both images from the merged commit with the tags the production
+   `.env` names.
+3. `dc up -d --no-deps middleware self-healing-agent`. Middleware is stateless;
+   Chatwoot retries a bot webhook that hits the restart.
+4. Verify: both healthy on Node v24.21.0, non-root; middleware `/health` and
+   `/metrics`; `/config` rejects a request without the shared secret;
+   self-healing fetched its config (fail-loud otherwise) and its loop is
+   running; traces from both services still reach Tempo; no restart loop.
+   `scripts/run-stack.sh validate` and `scripts/health-check-all.sh`.
+5. **R0:** retag the `:pre-w9` images back to `:local` and
+   `dc up -d --no-deps middleware self-healing-agent`. No data migration is
+   involved.
