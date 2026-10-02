@@ -68,7 +68,8 @@ eventually(retrieve)
 def search():
     query = urllib.parse.urlencode({"q": '{ resource.service.name = "w4a-synthetic" }'})
     result = json.loads(request(http + "/api/search?" + query))
-    assert trace in [t["traceID"] for t in result.get("traces", [])], result
+    # Tempo drops leading zeros from trace IDs in search results.
+    assert trace in [t["traceID"].rjust(32, "0") for t in result.get("traces", [])], result
 
 
 if mode.startswith("write"):
