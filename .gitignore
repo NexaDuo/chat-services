@@ -85,3 +85,6 @@ terraform.rc
 
 # stray stderr-capture artifact (accidental in #124)
 config-err.txt
+
+# Fixture created (and removed) by src/handlers/admin-static.test.ts.
+middleware/src/public/app/

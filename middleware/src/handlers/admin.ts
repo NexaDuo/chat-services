@@ -77,6 +77,8 @@ export async function registerAdminRoutes(
       root: assetsDir,
       prefix: "/admin/app/assets/",
       decorateReply: false,
+      // The Vite output has no dotfiles; never serve one if it appears.
+      dotfiles: "deny",
     });
   }
 
