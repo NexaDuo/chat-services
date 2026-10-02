@@ -784,8 +784,9 @@ upstream release notes for every release from 4.14.0 to
   private addresses too, as they could on 4.13, which had no SafeFetch.
   Tracked in #260 with the two narrower alternatives.
 - **`chatwoot-public` is no longer mounted.** The named volume at `/app/public`
-  held the 4.13 frontend assets and would have masked the 4.18 ones (122 of 298
-  new asset files missing, different Vite manifest). It contained exactly the
+  held the 4.13 frontend assets and would have masked the 4.18 ones (under
+  `vite/assets`, 122 of the 298 files of the new image were missing from the
+  volume, and the Vite manifest differs). It contained exactly the
   4.13 image content and nothing written at runtime, so the mount is removed
   and assets are served from the image. The Docker volume itself is left on
   the host, untouched, for rollback.
@@ -794,8 +795,8 @@ upstream release notes for every release from 4.14.0 to
   identical in 4.13 and 4.18). `deploy/assume_ssl.rb` is still needed: 4.18
   keeps `load_defaults 7.0` and does not wire `RAILS_ASSUME_SSL`. The entrypoint
   script and `config/initializers/omniauth.rb` are unchanged in place.
-- **Migrations are forward-only** in practice: 58 migrations between schema
-  `20260410092753` and `20260831000000`. Rollback is restore.
+- **Migrations are forward-only** in practice: more than 50 migrations between
+  schema `20260410092753` and `20260831000000`. Rollback is restore.
 - **Agent Bot contract**: the bot's access token is still accepted by the
   messages API, and new conversations in a bot inbox still start `pending`.
   Deliveries are HMAC-signed with the bot's `secret`
@@ -811,7 +812,8 @@ upstream release notes for every release from 4.14.0 to
 labels reset and the log driver off. It runs the cutover's migration command
 (`chatwoot-init`), boots rails and sidekiq, and checks: schema version stable
 on boot, 16 table counts unchanged, `/api` reports the pinned version, the
-login page references a Vite asset that the container actually serves, no
+login page references a Vite asset that the container actually serves (image
+self-consistency; the rehearsal never mounts the old public volume), no
 pending migration, `assume_ssl` applied, every attached blob present in storage
 and one downloaded, a real incoming message in the bot inbox stays `pending`
 and reaches a stand-in receiver at `middleware:4000`, the bot token posts a
@@ -855,7 +857,9 @@ Operator-only apply (use section 3's `dc`, from the main checkout):
    recreate **only** the `chatwoot` database in the existing Postgres and
    restore the step 3 dump with `ON_ERROR_STOP=1`; empty and restore
    `chatwoot-storage` from its archive; revert the compose change (4.13.0-ce
-   pins and the `chatwoot-public` mount, whose volume is still on the host);
+   pins, the `chatwoot-public` mounts **and** its top-level volume declaration;
+   the volume is still on the host, so do not run `docker volume prune` until
+   the upgrade is accepted);
    `dc up -d --no-deps chatwoot-rails chatwoot-sidekiq`; verify. Messages that
    arrived after the backup are lost in Chatwoot and must be recovered from the
    channels.

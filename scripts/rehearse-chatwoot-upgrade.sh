@@ -46,6 +46,7 @@ cleanup() {
   trap - EXIT
   if (( keep )); then
     log "kept: project $proj (network, volumes, containers); logs in $logdir"
+    log "the volumes hold a copy of PRODUCTION data: remove them when done"
     log "remove with: docker ps -aq --filter name=$proj | xargs -r docker rm -fv; docker volume ls -q | grep ^$proj | xargs -r docker volume rm; docker network rm $proj"
   else
     dc down --timeout 5 >/dev/null 2>&1 || true
@@ -177,16 +178,17 @@ snapshot > "$work/after.txt"
 diff -u "$work/before.txt" "$work/after.txt" > "$logdir/counts.diff" || die "row counts changed (see $logdir/counts.diff)"
 log "row counts preserved: $(tr '\n' ' ' < "$work/after.txt")"
 
-# The web UI must come from the image: the HTML has to reference assets that
-# the same container serves (a stale public volume fails here).
+# The image must be self-consistent: the API reports the pinned version and
+# the login page references a frontend asset the same container serves. (This
+# does not detect a stale /app/public volume; compose no longer mounts one.)
 version=${cw_image#*:v}; version=${version%%-*}
 rails_exec sh -ec '
   api=$(wget -qO- http://127.0.0.1:3000/api)
-  echo "$api" | grep -q "\"version\":\"'"$version"'\"" || { echo "unexpected /api version"; exit 1; }
+  echo "$api" | grep -q "\"version\":\"$1\"" || { echo "unexpected /api version"; exit 1; }
   asset=$(wget -qO- http://127.0.0.1:3000/app/login | grep -o "/vite/assets/[A-Za-z0-9_.-]*\.js" | head -n 1)
   [ -n "$asset" ] || { echo "no vite asset referenced"; exit 1; }
   wget -qO /dev/null "http://127.0.0.1:3000$asset" || { echo "referenced asset not served"; exit 1; }
-' > "$logdir/web.log" 2>&1 || die "web checks failed (see $logdir/web.log)"
+' sh "$version" > "$logdir/web.log" 2>&1 || die "web checks failed (see $logdir/web.log)"
 log "web: /api reports $version and the referenced frontend asset is served"
 
 # Application-level checks inside Rails, after the count comparison because
@@ -203,6 +205,7 @@ begin
 
   # Every stored upload must still be readable from the copied volume.
   blobs = ActiveStorage::Blob.where(id: ActiveStorage::Attachment.select(:blob_id))
+  raise 'no attached blob in the copy: storage check would prove nothing' if blobs.empty?
   unreadable = blobs.reject { |blob| blob.service.exist?(blob.key) }
   raise "#{unreadable.size} of #{blobs.size} attached blobs missing from storage" if unreadable.any?
   sample = blobs.order(:byte_size).first
