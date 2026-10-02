@@ -278,6 +278,19 @@ Dumps: `~/nexaduo-local/dumps/<db>-<YYYY-MM-DD>-HHMM.sql.gz` (+ off-host mirror 
   `coolify-proxy`) so the buffer can't grow large enough to trigger it again. If a
   container's `--since` output is empty, cross-check with `-f` for a few seconds
   before trusting "clean" — don't rely on `--since` alone for a sweep.
+- **Chatwoot link preview (#273):** `deploy/open_graph.rb` (Rack middleware,
+  mounted into `chatwoot-rails` only) adds `og:*` tags to dashboard HTML of the
+  `FRONTEND_URL` host; help-center pages, other hosts and non-HTML pass through
+  untouched. Branding is tenant config: `tenants.og_title/og_description/og_image_url`
+  (seeded from `branding:` in `tenants.yaml`) of the host's owner, the active
+  tenant holding Chatwoot account 1 on it, served by the middleware's
+  unauthenticated `GET /public/tenant-branding?host=` (those three public fields
+  only). Chatwoot caches the answer (5 min) and fails open to neutral static
+  tags. Images live in `deploy/og-images/` (served at `/og-images/`; rebuild
+  with `scripts/og-image.py`). After editing a tenant's branding, re-seed and
+  wait for the cache; after changing the initializer or `default.png`, recreate
+  `chatwoot-rails`. Meta caches previews: re-scrape in the Sharing Debugger.
+  Tests: `scripts/tests/test-chatwoot-open-graph.sh`, Playwright spec 19.
 - **Cloudflare SSL loops:** behind the tunnel, disabling `FORCE_SSL` in apps is often
   necessary to prevent infinite redirect loops.
 - **Container entrypoints:** images like Chatwoot need explicit entrypoints

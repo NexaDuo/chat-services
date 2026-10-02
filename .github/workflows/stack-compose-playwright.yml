@@ -171,6 +171,11 @@ jobs:
       - name: Test isolated Squid 7.7 contract (under 180s after builds)
         run: bash scripts/tests/test-squid.sh
 
+      # Rack contract of deploy/open_graph.rb in the pinned Chatwoot image, no
+      # stack needed: passthrough, Content-Length and self-disabling (issue #273).
+      - name: Test Chatwoot Open Graph middleware contract (under 120s after pull)
+        run: bash scripts/tests/test-chatwoot-open-graph.sh
+
       - name: Build local images
         run: |
           docker build -t ghcr.io/nexaduo/middleware:latest ./middleware
@@ -311,7 +316,11 @@ jobs:
         env:
           DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/middleware
           SKIP_GCP_SYNC: 'true'
-        run: npm run tenants:sync
+        # `ci` adds the tenant that owns 127.0.0.1:3000 (tenants.yaml), so the
+        # tenant-branding path of issue #273 runs through the real seed.
+        run: |
+          npm run tenants:sync
+          npm run tenants:sync -- ci
 
       - name: Stage 1 - Infrastructure Health
         working-directory: onboarding
@@ -321,6 +330,19 @@ jobs:
           DIFY_API_URL: http://127.0.0.1:5001
           GRAFANA_URL: http://127.0.0.1:3002
         run: npx playwright test tests/01-infra.spec.ts
+
+      # Issue #273: the booted Chatwoot must emit explicit og:* tags and serve
+      # the image they point at. CHATWOOT_URL equals the CHATWOOT_FRONTEND_URL
+      # written to .env above, which is what the tags are derived from. The
+      # EXPECTED_* values are the `ci-hub` branding in tenants.yaml: they only
+      # show up if seed -> Postgres -> middleware -> chatwoot-rails all work.
+      - name: Stage 1b - Chatwoot Open Graph tags
+        working-directory: onboarding
+        env:
+          CHATWOOT_URL: http://127.0.0.1:3000
+          EXPECTED_OG_TITLE: CI Hub Preview
+          EXPECTED_OG_IMAGE_PATH: /og-images/nexaduo.png
+        run: npx playwright test tests/19-chatwoot-open-graph.spec.ts
 
       # NOTE: Stage 2 and 3 (UI Onboarding/Smoke) are currently skipped in CI 
       # due to high resource usage of Dify/Chatwoot UI in 2-core runners.

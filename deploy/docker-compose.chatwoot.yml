@@ -105,6 +105,14 @@ services:
       # are opened. All-or-nothing switch: it also lets avatar/upload-by-URL
       # fetches reach private addresses, as they could on 4.13 (issue #260).
       SAFE_FETCH_ALLOW_PRIVATE_NETWORK: "true"
+      # Link preview of the dashboard host (issue #273, deploy/open_graph.rb).
+      # The owning tenant's branding is read from the middleware (unauthenticated
+      # route, public fields only, cached, fails open). Set the URL to an empty
+      # value to switch the lookup off. Title/description are the static
+      # fallback under it; empty keeps the neutral built-in text.
+      CHATWOOT_OG_BRANDING_URL: ${CHATWOOT_OG_BRANDING_URL-http://middleware:4000/public/tenant-branding}
+      CHATWOOT_OG_TITLE: ${CHATWOOT_OG_TITLE:-}
+      CHATWOOT_OG_DESCRIPTION: ${CHATWOOT_OG_DESCRIPTION:-}
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.chatwoot.rule=Host(`${CHATWOOT_DOMAIN}`)"
@@ -116,6 +124,13 @@ services:
       - chatwoot-storage:/app/storage
       - ${NEXADUO_CONF_PATH}/deploy/ai_agents.rb:/app/config/initializers/ai_agents.rb:ro
       - ${NEXADUO_CONF_PATH}/deploy/assume_ssl.rb:/app/config/initializers/assume_ssl.rb:ro
+      # Open Graph tags (issue #273): the initializer plus the images it
+      # advertises (default.png and one per branded tenant). A read-only bind
+      # of one new subdirectory inside the image's own /app/public, not a
+      # volume over it. Recreate the container after changing the initializer
+      # (file mount) or default.png (sized and digested at boot).
+      - ${NEXADUO_CONF_PATH}/deploy/open_graph.rb:/app/config/initializers/open_graph.rb:ro
+      - ${NEXADUO_CONF_PATH}/deploy/og-images:/app/public/og-images:ro
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |

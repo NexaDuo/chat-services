@@ -55,6 +55,32 @@ interface TenantConfig {
     // `resolveTenantSecrets` before seeding.
     dify_api_key?: string;
   };
+  // Link-preview (Open Graph) branding of the Chatwoot host this tenant owns
+  // (issue #273). Public by nature; all optional.
+  branding?: {
+    og_title?: string;
+    og_description?: string;
+    og_image_url?: string;
+  };
+}
+
+/** Column order shared by the direct-DB and --print-sql seed paths. */
+function tenantValues(tenant: TenantConfig): (string | null)[] {
+  return [
+    tenant.slug,
+    tenant.slug,
+    tenant.name,
+    tenant.chatwoot_account_id.toString(),
+    tenant.status,
+    tenant.infra?.type || 'shared',
+    tenant.infra?.chatwoot_url || null,
+    tenant.infra?.dify_url || null,
+    tenant.infra?.dify_app_type || 'chatflow',
+    tenant.infra?.dify_api_key || null,
+    tenant.branding?.og_title || null,
+    tenant.branding?.og_description || null,
+    tenant.branding?.og_image_url || null,
+  ];
 }
 
 interface TenantsYaml {
@@ -73,8 +99,8 @@ async function syncDatabase(pool: Pool, tenants: TenantConfig[]) {
   logger.log('Syncing database...');
   for (const tenant of tenants) {
     const query = `
-      INSERT INTO tenants (slug, subdomain, name, chatwoot_account_id, status, infra_type, chatwoot_url, dify_url, dify_app_type, dify_api_key)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+      INSERT INTO tenants (slug, subdomain, name, chatwoot_account_id, status, infra_type, chatwoot_url, dify_url, dify_app_type, dify_api_key, og_title, og_description, og_image_url)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
       ON CONFLICT (slug) DO UPDATE
       SET subdomain = EXCLUDED.subdomain,
           name = EXCLUDED.name,
@@ -86,20 +112,13 @@ async function syncDatabase(pool: Pool, tenants: TenantConfig[]) {
           dify_app_type = EXCLUDED.dify_app_type,
           -- Preserve a key set out-of-band when the seed does not carry one.
           dify_api_key = COALESCE(EXCLUDED.dify_api_key, tenants.dify_api_key),
+          -- Same for branding: a tenant without a branding block keeps its row.
+          og_title = COALESCE(EXCLUDED.og_title, tenants.og_title),
+          og_description = COALESCE(EXCLUDED.og_description, tenants.og_description),
+          og_image_url = COALESCE(EXCLUDED.og_image_url, tenants.og_image_url),
           updated_at = CURRENT_TIMESTAMP;
     `;
-    const values = [
-      tenant.slug,
-      tenant.slug,
-      tenant.name,
-      tenant.chatwoot_account_id.toString(),
-      tenant.status,
-      tenant.infra?.type || 'shared',
-      tenant.infra?.chatwoot_url || null,
-      tenant.infra?.dify_url || null,
-      tenant.infra?.dify_app_type || 'chatflow',
-      tenant.infra?.dify_api_key || null
-    ];
+    const values = tenantValues(tenant);
     await pool.query(query, values);
     logger.log(`✅ Synced DB: ${tenant.slug}`);
   }
@@ -119,19 +138,8 @@ function sqlLiteral(value: string | null): string {
  */
 function buildSeedSql(tenants: TenantConfig[], admin?: { username: string; password: string }): string {
   const rows = tenants.map((tenant) => {
-    const values = [
-      tenant.slug,
-      tenant.slug,
-      tenant.name,
-      tenant.chatwoot_account_id.toString(),
-      tenant.status,
-      tenant.infra?.type || 'shared',
-      tenant.infra?.chatwoot_url || null,
-      tenant.infra?.dify_url || null,
-      tenant.infra?.dify_app_type || 'chatflow',
-      tenant.infra?.dify_api_key || null,
-    ].map(sqlLiteral).join(', ');
-    return `INSERT INTO tenants (slug, subdomain, name, chatwoot_account_id, status, infra_type, chatwoot_url, dify_url, dify_app_type, dify_api_key)
+    const values = tenantValues(tenant).map(sqlLiteral).join(', ');
+    return `INSERT INTO tenants (slug, subdomain, name, chatwoot_account_id, status, infra_type, chatwoot_url, dify_url, dify_app_type, dify_api_key, og_title, og_description, og_image_url)
 VALUES (${values})
 ON CONFLICT (slug) DO UPDATE
 SET subdomain = EXCLUDED.subdomain,
@@ -143,6 +151,9 @@ SET subdomain = EXCLUDED.subdomain,
     dify_url = EXCLUDED.dify_url,
     dify_app_type = EXCLUDED.dify_app_type,
     dify_api_key = COALESCE(EXCLUDED.dify_api_key, tenants.dify_api_key),
+    og_title = COALESCE(EXCLUDED.og_title, tenants.og_title),
+    og_description = COALESCE(EXCLUDED.og_description, tenants.og_description),
+    og_image_url = COALESCE(EXCLUDED.og_image_url, tenants.og_image_url),
     updated_at = CURRENT_TIMESTAMP;`;
   });
 
@@ -291,6 +302,13 @@ async function main() {
   
   const fileContent = fs.readFileSync(yamlPath, 'utf8');
   const config = yaml.parse(fileContent) as TenantsYaml;
+
+  // --print-sql promises pure SQL on stdout (it is piped into psql). Without
+  // gcloud, the secret fallbacks below used to log their warnings there and
+  // break the seed with a syntax error; send every log line to stderr instead.
+  if (process.argv.includes('--print-sql')) {
+    logger.log = (message: string) => console.error(maskSensitiveData(message));
+  }
 
   // Resolve admin credentials if they use GCP Secret Manager
   let resolvedAdmin: { username: string; password: string } | undefined = undefined;

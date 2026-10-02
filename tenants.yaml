@@ -16,6 +16,31 @@ tenants:
       type: shared
       chatwoot_url: "https://chat.nexaduo.com"
       dify_url: "https://dify.nexaduo.com"
+    # Link preview (Open Graph) of the Chatwoot host this tenant owns (#273).
+    # A host is branded by the active tenant that holds Chatwoot account 1 on
+    # it. The image must be an absolute URL reachable without authentication;
+    # deploy/og-images/ is served by that host under /og-images/.
+    branding:
+      og_title: "NexaDuo"
+      og_description: "Atendimento omnichannel com agentes de IA: WhatsApp e Instagram em uma única caixa de entrada."
+      og_image_url: "https://chat.nexaduo.com/og-images/nexaduo.png"
+
+  # Ephemeral CI stack only (stack-compose-playwright.yml seeds `ci` after
+  # `production`): gives 127.0.0.1:3000 an owner so the tenant-branding path is
+  # exercised end to end by onboarding/tests/19-chatwoot-open-graph.spec.ts.
+  - slug: ci-hub
+    name: CI Hub
+    chatwoot_account_id: 1
+    status: active
+    environment: ci
+    infra:
+      type: shared
+      chatwoot_url: "http://127.0.0.1:3000"
+      dify_url: "http://127.0.0.1:3001"
+    branding:
+      og_title: "CI Hub Preview"
+      og_description: "Tenant branding seeded by tenants.yaml for the CI stack."
+      og_image_url: "http://127.0.0.1:3000/og-images/nexaduo.png"
 
   - slug: acme-dedicated
     name: Acme Dedicated

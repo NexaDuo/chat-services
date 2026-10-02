@@ -189,7 +189,8 @@ validate() {
     ( cd onboarding && CHATWOOT_URL="$CHAT_URL" DIFY_URL="$DIFY_URL" DIFY_API_URL="$DIFY_API_URL" \
         GRAFANA_URL="$GRAFANA_URL" MIDDLEWARE_URL="$MIDDLEWARE_URL" \
         HANDOFF_SHARED_SECRET="${HANDOFF_SHARED_SECRET:-$(grep -E '^HANDOFF_SHARED_SECRET=' "$ENV_FILE" | cut -d= -f2-)}" \
-        npx playwright test tests/01-infra.spec.ts tests/07-hybrid-tenants.spec.ts )
+        npx playwright test tests/01-infra.spec.ts tests/07-hybrid-tenants.spec.ts \
+          tests/19-chatwoot-open-graph.spec.ts )
   fi
   log "validation passed"
 }

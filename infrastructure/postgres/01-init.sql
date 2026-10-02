@@ -83,6 +83,15 @@ CREATE TABLE IF NOT EXISTS tenants (
 
 CREATE INDEX IF NOT EXISTS idx_tenants_subdomain ON tenants(subdomain);
 
+-- Link-preview (Open Graph) branding of the Chatwoot host a tenant owns
+-- (issue #273). All optional and public by nature: they end up verbatim in the
+-- HTML of that host. Served by the middleware at GET /public/tenant-branding
+-- and consumed by deploy/open_graph.rb. ADD COLUMN IF NOT EXISTS so reapplying
+-- this file converges an existing database.
+ALTER TABLE tenants ADD COLUMN IF NOT EXISTS og_title TEXT;
+ALTER TABLE tenants ADD COLUMN IF NOT EXISTS og_description TEXT;
+ALTER TABLE tenants ADD COLUMN IF NOT EXISTS og_image_url TEXT;
+
 -- users table
 CREATE TABLE IF NOT EXISTS users (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
