@@ -1067,3 +1067,27 @@ middleware `/health`, the self-healing config fetch and loop start, a log line
 in each service still in the expected JSON shape, then
 `scripts/run-stack.sh validate` and `scripts/health-check-all.sh`. **R0:** retag
 the `:pre-w10c` images to `:local` and recreate.
+
+### W10d — TypeScript 7 operational contract
+
+`typescript` moves from 5.9.3 to 7.0.2 (the native compiler) in middleware,
+self-healing, provisioning and the root package.
+
+- **No source or tsconfig change was needed.** `tsc --noEmit` and the builds
+  pass in the four packages.
+- **The emitted JavaScript is identical.** Building both production packages
+  from the same sources with 5.9.3 and with 7.0.2 and comparing the outputs:
+  self-healing has no differing file; middleware differs only in seven `.map`
+  source maps, none in a `.js` file. The production images therefore run the
+  same code as before.
+- **ts-node is gone.** TypeScript 7 ships no `transpileModule` JavaScript API,
+  so `ts-node` cannot load. The two `dev` scripts that used it (self-healing,
+  and provisioning, which referenced it without declaring it) now use `tsx`,
+  demonstrated loading the sources of both. Neither script is used by CI or by
+  the images.
+- Vitest, Vite and tsx transpile with esbuild/oxc and do not depend on the
+  TypeScript API; the 110 and 24 unit tests pass.
+
+Operator apply: optional rebuild. Since the emitted code is identical, the
+running images need no recreation; the next build (W11 or later) picks up the
+new compiler. If rebuilt, verify as in W9. Rollback: revert the manifests.
