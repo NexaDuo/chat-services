@@ -31,7 +31,7 @@ x-logging-noisy: &noisy-logging
 
 services:
   chatwoot-init:
-    image: chatwoot/chatwoot:v4.13.0-ce
+    image: chatwoot/chatwoot:v4.18.0-ce@sha256:faaa58a911cda8f2ab9d717ddf8ca4332163b07da4c5da10711d896e5d667442
     restart: "no"
     logging: *default-logging
     # `@rev` LOW finding on PR #164: this figure is a deliberate floor, NOT
@@ -69,7 +69,7 @@ services:
     networks:
       - chat-network
   chatwoot-rails:
-    image: chatwoot/chatwoot:v4.13.0-ce
+    image: chatwoot/chatwoot:v4.18.0-ce@sha256:faaa58a911cda8f2ab9d717ddf8ca4332163b07da4c5da10711d896e5d667442
     restart: unless-stopped
     logging: *default-logging
     # Issue #157: measured ~363MiB RSS (docker stats, 2026-08-07); limit =
@@ -99,14 +99,21 @@ services:
       GOOGLE_CLIENT_SECRET: ${GOOGLE_OAUTH_CLIENT_SECRET}
       GOOGLE_OAUTH_CALLBACK_URL: ${GOOGLE_OAUTH_CALLBACK_URL}
       OMNIAUTH_PROVIDERS: google_oauth2
+      # Since 4.14 webhook delivery goes through SafeFetch, which refuses private
+      # addresses. The Agent Bot endpoint is http://middleware:4000 on the Docker
+      # network, so without this the bot goes silent and pending conversations
+      # are opened. All-or-nothing switch: it also lets avatar/upload-by-URL
+      # fetches reach private addresses, as they could on 4.13 (issue #260).
+      SAFE_FETCH_ALLOW_PRIVATE_NETWORK: "true"
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.chatwoot.rule=Host(`${CHATWOOT_DOMAIN}`)"
       - "traefik.http.routers.chatwoot.entrypoints=http"
       - "traefik.http.services.chatwoot.loadbalancer.server.port=3000"
     volumes:
+      # /app/public is served from the image. A named volume there kept the
+      # previous version's frontend assets across upgrades (W8).
       - chatwoot-storage:/app/storage
-      - chatwoot-public:/app/public
       - ${NEXADUO_CONF_PATH}/deploy/ai_agents.rb:/app/config/initializers/ai_agents.rb:ro
       - ${NEXADUO_CONF_PATH}/deploy/assume_ssl.rb:/app/config/initializers/assume_ssl.rb:ro
     entrypoint: ["/bin/sh", "-c"]
@@ -123,7 +130,7 @@ services:
     networks:
       - chat-network
   chatwoot-sidekiq:
-    image: chatwoot/chatwoot:v4.13.0-ce
+    image: chatwoot/chatwoot:v4.18.0-ce@sha256:faaa58a911cda8f2ab9d717ddf8ca4332163b07da4c5da10711d896e5d667442
     restart: unless-stopped
     # Noisy tier — see the x-logging-noisy rationale above (issue #156).
     logging: *noisy-logging
@@ -150,9 +157,10 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DATABASE: chatwoot
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/1
+      # Webhook jobs run here: same switch as chatwoot-rails.
+      SAFE_FETCH_ALLOW_PRIVATE_NETWORK: "true"
     volumes:
       - chatwoot-storage:/app/storage
-      - chatwoot-public:/app/public
       - ${NEXADUO_CONF_PATH}/deploy/ai_agents.rb:/app/config/initializers/ai_agents.rb:ro
       - ${NEXADUO_CONF_PATH}/deploy/assume_ssl.rb:/app/config/initializers/assume_ssl.rb:ro
     command: ["bundle", "exec", "sidekiq", "-C", "config/sidekiq.yml"]
@@ -190,7 +198,6 @@ services:
       - chat-network
 volumes:
   chatwoot-storage:
-  chatwoot-public:
 networks:
   chat-network:
     external: true

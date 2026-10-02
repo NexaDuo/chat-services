@@ -478,6 +478,17 @@ on, a fresh backup that includes `dify-plugin-storage`, and a one-shot
 Sequence and rollback: W7b operational contract in
 [the upgrade plan](docs/upgrade-plan-2026-09.md#w7b--dify-1171-operational-contract).
 
+## Chatwoot upgrades
+Chatwoot is pinned to 4.18.0-ce by digest. Two things bite on upgrade and are
+covered by `scripts/rehearse-chatwoot-upgrade.sh` (copy of production data on
+an internal network, with a negative control): webhook delivery goes through
+SafeFetch, so the internal Agent Bot endpoint needs
+`SAFE_FETCH_ALLOW_PRIVATE_NETWORK=true` (trade-off in #260); and `/app/public`
+must come from the image, never a named volume. Rehearse, then apply with the
+kill switch on, a fresh backup and `chatwoot-init`. Sequence and rollback: W8
+operational contract in
+[the upgrade plan](docs/upgrade-plan-2026-09.md#w8--chatwoot-4180-ce-operational-contract).
+
 ## Tempo 3.0 monolithic operations
 Tempo is pinned to 3.0.3; Kafka is not required (`target: all`). Backend scheduler
 and worker enforce 120h retention and compaction. Keep the root-owned volume and
