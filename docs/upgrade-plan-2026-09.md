@@ -977,3 +977,28 @@ Operator-only apply (use section 3's `dc`, from the main checkout):
 5. **R0:** retag the `:pre-w9` images back to `:local` and
    `dc up -d --no-deps middleware self-healing-agent`. No data migration is
    involved.
+
+### W10a — Vitest 5 and Playwright 1.63 operational contract
+
+Test tooling only; no production image changes.
+
+- **Vitest 5.0.3** in middleware (from 4.1) and self-healing (from 2.1). The
+  107 and 24 unit tests pass unchanged under Node 24. Self-healing gains a
+  `vitest.config.mts` limiting collection to `src/**/*.test.ts`: since Vitest 3
+  `dist/` is no longer excluded by default, so after a build the compiled
+  copies of the tests were collected and failed. In self-healing the old Vitest
+  had to be uninstalled first: Vitest 5 needs Vite 6.4 or newer as a peer and
+  the lock still carried Vite 5.
+- **Playwright 1.63.0** in onboarding (from 1.59.1). It installs Chromium and
+  its system dependencies on Ubuntu 26.04 (checked in an `ubuntu:26.04`
+  container), which 1.59.1 could not, so `validate-stack` moves from
+  `ubuntu-24.04` to `ubuntu-26.04` like the other jobs.
+- Both tools require Node 20 or newer (Vitest 5: 22.12+/24); W9 is the
+  prerequisite.
+
+Operator apply: nothing is recreated. On the host, `npm ci` in `onboarding/`
+and `npx playwright install chromium` so `scripts/run-stack.sh validate` uses
+the new version (CI adds `--with-deps` because its runner starts without the
+system libraries; the host already has them), then run `validate` and
+`scripts/health-check-all.sh`.
+Rollback: revert the manifests and locks and reinstall.

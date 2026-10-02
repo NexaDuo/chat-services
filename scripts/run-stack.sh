@@ -182,6 +182,9 @@ validate() {
   [[ "$fail" -eq 0 ]] || die "smoke failed — see above before running Playwright"
   if [[ -d onboarding ]]; then
     log "running Playwright connectivity + tenant-resolution suites against the tunnel URLs"
+    # After a Playwright bump the host needs the matching packages and browser.
+    [[ -x onboarding/node_modules/.bin/playwright ]] \
+      || die "Playwright is not installed: run 'npm ci && npx playwright install chromium' in onboarding/"
     ( cd onboarding && CHATWOOT_URL="$CHAT_URL" DIFY_URL="$DIFY_URL" DIFY_API_URL="$DIFY_API_URL" \
         GRAFANA_URL="$GRAFANA_URL" MIDDLEWARE_URL="$MIDDLEWARE_URL" \
         HANDOFF_SHARED_SECRET="${HANDOFF_SHARED_SECRET:-$(grep -E '^HANDOFF_SHARED_SECRET=' "$ENV_FILE" | cut -d= -f2-)}" \

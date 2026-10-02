@@ -34,9 +34,10 @@ jobs:
           ./gitleaks dir . --config .gitleaks.toml --redact --no-banner --exit-code 1 --verbose
 
   validate-stack:
-    # W0b: Playwright 1.59.1 (onboarding lockfile) cannot install on 26.04.
-    # Revisit with W10a: https://github.com/microsoft/playwright/issues/40117
-    runs-on: ubuntu-24.04
+    # W10a: Playwright 1.63 installs its browser dependencies on 26.04
+    # (1.59.1 could not: https://github.com/microsoft/playwright/issues/40117),
+    # so this job now runs on the same image as the others.
+    runs-on: ubuntu-26.04
     # issue #23 follow-up, 2026-08-07 (revised same day after a qodo bot review
     # caught a math error in the first revision): this budget is derived, not
     # picked. It has to cover the "Wait for services to be ready" step's own
@@ -59,7 +60,7 @@ jobs:
     #   27.5 + 15 = 42.5 min, rounded up to 45 for a clean number with a
     #   little extra headroom.
     timeout-minutes: 45
-    # Compose v2.30+ on ubuntu-24.04 forbids redefining services imported via
+    # Compose v2.30+ forbids redefining services imported via
     # `include:`. The root docker-compose.yml carries cross-stack `depends_on`
     # overrides, so we chain compose files via -f / COMPOSE_FILE instead.
     env:

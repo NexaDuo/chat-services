@@ -307,8 +307,8 @@ serializes on this live stack; **do not recreate shared containers (especially
     package's vitest suite (`npm test`) — `agents/self-healing/**` and
     `middleware/**` unit tests were previously green locally but never executed by
     any workflow, so a broken test could merge undetected. Split into two jobs
-    because the packages pin different vitest majors (self-healing `^2.1.9`,
-    middleware `^4.1.6`) and neither should wait on the ephemeral stack spin-up
+    because they are separate npm projects (both on vitest 5 since W10a)
+    and neither should wait on the ephemeral stack spin-up
     (nor have a stack flake mask a unit failure or vice versa).
   Monitor both to green (`gh run watch`).
   - **Platform enforcement (issue #162 — configuration and proof recorded in that
