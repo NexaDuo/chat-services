@@ -6,7 +6,7 @@ import { execSync } from 'child_process';
 import dotenv from 'dotenv';
 import crypto from 'crypto';
 
-dotenv.config();
+dotenv.config({ quiet: true });
 
 function maskSensitiveData(text: string): string {
   if (!text) return text;

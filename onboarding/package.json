@@ -14,7 +14,7 @@
     "verify:grafana-access": "node verify-grafana-access.js"
   },
   "dependencies": {
-    "dotenv": "^16.4.5",
+    "dotenv": "^18.0.5",
     "playwright": "^1.63.0",
     "yaml": "^2.9.1"
   },

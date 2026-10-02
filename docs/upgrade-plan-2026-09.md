@@ -1036,3 +1036,34 @@ refused, then `scripts/run-stack.sh validate` and
 `scripts/health-check-all.sh`. The React screens themselves need a logged-in
 browser check by the operator. **R0:** retag `:pre-w10b` to `:local` and
 recreate middleware.
+
+### W10c — Zod 4, Pino 10, dotenv 18 and Commander 15 operational contract
+
+- **Zod 4.6.5** in middleware, self-healing and provisioning. No schema needed
+  rewriting: the code already used the two-argument `z.record`, and
+  `.passthrough()`, `.url()`, `z.coerce` and `.default()` keep working (the
+  first two are deprecated aliases in 4.x). Beyond the unit tests, the real
+  production environment of the running middleware was parsed with the new
+  build in a container without network, and an invalid environment is still
+  rejected key by key. The message text changes with Zod 4 (for example a
+  missing key reads `Invalid input: expected string, received undefined`
+  instead of `Required`); nothing in this repo matches on the old text.
+- **Pino 10.3.1** in middleware and self-healing. Fastify 5.12 accepts it as
+  its logger; the redaction path was exercised in the built self-healing image.
+- **dotenv 18.0.5** in root, provisioning and onboarding. Since 17 it prints a
+  line to stdout on every `config()`; all 13 call sites now pass `quiet: true`
+  so scripts that emit machine-readable output are not polluted.
+- **Commander 15** in provisioning: the CLI builds and its commands still
+  parse `--help`. No tenant was created.
+- `npm audit` is clean for the five packages after `npm audit fix` in root and
+  onboarding (transitive `fast-uri` and `find-my-way`).
+
+Checked on Node 24: middleware `typecheck`, build and 110 tests; self-healing
+`typecheck`, build and 24 tests; root `typecheck`; provisioning build.
+
+Operator apply: tag both current images `:pre-w10c`, build both from the merged
+commit, `dc up -d --no-deps middleware self-healing-agent`. Verify both healthy,
+middleware `/health`, the self-healing config fetch and loop start, a log line
+in each service still in the expected JSON shape, then
+`scripts/run-stack.sh validate` and `scripts/health-check-all.sh`. **R0:** retag
+the `:pre-w10c` images to `:local` and recreate.

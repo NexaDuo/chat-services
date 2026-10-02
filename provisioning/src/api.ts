@@ -1,7 +1,7 @@
 import axios from 'axios';
 import dotenv from 'dotenv';
 
-dotenv.config();
+dotenv.config({ quiet: true });
 
 const MIDDLEWARE_URL = process.env.MIDDLEWARE_URL || 'http://localhost:4000';
 const HANDOFF_SHARED_SECRET = process.env.HANDOFF_SHARED_SECRET;
