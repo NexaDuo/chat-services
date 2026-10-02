@@ -113,7 +113,12 @@ snapshot() {
   # Dashboard file provisioning may finish after the HTTP listener starts.
   until api '/api/search?type=dash-db&limit=1000' | jq -r '.[].uid' | sort > "$work/$phase-dashboards" &&
     cmp -s "$work/expected-dashboards" "$work/$phase-dashboards"; do sleep 1; done
-  api /api/datasources > "$work/$phase-sources.json"
+  # Grafana 13 updates bundled datasource plugins in the background right after
+  # boot; while the PostgreSQL plugin is being swapped the API reports the
+  # legacy type id `postgres`. Wait for it to settle (the surrounding test
+  # deadline bounds this loop) so the comparison below is not racing it.
+  until api /api/datasources > "$work/$phase-sources.json" &&
+    jq -e 'all(.[]; .type != "postgres")' "$work/$phase-sources.json" >/dev/null; do sleep 1; done
   jq -r '.[].uid' "$work/$phase-sources.json" | sort > "$work/$phase-datasources"
   api /api/v1/provisioning/alert-rules > "$work/$phase-rules.json"
   jq -e 'length > 0 and all(.[]; .provenance == "file")' "$work/$phase-rules.json" >/dev/null
