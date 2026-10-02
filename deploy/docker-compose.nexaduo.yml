@@ -11,9 +11,8 @@ x-logging: &default-logging
 
 services:
   evolution-api:
-    # Evolution API's official image moved to evoapicloud/* — atendai/evolution-api
-    # now denies pulls and broke CI/redeploys. Same pinned version (v2.1.1).
-    image: evoapicloud/evolution-api:v2.1.1
+    # W6: official v-prefixed tag; immutable multi-platform index (Prisma R1 rollback).
+    image: evoapicloud/evolution-api:v2.3.7@sha256:1bd8afc4a6cf48822e6cf02469aeae7bd35a12a6b616eacd1291926307f4d339
     restart: unless-stopped
     logging: *default-logging
     # Issue #157 "everything else" tier: measured ~97MiB RSS; limit = 4x
@@ -26,6 +25,8 @@ services:
       DATABASE_PROVIDER: postgresql
       DATABASE_CONNECTION_URI: 'postgresql://postgres:${POSTGRES_PASSWORD}@postgres:5432/evolution'
       CACHE_REDIS_URI: 'redis://:${REDIS_PASSWORD}@redis:6379/2'
+      # 2.3.x enables outbound telemetry by default.
+      TELEMETRY_ENABLED: 'false'
     volumes:
       - 'evolution-instances:/evolution/instances'
     # Root path is Evolution's own app-level status response (JSON:

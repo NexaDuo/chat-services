@@ -22,7 +22,7 @@ Legenda: **T** = tag de versão explícita, ainda mutável; **F** = flutuante (l
 | `deploy/docker-compose.dify.yml:236` | `langgenius/dify-plugin-daemon:0.5.3-local` | T |
 | `deploy/docker-compose.dify.yml:268` | `ubuntu/squid:latest` | F |
 | `deploy/docker-compose.localproxy.yml:61` | `traefik:v3.6.25` | T |
-| `deploy/docker-compose.nexaduo.yml:16` | `evoapicloud/evolution-api:v2.1.1` | T |
+| `deploy/docker-compose.nexaduo.yml:16` | `evoapicloud/evolution-api:v2.3.7@sha256:1bd8afc4a6cf48822e6cf02469aeae7bd35a12a6b616eacd1291926307f4d339` (W6; prior inventory: 2.1.1) | D |
 | `deploy/docker-compose.nexaduo.yml:54` | `${MIDDLEWARE_IMAGE}` | V |
 | `deploy/docker-compose.nexaduo.yml:94` | `grafana/loki:3.2.0` | T |
 | `deploy/docker-compose.nexaduo.yml:126` | `grafana/promtail:3.1.0` | T |
@@ -238,7 +238,7 @@ Todos os pré-passos, gates, validações e rollback comuns acima são parte de 
 | **W4b — Tempo3.0.3** | N, YAML Tempo, dashboards/health se necessário | Novo backup; migrar config monolítica, remover ingester/compactor; `dc up -d --no-deps tempo`; testar ingestão e busca de traces antigos/novos | **R1 obrigatório**, restaurar backup2.10.8; **CI muda** fixture de blocos e config |
 | **W5a — Redis7.2.16-alpine** | S | Drenar filas/parar produtores e consumidores, backup frio redis-data; `dc up -d --no-deps redis`; PING auth, AOF OK, noeviction, tarefas Sidekiq/Celery concluídas após restart | R1 Redis7.2.4+AOF/RDB; CI: simular persistência/reconexão |
 | **W5b — Redis8.10.2-alpine, condicional** | S, documentação de clientes/licença | Só após provar compatibilidade dos clientes atuais; novo backup frio; `dc up -d --no-deps redis`; mesmas verificações, sem aumentar memória implicitamente | R1 dados7.2.16+pin, nunca abrir AOF8 com7; **CI muda**, se falhar adiar até após Chatwoot |
-| **W6 — Evolution2.3.7** | N, `.env.production.example`, fixtures/testes webhook | Backup DB evolution + volume/sessões Redis; suspender autoheal durante migrations; `dc up -d --no-deps evolution-api`; esperar Prisma e reconectar instância; texto/áudio/documento inbound/outbound pelo Chatwoot, sem contatos duplicados | R1 evolution/instances/chaves Redis da instância +2.1.1; **CI muda**, migrations/fixtures, Meta validado live |
+| **W6 — Evolution2.3.7** | N, fixture Prisma/API, CI; contrato abaixo (sem nova chave de operador) | Backup DB evolution + volume/sessões Redis; suspender autoheal durante migrations; `dc up -d --no-deps evolution-api`; esperar Prisma e reconectar instância; texto/áudio/documento inbound/outbound pelo Chatwoot, sem contatos duplicados | R1 evolution/instances/chaves Redis da instância +2.1.1; **CI muda**, migrations/fixtures, Meta validado live |
 | **W7a — Squid7.7 + Alpine3.24.2** | D, futura receita `deploy/squid/Dockerfile` + config/entrypoint, backup-host.sh, exemplos | **Bloqueada para release até imagem reproduzível verificada.** Build Squid7.7 com checksums, ACL e proxy envs; `dc up -d --no-deps dify-ssrf-proxy`; helper Alpine via backup de teste; init chown em fixture, não reexecutar recursivamente live sem necessidade | R0 imagem/config anterior capturada; **CI muda** ACL, HTTP tool e sandbox |
 | **W7b — Dify1.17.1 + sandbox0.2.15 + plugin0.6.10-local** | D, root/isolated/CI override se serviços mudarem, `.env.production.example`, dify-apps, clients/testes middleware/admin | Backup `dify`, `dify_plugin`, api-storage+plugin-storage; sequência detalhada abaixo; checks RAG/Azure/SSE/handoff/config; init Alpine já fixado em W7a | R1 dois DBs+volumes+pins1.13.3/0.2.14/0.5.3-local; **CI muda**, upgrade fixture e readiness |
 | **W8 — Chatwoot4.18.0-ce (3 pins)** | C, ai_agents.rb se necessário, onboarding/fixtures webhook | Backup chatwoot+storage; migrar antes de rails/sidekiq, sequência abaixo; login/admin/Platform API/attachments/WhatsApp/Instagram/handoff | R1 DB+storage+4.13.0-ce; **CI muda**, fixture Rails/CE e onboarding |
@@ -410,3 +410,138 @@ Operator-only apply (use the `dc` function in section 3; coordinate the outage):
    volume (never overlay AOF files), reinstate the immutable 7.2.4 pin above, recreate
    only Redis with `--no-deps`, and repeat startup/verification. Reconcile all writes
    since the backup before reopening traffic. Never touch the Postgres volume.
+
+### W6 — Evolution 2.3.7 operational contract
+
+Compose pins `evoapicloud/evolution-api:v2.3.7@sha256:1bd8afc4a6cf48822e6cf02469aeae7bd35a12a6b616eacd1291926307f4d339`.
+The CI/R1 old pin is `evoapicloud/evolution-api:v2.1.1@sha256:c7d72f0795341498f1d61751b8f35ab48037683ee50450a445b0079c1509c25e`.
+Both multi-platform indexes were reverified with `docker buildx imagetools inspect`;
+the registry tag is **v2.3.7**, not `2.3.7` (the latter does not exist).
+
+Reviewed [2.2.0 notes including 2.1.2](https://github.com/evolution-foundation/evolution-api/releases/tag/2.2.0),
+[2.2.1](https://github.com/evolution-foundation/evolution-api/releases/tag/2.2.1),
+[2.2.2](https://github.com/evolution-foundation/evolution-api/releases/tag/2.2.2),
+[2.2.3](https://github.com/evolution-foundation/evolution-api/releases/tag/2.2.3),
+and [2.3.0](https://github.com/evolution-foundation/evolution-api/releases/tag/2.3.0),
+[2.3.1](https://github.com/evolution-foundation/evolution-api/releases/tag/2.3.1),
+[2.3.2](https://github.com/evolution-foundation/evolution-api/releases/tag/2.3.2),
+[2.3.3](https://github.com/evolution-foundation/evolution-api/releases/tag/2.3.3),
+[2.3.4](https://github.com/evolution-foundation/evolution-api/releases/tag/2.3.4),
+[2.3.5](https://github.com/evolution-foundation/evolution-api/releases/tag/2.3.5),
+[2.3.6](https://github.com/evolution-foundation/evolution-api/releases/tag/2.3.6),
+[2.3.7](https://github.com/evolution-foundation/evolution-api/releases/tag/2.3.7).
+These cover Prisma/index migrations, webhook retries, cache fixes, Chatwoot media
+and contact deduplication, LID/JID handling, Baileys 7.0.0-rc.9, and shell-injection
+and unauthenticated `/assets` traversal fixes. 2.3.1 removes
+`CONFIG_SESSION_PHONE_VERSION`; we do not supply it.
+
+Configuration evidence: [2.3.7 example](https://github.com/evolution-foundation/evolution-api/blob/2.3.7/.env.example),
+[parser](https://github.com/evolution-foundation/evolution-api/blob/2.3.7/src/config/env.config.ts),
+[Dockerfile](https://github.com/evolution-foundation/evolution-api/blob/2.3.7/Dockerfile).
+The upstream `2.1.1`/`v2.1.1` source tags are unavailable; the comparison uses
+[version-2.1.1 source at 5ebebbf](https://github.com/evolution-foundation/evolution-api/tree/5ebebbf211b84f09315eb20e416ad5e5b8c6ef37)
+and the immutable old image in the migration test.
+
+- Add only `TELEMETRY_ENABLED=false`: the new parser defaults it on, and
+  [sendTelemetry](https://github.com/evolution-foundation/evolution-api/blob/2.3.7/src/utils/sendTelemetry.ts)
+  posts route/version/timestamp to `https://log.evolution-api.com/telemetry`.
+  No new operator key; `.env.production.example` is unchanged.
+- Both Dockerfiles bake `.env.example` into the image; dotenv supplies unset values.
+  Redis remains enabled, prefix `evolution`, TTL 604800, save-instances false,
+  local cache false. `DATABASE_CONNECTION_CLIENT_NAME=evolution_exchange` and
+  `DATABASE_SAVE_DATA_{INSTANCE,NEW_MESSAGE,CONTACTS,CHATS,LABELS,HISTORIC}`,
+  `DATABASE_SAVE_MESSAGE_UPDATE`, `DATABASE_SAVE_IS_ON_WHATSAPP` remain true
+  (WhatsApp lookup retention seven days). Keep those defaults; no redundant env
+  overrides. Our explicit URI keeps Redis DB2 and Postgres `evolution`/public,
+  overriding the new example's different database/schema. Never change the client
+  name casually: startup filters persisted instances by it.
+- `DATABASE_DELETE_MESSAGE=true` now selects logical deletion. Retain it: the old
+  code recorded deletion events without physically deleting message rows; setting
+  false would introduce physical deletion. Actual WhatsApp deletion is not tested.
+  `CHATWOOT_ENABLED=false` remains the bundled default: no existing integration
+  or session is configured. Enabling/configuring the WhatsApp→Chatwoot bridge is a
+  separate operator prerequisite before claiming that product path works.
+- Keep HTTP 8080, `GET /` JSON/version healthcheck, 512MiB limit and
+  `/evolution/instances`. Both images default to root; no ownership migration.
+  Node moves 20→24. The manager remains at `/manager` (new manager assets), enabled
+  unless `SERVER_DISABLE_MANAGER=true`; its API still requires `apikey`.
+  The [router](https://github.com/evolution-foundation/evolution-api/blob/2.3.7/src/api/routes/index.router.ts)
+  also fetches the latest WhatsApp Web version on `/`, so outbound lookup latency
+  can affect this existing probe. The test uses a new private bridge with egress,
+  no published ports, no real WhatsApp credentials or connection.
+- The [entrypoint](https://github.com/evolution-foundation/evolution-api/blob/2.3.7/Docker/scripts/deploy_database.sh)
+  runs Prisma deploy and generate before serving HTTP, exiting on failure.
+  Migrations are forward-only: an old image against the upgraded DB is not R1.
+  Keep autoheal stopped throughout migration and readiness validation.
+- `middleware/src/handlers/admin.ts` removed Evolution provisioning, discovery and
+  status calls in #31; `config.ts` only retains optional API key/base URL fields.
+  There are no active middleware Evolution routes/payloads to adapt. Existing admin
+  tests/Playwright fixtures use these configuration fields, not a version-specific
+  Evolution response. CI overrides and root Compose inherit the pin; no version
+  assertion changes are needed. Historical logs/plans remain historical; the
+  AGENTS.md statement “v2.1+” still holds.
+
+`scripts/tests/test-evolution.sh` derives image/environment/healthcheck from Compose,
+uses generated credentials and random disposable Postgres/Redis/instances resources,
+boots the pinned old image to its 42 migrations, and creates an `EVOLUTION` instance
+(no Baileys connection), settings and a disabled webhook through authenticated HTTP.
+It checks preserved identity/configuration, version, rejected unauthenticated access,
+completed additional migrations, the real healthcheck, and unchanged migration IDs/
+checksums/timestamps after a new-image restart. Pulls precede the 210s deadline plus
+20s kill/cleanup allowance. Logs/responses are not dumped because upstream may print
+credentials. Two completed local runs passed in 26.2s and 26.7s after pulls,
+with 42→57 migrations and successful cleanup. The earlier no-egress experiment
+exited with SIGSEGV in the old image after migration; its cause was not established.
+This is an internal API/schema regression; Playwright N/A.
+
+Operator-only apply (future work; use section 3's `dc`, coordinate the outage):
+
+1. Pass the four CI gates/reviews, record the old immutable pin/config, and
+   `dc pull evolution-api`. Block Evolution ingress/provisioning writers. Run
+   `dc stop autoheal evolution-api`; confirm Evolution is exited before backup.
+   Do not stop/recreate Postgres or Redis. The operator-verified baseline is 42
+   migrations ending `20240906202019_add_headers_on_webhook_config`, no instances
+   or other table rows, empty Redis DB2 and empty instances volume; if that changes,
+   preserve the new session/Redis state before proceeding.
+2. Take a fresh DB dump and **cold** instances archive using the existing backup
+   script with a wave-specific override:
+   `BACKUP_VOLUME_SUFFIXES="chatwoot-storage dify-api-storage evolution-instances grafana-data" scripts/backup-host.sh`.
+   This runs `pg_dump --clean --if-exists` for DB `evolution`; verify its dump is
+   present, `gzip -t` passes, and the migration/table counts match the baseline.
+   Verify the archive selected `chat-services_evolution-instances`, its tar integrity
+   and off-host copy. Save exact paths for R1; do not use June's historical dumps.
+   If Redis DB2 is no longer empty, stop here and arrange an instance-scoped
+   DUMP/PTTL backup/restore with writers stopped; never FLUSHALL or restore the
+   shared Redis volume over Chatwoot/Dify data.
+3. `dc up -d --no-deps evolution-api`. Wait for Prisma deploy/generate success and
+   HTTP readiness; inspect logs privately (startup may contain a database URI).
+   Query DB `evolution`: `SELECT count(*) FROM "_prisma_migrations";` must exceed
+   42, and `SELECT count(*) FROM "_prisma_migrations" WHERE finished_at IS NULL OR
+   rolled_back_at IS NOT NULL;` must be zero. Compare instance/config counts.
+   Verify `/` reports 2.3.7, the Compose healthcheck succeeds, authenticated
+   `/instance/fetchInstances` works and the same request without `apikey` is 401.
+   Supply the existing API key securely; do not paste credentials or responses into
+   public logs/issues. Confirm the image digest and no OOM/restart loop.
+4. `dc restart evolution-api`, repeat readiness/auth/data checks and require no
+   new/failed migration rows. Run `scripts/run-stack.sh validate` and
+   `scripts/health-check-all.sh`, then `dc start autoheal` and reopen ingress.
+   Observe one load/backup cycle, including 512MiB memory headroom.
+5. **R1:** block writers again, `dc stop autoheal evolution-api`, archive the failed
+   post-upgrade DB/volume for reconciliation. Restore only DB `evolution` from the
+   fresh dump: terminate its connections, drop/recreate **that DB only** in the
+   existing Postgres container, then
+   `gzip -dc "$EVOLUTION_DUMP" | dc exec -T postgres psql -v ON_ERROR_STOP=1 -U postgres -d evolution`
+   with `set -o pipefail`. Restore the matching cold instances archive into an empty
+   replacement volume, never overlay files; restore only Evolution Redis keys if
+   backed up. Reinstate the old v2.1.1 tag@digest above and old config/volume binding,
+   `dc up -d --no-deps evolution-api`, verify the 42-migration baseline, data, auth
+   and health, then resume autoheal/ingress. No global restore, shared Postgres
+   recreation or shared Redis flush. Writes after backup require reconciliation.
+
+Production was not touched by this worktree task. No WhatsApp instance exists, so
+Meta/Baileys session establishment/reconnection, real webhook delivery into Chatwoot,
+text/audio/document/media inbound/outbound and contact deduplication **cannot be
+validated live** now. The synthetic pass is not evidence for those flows; validate
+terminal sent/delivered states through Chatwoot when an operator provisions a real
+instance. Hosted CI, production apply, restore rehearsal and observation remain
+operator release gates.
