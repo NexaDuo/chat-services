@@ -7,10 +7,10 @@ export REDIS_PASSWORD="$(openssl rand -hex 24)"
 config=$(docker compose --env-file /dev/null -p w5a-config \
   -f "$ROOT/deploy/docker-compose.shared.yml" config --format json 2>/dev/null)
 export REDIS_TEST_CONFIG="$(jq -c '.services.redis' <<<"$config")"
-export REDIS_OLD_IMAGE='redis:7.2.4-alpine@sha256:c8bb255c3559b3e458766db810aa7b3c7af1235b204cfdb304e79ff388fe1a5a'
+export REDIS_OLD_IMAGE='redis:7.2.16-alpine@sha256:29e8589c3f9ba699b5f7aa4b3c7733c58852a3626439e619aa0ee78de08c6ca0'
 image=$(jq -er '.image' <<<"$REDIS_TEST_CONFIG")
 # Constrain major.minor, permit patch updates only, and require an index digest.
-[[ $image =~ ^redis:7\.2\.[0-9]+-alpine@sha256:[a-f0-9]{64}$ ]]
+[[ $image =~ ^redis:8\.10\.[0-9]+-alpine@sha256:[a-f0-9]{64}$ ]]
 docker pull "$REDIS_OLD_IMAGE" >/dev/null
 docker pull "$image" >/dev/null
 export REDIS_TEST_NAME="w5a-redis-$(cat /proc/sys/kernel/random/uuid)"

@@ -120,6 +120,8 @@ docker run -d --name "$proj-redis" --network "$proj" --network-alias redis \
   sh -c 'exec redis-server --requirepass "$REDIS_PASSWORD"' >/dev/null
 # TCP, not the socket: the image's init phase runs a socket-only server first.
 wait_for Postgres 60 docker exec "$proj-postgres" pg_isready -q -h 127.0.0.1 -U postgres
+# The broker version the clients are exercised against (from the compose pin).
+log "redis $(docker exec -e REDISCLI_AUTH="$REDIS_PASSWORD" "$proj-redis" redis-cli --no-auth-warning info server | tr -d '\r' | sed -n 's/^redis_version://p'), postgres $(docker exec "$proj-postgres" psql -U postgres -Atc 'show server_version')"
 docker exec "$proj-postgres" psql -U postgres -Atc 'create database chatwoot' >/dev/null
 gzip -dc "$dump" | psql_db >/dev/null 2>"$logdir/restore.err" || die "chatwoot restore failed"
 

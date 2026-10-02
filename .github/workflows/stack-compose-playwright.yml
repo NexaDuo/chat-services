@@ -109,7 +109,7 @@ jobs:
         run: bash scripts/tests/test-grafana.sh
 
       # Internal broker persistence/reconnection; Playwright N/A.
-      - name: Test isolated Redis 7.2 patch upgrade (under 120s after pulls)
+      - name: Test isolated Redis 7.2 to 8.10 upgrade (under 120s after pulls)
         run: bash scripts/tests/test-redis.sh
 
       # Synthetic Prisma migration/config persistence; no WhatsApp session required.

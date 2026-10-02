@@ -863,3 +863,62 @@ Operator-only apply (use section 3's `dc`, from the main checkout):
    `dc up -d --no-deps chatwoot-rails chatwoot-sidekiq`; verify. Messages that
    arrived after the backup are lost in Chatwoot and must be recovered from the
    channels.
+
+### W5b — Redis 8.10.2 operational contract
+
+Compose pins `redis:8.10.2-alpine@sha256:3811787313eba226a2ef38658c6ccb91cd5e110edc89c37767de373120a0e5a0`
+(index digest, verified with `docker buildx imagetools inspect`; 8.10.2 is the
+newest 8.10 patch, released 2026-09-17). Flags, `maxmemory` 150mb, `noeviction`,
+AOF, the 256 MiB limit and the healthcheck are unchanged. W5b was deferred until
+after W8 so the evidence would cover the client versions that now run.
+
+Client compatibility, exercised from this branch against a real 8.10.2 server
+(each rehearsal prints the broker version it ran against):
+
+- **Chatwoot 4.18.0-ce** (Sidekiq 7.3.10): `scripts/rehearse-chatwoot-upgrade.sh`
+  passes on a copy of production data, including Sidekiq registration, inline
+  and queued jobs, and the Agent Bot delivery.
+- **Dify 1.17.1** (Celery worker, API cache and locks, plugin daemon):
+  `scripts/rehearse-dify-upgrade.sh --invoke` passes, including the migration
+  lock, the Celery ping, a document indexed by the worker and one real request
+  per app.
+- **Evolution 2.3.7**: `scripts/tests/test-evolution.sh` passes with the
+  compose-pinned Redis as its cache.
+- **Persistence**: `scripts/tests/test-redis.sh` now boots 7.2.16 with the
+  compose flags, writes strings, lists, sorted sets, hashes and streams with
+  TTLs in DBs 0/1/2, forces a multipart AOF rewrite plus an incremental tail,
+  and reopens the same volume with 8.10.x; everything is preserved across the
+  upgrade and a second restart.
+
+What changes with 8.x:
+
+- **Licence**: Redis 8 is offered under RSALv2, SSPLv1 or AGPLv3. This stack
+  only runs the unmodified image as an internal broker and does not offer Redis
+  as a service, so no option restricts it; recorded for the operator.
+- **Bundled modules**: the image now loads search, JSON, time series,
+  probabilistic and vector set modules. Nothing here uses them. Idle footprint
+  rises from about 10 MiB to about 28 MiB of the 256 MiB limit.
+- **One-way data files**: an 8.x server can read the 7.2 AOF/RDB, but 7.2 must
+  never be started on files written by 8.x. Rollback is the cold backup.
+
+Operator-only apply (use section 3's `dc`; same shape as W5a):
+
+1. Four CI gates and both reviews pass. `dc pull redis`. Record key counts per
+   DB.
+2. Kill switch on. Stop `autoheal`, then `self-healing-agent`, `middleware`,
+   `evolution-api`; then `chatwoot-rails` and `dify-api`. Confirm the Sidekiq
+   and Celery queues are quiescent without purging anything; stop
+   `chatwoot-sidekiq`, `dify-worker`, `dify-plugin-daemon`.
+3. Authenticated `SAVE`, then `dc stop redis`; confirm it exited with code 0.
+   Cold-archive the whole `redis-data` volume; verify the archive.
+4. `dc up -d --no-deps redis`. Verify the version, authenticated `PING`,
+   `NOAUTH` without credentials, `loading:0`, AOF enabled with last write `ok`,
+   `maxmemory` 157286400 with `noeviction`, and the key counts.
+5. Start `dify-plugin-daemon`, then `dify-worker chatwoot-sidekiq`, then
+   `dify-api chatwoot-rails`, then `evolution-api middleware
+   self-healing-agent`, then `autoheal`. Kill switch off.
+   `scripts/run-stack.sh validate` and `scripts/health-check-all.sh`; confirm
+   Sidekiq and Celery process work.
+6. **R1:** quiesce again, stop Redis, set the 8.x volume aside, restore the
+   cold archive into an empty volume, reinstate the 7.2.16 pin, recreate only
+   Redis. Never open 8.x files with 7.2. Never touch the Postgres volume.
