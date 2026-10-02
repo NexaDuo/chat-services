@@ -1106,7 +1106,10 @@ pnpm 10 (format 9.0, from 6.0) and `packageManager` now pins pnpm 10.34.6.
   (checked 2026-10-02). Traffic goes tunnel to Traefik, as AGENTS.md describes.
 - **No deploy.** Nothing here calls the Cloudflare API. Deploying the worker
   would change production routing and is a separate decision, not part of this
-  wave.
+  wave. `wrangler.jsonc` still lists the production routes, so the package's
+  `deploy` script now refuses to run; the real command is `deploy:force`.
+- The tenant slug is now URL-encoded when the worker queries the middleware.
+  `worker-configuration.d.ts` was not regenerated (types only).
 - **CI**: a new `edge-worker` job in `unit-tests.yml` installs with the frozen
   lockfile and bundles the worker with `wrangler deploy --dry-run` (no
   credentials). The worker has no unit tests; the bundle (61 KiB) only proves

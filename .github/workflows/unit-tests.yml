@@ -84,7 +84,8 @@ jobs:
   # W11: the Cloudflare worker has no test suite and is not deployed by any
   # workflow. Bundling it with the locked toolchain at least proves the code
   # still builds against the pinned Hono and Wrangler. No Cloudflare credentials
-  # are involved: `--dry-run` never talks to the API.
+  # are involved: `--dry-run` never talks to the API. Keep it that way: never
+  # add Cloudflare secrets or a real deploy step to this job.
   edge-worker:
     runs-on: ubuntu-26.04
     timeout-minutes: 10
@@ -101,6 +102,8 @@ jobs:
 
       - name: Install dependencies (pnpm from packageManager, frozen lockfile)
         working-directory: edge/cloudflare-worker
+        env:
+          COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
         run: |
           corepack enable
           pnpm install --frozen-lockfile

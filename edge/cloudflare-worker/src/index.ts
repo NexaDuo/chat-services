@@ -56,7 +56,7 @@ async function resolveTenant(tenant: string, env: Bindings): Promise<TenantData 
 
   // 2. Fetch from Middleware
   try {
-    const response = await fetch(`${env.MIDDLEWARE_URL}/resolve-tenant?subdomain=${tenant}`, {
+    const response = await fetch(`${env.MIDDLEWARE_URL}/resolve-tenant?subdomain=${encodeURIComponent(tenant)}`, {
       headers: {
         'Authorization': `Bearer ${env.SHARED_SECRET}`
       }
