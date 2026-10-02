@@ -700,13 +700,21 @@ runs the cutover's migration command, boots everything, and checks: Alembic
 revision moved and is stable on a second boot, row counts unchanged, no legacy
 model types left, inner API key equal between API and plugin daemon, console
 login (password reset in the copy only) listing apps, an active model provider
-and the installed plugins. With `--invoke` it sends one message or workflow
-run per app that has a service API token, using the copied credentials against
-the real model provider.
+and the installed plugins. It then creates a text document in the first
+knowledge base, waits for the worker to index it and retrieves it by keyword.
+With `--invoke` it sends one message or workflow run per app that has a service
+API token, using the copied credentials against the real model provider. The
+copy has internet egress and carries the apps' real tool configuration, so
+`--invoke` refuses to run when an app has non-builtin tools or HTTP nodes
+unless they were reviewed (`--allow-external-tools`). Today the apps only use
+the builtin `current_time` tool.
 
 Result on 2026-10-02 against the 03:34 dumps: migration in 15 to 18 seconds
 (`6b5f9f8b1a2c` to `c3f1a9b2e6d4`); 12 table counts and both plugin counts
-unchanged; console lists 3 apps, 1 active provider, 2 plugins; the agent-chat
+unchanged; console lists 3 apps, 1 active provider, 2 plugins; a document was
+indexed by the worker and retrieved (the knowledge base is in `economy`
+keyword mode and no embedding model is configured, so pgvector indexing is
+**not** exercised and stays unproven on either version); the agent-chat
 app answered and the self-healing workflow returned `root_cause`, `severity`,
 `suggested_fix`; no restart or OOM; api ~505 MiB, worker ~495 to 865 MiB,
 plugin daemon ~240 MiB, all inside their limits. About 95 to 115 seconds end
@@ -731,16 +739,18 @@ Operator-only apply (use section 3's `dc`, from the main checkout):
    Verify `gzip -t` on the `dify` and `dify_plugin` dumps and on both Dify
    volume archives; note their paths for R1. Record the row counts and the
    Alembic revision.
-4. Migrate once: `dc run --rm --no-deps -e MODE=migration -e
-   MIGRATION_ENABLED=true dify-api`. It must exit 0 and the revision must move.
+4. Migrate once: `dc run --rm --no-deps -l traefik.enable=false -l
+   autoheal=false -e MODE=migration -e MIGRATION_ENABLED=true dify-api`. The
+   labels keep the one-off container out of the live Traefik router and away
+   from autoheal. It must exit 0 and the revision must move.
 5. `dc up -d --no-deps dify-sandbox dify-plugin-daemon`, wait for
    `http://dify-plugin-daemon:5002/health/check`, then `dc up -d --no-deps
    dify-api dify-worker dify-web`. The API re-runs the migration command on
    boot; it must be a no-op. With `--no-deps`, `dify-init` does not run: storage
    ownership is already uid 1001 and is not touched.
 6. Verify: three services healthy, revision unchanged since step 4, row counts
-   equal to step 3, no legacy model types, inner API key equal on API and
-   daemon, no restart loop or OOM. Send one message through the service API to
+   equal to step 3, no legacy model types, inner API key equal and non-empty
+   on API and daemon, no restart loop or OOM. Send one message through the service API to
    prove credentials and the plugin runtime in production. Then turn the kill
    switch off, `dc start autoheal`, `scripts/run-stack.sh validate` and
    `scripts/health-check-all.sh`. Console login through the tunnel and the next
@@ -750,5 +760,7 @@ Operator-only apply (use section 3's `dc`, from the main checkout):
    databases in the existing Postgres and restore the step 3 dumps with
    `ON_ERROR_STOP=1`; empty and restore both Dify volumes from their archives;
    revert the compose change (pins 1.13.3 / 0.2.14 / 0.5.3-local); `dc up -d
-   --no-deps` the same services; verify; kill switch off. Writes made after
-   the backup are lost and must be reconciled from Chatwoot.
+   --no-deps` the same services; verify; kill switch off. Redis is not
+   restored: Dify keeps only queue and cache state there, and with the workers
+   stopped before the backup no job is pending. Writes made after the backup
+   are lost and must be reconciled from Chatwoot.

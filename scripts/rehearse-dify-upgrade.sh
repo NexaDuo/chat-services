@@ -13,8 +13,11 @@
 #   scripts/rehearse-dify-upgrade.sh --keep     # leave everything up for inspection
 #
 # --invoke calls the model provider with the production credentials (one short
-# message). It is the only check that proves credentials decrypt and the plugin
-# runtime works after the upgrade, so run it before a real cutover.
+# message or workflow run per app). It is the only check that proves
+# credentials decrypt and the plugin runtime works after the upgrade, so run it
+# before a real cutover. The copy has internet egress: --invoke refuses to run
+# when an app has non-builtin tools or HTTP nodes, unless you reviewed them and
+# pass --allow-external-tools.
 #
 # Requires: Docker/Compose, jq and openssl; the root .env; dumps from
 # scripts/backup-host.sh. Logs go to $REHEARSAL_LOG_DIR (mode 700), never to
@@ -26,18 +29,19 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 : "${DUMPS_DIR:=$HOME/nexaduo-local/dumps}"
 : "${PROD_PROJECT:=chat-services}"
 : "${REHEARSAL_LOG_DIR:=$HOME/nexaduo-local/rehearsal}"
-invoke=0 keep=0
+invoke=0 keep=0 allow_tools=0
 for arg in "$@"; do
   case "$arg" in
     --invoke) invoke=1 ;;
     --keep) keep=1 ;;
+    --allow-external-tools) allow_tools=1 ;;
     *) echo "unknown argument: $arg" >&2; exit 2 ;;
   esac
 done
 
 log() { echo "[rehearsal] $*"; }
 die() { echo "[rehearsal] FAIL: $*" >&2; exit 1; }
-newest() { ls -1 "$DUMPS_DIR"/$1 2>/dev/null | sort | tail -n 1; }
+newest() { { ls -1 "$DUMPS_DIR"/$1 2>/dev/null || true; } | sort | tail -n 1; }
 
 [[ -f "$ENV_FILE" ]] || die "missing $ENV_FILE"
 dify_dump=$(newest 'dify-2*.sql.gz'); plugin_dump=$(newest 'dify_plugin-2*.sql.gz')
@@ -49,6 +53,27 @@ docker volume inspect "${PROD_PROJECT}_dify-plugin-storage" >/dev/null 2>&1 \
   || die "volume ${PROD_PROJECT}_dify-plugin-storage not found"
 
 proj="dify-rehearsal-$(openssl rand -hex 4)"
+work="" logdir=""
+cleanup() {
+  local status=$?
+  trap - EXIT
+  if (( keep )); then
+    log "kept: project $proj (network, volumes, containers); logs in $logdir"
+    log "remove with: docker ps -aq --filter name=$proj | xargs -r docker rm -fv; docker volume ls -q | grep ^$proj | xargs -r docker volume rm; docker network rm $proj"
+  else
+    dc down --timeout 5 >/dev/null 2>&1 || true
+    docker rm -fv "$proj-postgres" "$proj-redis" >/dev/null 2>&1 || true
+    docker volume rm "${proj}_dify-api-storage" "${proj}_dify-plugin-storage" "${proj}_pg" >/dev/null 2>&1 || true
+    docker network rm "$proj" >/dev/null 2>&1 || true
+  fi
+  [[ -z "$work" ]] || rm -rf "$work"
+  (( status == 0 )) || log "failed; service logs (may contain secrets) are in $logdir"
+  exit "$status"
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
 work=$(mktemp -d)
 mkdir -p -m 700 "$REHEARSAL_LOG_DIR"
 logdir="$REHEARSAL_LOG_DIR/$proj"; mkdir -m 700 "$logdir"
@@ -90,25 +115,6 @@ dc() {
     -f deploy/docker-compose.dify.yml -f "$work/override.yml" "$@")
 }
 
-cleanup() {
-  local status=$?
-  trap - EXIT
-  if (( keep )); then
-    log "kept: project $proj (network, volumes, containers); logs in $logdir"
-    log "remove with: docker ps -aq --filter name=$proj | xargs -r docker rm -fv; docker volume ls -q | grep ^$proj | xargs -r docker volume rm; docker network rm $proj"
-  else
-    dc down --timeout 5 >/dev/null 2>&1 || true
-    docker rm -fv "$proj-postgres" "$proj-redis" >/dev/null 2>&1 || true
-    docker volume rm "${proj}_dify-api-storage" "${proj}_dify-plugin-storage" "${proj}_pg" >/dev/null 2>&1 || true
-    docker network rm "$proj" >/dev/null 2>&1 || true
-  fi
-  rm -rf "$work"
-  (( status == 0 )) || log "failed; service logs (may contain secrets) are in $logdir"
-  exit "$status"
-}
-trap cleanup EXIT
-trap 'exit 130' INT
-trap 'exit 143' TERM
 
 psql_db() { docker exec -i "$proj-postgres" psql -v ON_ERROR_STOP=1 -U postgres -d "$1" -At "${@:2}"; }
 wait_for() { # description, seconds, command...
@@ -189,6 +195,8 @@ log "row counts preserved: $(tr '\n' ' ' < "$work/after.txt")"
 api_key=$(dc exec -T dify-api python -c 'import hashlib; from configs import dify_config as c; print(hashlib.sha256(c.INNER_API_KEY_FOR_PLUGIN.encode()).hexdigest())' 2>/dev/null | tail -n 1)
 daemon_key=$(dc exec -T dify-plugin-daemon sh -c 'printf %s "$DIFY_INNER_API_KEY" | sha256sum' | cut -d' ' -f1)
 [[ -n "$api_key" && "$api_key" == "$daemon_key" ]] || die "inner API key differs between dify-api and the plugin daemon"
+empty_hash=$(printf '' | sha256sum | cut -d' ' -f1)
+[[ "$api_key" != "$empty_hash" ]] || die "inner API key is empty (DIFY_PLUGIN_DIFY_INNER_API_KEY unset)"
 for svc in dify-api dify-worker; do
   [[ "$(dc exec -T "$svc" sh -c 'echo "$VECTOR_STORE"')" == pgvector ]] || die "$svc: VECTOR_STORE is not pgvector"
 done
@@ -231,11 +239,47 @@ models = get('/workspaces/current/models/model-types/llm')['data']
 assert any(m.get('models') for m in models), 'no llm model listed'
 plugins = get('/workspaces/current/plugin/list?page=1&page_size=100')
 assert len(plugins['plugins']) == int(os.environ['EXPECT_PLUGINS']), ('plugins', len(plugins['plugins']))
-print(f'apps={apps["total"]} active_providers={len(providers)} llm_providers={len(models)} plugins={len(plugins["plugins"])}')
+# Document ingestion runs in the worker: create a text document in the first
+# knowledge base (same indexing technique it already uses), wait for the
+# worker to index it, and retrieve it by keyword. Copy only; no model call
+# unless the knowledge base itself is configured for embeddings.
+ingest = 'no knowledge base'
+datasets = get('/datasets?page=1&limit=20')['data']
+if datasets:
+    import time
+    ds, api = datasets[0], 'http://127.0.0.1:5001/v1'
+    r = c.post(f'{base}/datasets/api-keys', headers=headers)
+    assert r.status_code == 200, f'dataset api key {r.status_code}'
+    auth = {'Authorization': 'Bearer ' + r.json()['token']}
+    marker = 'zebra-quartzo-7731'
+    r = c.post(f"{api}/datasets/{ds['id']}/document/create-by-text", headers=auth, json={
+        'name': 'upgrade-rehearsal.txt', 'text': f'O marcador {marker} identifica o ensaio de upgrade.',
+        'indexing_technique': ds['indexing_technique'], 'process_rule': {'mode': 'automatic'}})
+    assert r.status_code == 200, f'create-by-text {r.status_code}'
+    batch, deadline = r.json()['batch'], time.monotonic() + 120
+    while True:
+        status = c.get(f"{api}/datasets/{ds['id']}/documents/{batch}/indexing-status", headers=auth).json()['data'][0]
+        if status['indexing_status'] in ('completed', 'error') or time.monotonic() > deadline: break
+        time.sleep(2)
+    assert status['indexing_status'] == 'completed', status['indexing_status']
+    r = c.post(f"{api}/datasets/{ds['id']}/retrieve", headers=auth, json={'query': marker, 'retrieval_model': {
+        'search_method': 'keyword_search', 'reranking_enable': False, 'top_k': 3, 'score_threshold_enabled': False}})
+    assert r.status_code == 200, f'retrieve {r.status_code}'
+    assert any(marker in rec['segment']['content'] for rec in r.json()['records']), 'marker not retrieved'
+    ingest = f"{ds['indexing_technique']} indexed by the worker and retrieved"
+print(f'apps={apps["total"]} active_providers={len(providers)} llm_providers={len(models)} plugins={len(plugins["plugins"])} ingest={ingest}')
 PY
 log "console: $(tail -n 1 "$logdir/console.log")"
 
 if (( invoke )); then
+  # The copy carries the apps' real tool configuration and this network has
+  # internet egress, so a tool with a public URL could act on production.
+  # Refuse unless every agent tool is a builtin and no workflow has an HTTP node.
+  external=$(psql_db dify -c "select count(*) from app_model_configs c, json_array_elements(coalesce((c.agent_mode::json)->'tools', '[]'::json)) t where t->>'provider_type' <> 'builtin'")
+  http_nodes=$(psql_db dify -c "select count(*) from workflows where graph like '%\"type\": \"http-request\"%' or graph like '%\"type\":\"http-request\"%'")
+  if [[ "$external" != 0 || "$http_nodes" != 0 ]] && (( ! allow_tools )); then
+    die "--invoke: apps use non-builtin tools ($external) or HTTP nodes ($http_nodes) that could reach production; review them, then pass --allow-external-tools"
+  fi
   # One message (or workflow run) per app that has a service API token. Tokens are read from the
   # rehearsal copy and passed through the environment, never printed.
   psql_db dify -F ' ' -c "select distinct on (a.id) a.mode, t.token from apps a join api_tokens t on t.app_id = a.id and t.type = 'app' order by a.id" \

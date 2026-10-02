@@ -109,6 +109,8 @@ preflight() {
     die "$ENV_FILE has a localhost CHATWOOT_FRONTEND_URL (dev default). Production must be https://chat.nexaduo.com."
   fi
   grep -qE '^TUNNEL_TOKEN=.' "$ENV_FILE" || warn "$ENV_FILE has no TUNNEL_TOKEN — the cloudflared tunnel will not register."
+  # Empty, the Dify API and its plugin daemon would both accept an empty inner key.
+  grep -qE '^DIFY_PLUGIN_DIFY_INNER_API_KEY=.' "$ENV_FILE" || die "$ENV_FILE has no DIFY_PLUGIN_DIFY_INNER_API_KEY (see .env.production.example)."
   docker network inspect "$NETWORK" >/dev/null 2>&1 || { log "creating docker network $NETWORK"; docker network create "$NETWORK"; }
   log "preflight OK (env=$ENV_FILE, network=$NETWORK)"
 }
