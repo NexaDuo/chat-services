@@ -6,7 +6,7 @@
   "scripts": {
     "build": "tsc",
     "start": "node --require ./dist/telemetry.js dist/index.js",
-    "dev": "node -r ts-node/register -r ./src/telemetry.ts src/index.ts",
+    "dev": "tsx --require ./src/telemetry.ts src/index.ts",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },
@@ -28,8 +28,8 @@
   "devDependencies": {
     "@types/node": "^24.19.1",
     "@types/pg": "^8.23.1",
-    "ts-node": "^10.9.2",
-    "typescript": "^5.4.5",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
     "vitest": "^5.0.3"
   },
   "engines": {
