@@ -6,7 +6,7 @@ image=$(sed -n 's/^    image: \(grafana\/tempo:.*\)$/\1/p' "$ROOT/deploy/docker-
 [[ $image =~ ^grafana/tempo:3\.[^@]+@sha256:[a-f0-9]{64}$ ]]
 bridge_image=grafana/tempo:2.10.8@sha256:f0561deb1c68ec44d6e6e7e4487f30106c4e5e768642077695b37958b105812a
 old_image=grafana/tempo:2.6.1@sha256:ef4384fce6e8ad22b95b243d8fc165628cda655376fd50e7850536ad89d71d50
-probe_image=alpine:3.21@sha256:ce64758a109eb420d874a118f87920e625e12d3634e03b4a5573fd9f6e5d3507
+probe_image=alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
 # Network pulls are outside the bounded test, including on cold CI runners.
 if [[ ${1:-} != --bounded ]]; then
   for img in "$image" "$old_image" "$bridge_image" "$probe_image"; do docker pull "$img" >/dev/null; done

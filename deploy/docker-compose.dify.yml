@@ -29,7 +29,7 @@ x-logging-forensic: &forensic-logging
 
 services:
   dify-init:
-    image: alpine:3.19
+    image: alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
     restart: "no"
     logging: *default-logging
     # One-shot chown; negligible footprint. 128m floor (issue #157).

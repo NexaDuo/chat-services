@@ -53,7 +53,7 @@ set -euo pipefail
 #   evolution-instances → WhatsApp session/auth state (loss = re-scan QR code)
 #   grafana-data        → Grafana users/custom dashboards not covered by provisioning
 : "${BACKUP_VOLUME_SUFFIXES:=chatwoot-storage dify-api-storage evolution-instances grafana-data}"
-: "${BACKUP_HELPER_IMAGE:=alpine:3.20}"  # tiny image to tar volumes read-only
+: "${BACKUP_HELPER_IMAGE:=alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6}"  # tiny image to tar volumes read-only
 : "${ENV_FILE:=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.env}"  # production secrets, not in git
 
 log() { echo "[$(date -Is)] $*"; }

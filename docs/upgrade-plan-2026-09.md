@@ -8,14 +8,14 @@ Data da consulta: **27/09/2026**. Planejamento somente; nenhum Docker, teste, de
 
 ## 1. Inventário reproduzível
 
-Legenda: **T** = tag de versão explícita, ainda mutável; **F** = flutuante (latest, major/minor ou intervalo); **V** = variável, valor efetivo não inspecionado; **D** = digest/hash. Nenhuma imagem literal dos Compose/Dockerfiles está fixada por digest. Não li `.env`, estados Terraform nem segredos. Pins do código não provam versões em execução.
+Legenda: **T** = tag de versão explícita, ainda mutável; **F** = flutuante (latest, major/minor ou intervalo); **V** = variável, valor efetivo não inspecionado; **D** = digest/hash. Não li `.env`, estados Terraform nem segredos. Pins do código não provam versões em execução.
 
 ### Imagens e runtimes
 
 | Arquivo:linha | Referência atual | Tipo |
 |---|---|---|
 | `deploy/docker-compose.chatwoot.yml:34,72,126` | `chatwoot/chatwoot:v4.13.0-ce` | T |
-| `deploy/docker-compose.dify.yml:32` | `alpine:3.19` | F |
+| `deploy/docker-compose.dify.yml:32` | `alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6` | D (W6b) |
 | `deploy/docker-compose.dify.yml:43,124` | `langgenius/dify-api:1.13.3` | T |
 | `deploy/docker-compose.dify.yml:180` | `langgenius/dify-web:1.13.3` | T |
 | `deploy/docker-compose.dify.yml:217` | `langgenius/dify-sandbox:0.2.14` | T |
@@ -37,7 +37,8 @@ Legenda: **T** = tag de versão explícita, ainda mutável; **F** = flutuante (l
 | `deploy/docker-compose.shared.yml:201` | `willfarrell/autoheal:1.2.0` | T |
 | `middleware/Dockerfile:8,15,24,31` | `node:22-alpine` | F |
 | `agents/self-healing/Dockerfile:1,9` | `node:20-alpine` | F |
-| `scripts/backup-host.sh:56` | `BACKUP_HELPER_IMAGE=alpine:3.20` | F (minor) |
+| `scripts/backup-host.sh:56` | `BACKUP_HELPER_IMAGE=alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6` | D (W6b) |
+| `scripts/tests/test-tempo.sh:9`, `scripts/tests/test-otel-collector.sh:31` | `alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6` | D (W6b) |
 | `.env.production.example:112,113` | `ghcr.io/nexaduo/{middleware,self-healing-agent}:latest` | F, exemplos |
 | `.env.example:176,177` | `ghcr.io/nexaduo/{middleware,self-healing-agent}:0.1.0` | T, exemplos; não runtime |
 | `.github/workflows/stack-compose-playwright.yml:99,100` | `ghcr.io/nexaduo/{middleware,self-healing-agent}:latest` | F, builds locais de CI |
@@ -146,7 +147,7 @@ Consulta às APIs públicas de releases do GitHub, registry npm, catálogo Docke
 | Dify sandbox | [0.2.15](https://github.com/langgenius/dify-sandbox/releases/tag/0.2.15) → `langgenius/dify-sandbox:0.2.15` | **Médio**: execução via fd3, seccomp, ordem de redução de privilégios e UIDs por execução |
 | Dify plugin-daemon | [0.6.10](https://github.com/langgenius/dify-plugin-daemon/releases/tag/0.6.10) → `langgenius/dify-plugin-daemon:0.6.10-local` | **Alto**: storage, DB/plugin API; tipo `date-picker` renomeado `date-range`; manter variante `-local` |
 | Dify ssrf-proxy | [Squid 7.7](https://www.squid-cache.org/Versions/) | **Alto/condicional**: nenhuma imagem `ubuntu/squid` stable 7.7 verificada; não inventar tag nem adotar beta como estável. W7a propõe build versionado de Squid 7.7; digest/build **ASSUMED** |
-| Dify init / helper backup | [Alpine 3.24.2](https://alpinelinux.org/releases/) → `alpine:3.24.2` | **Baixo**: tar/chown, UID 1001 e permissões; imagens auxiliares também precisam digest |
+| Dify init / helper backup | [Alpine 3.24.2](https://alpinelinux.org/releases/) → `alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6` | **Baixo**: tar/chown, UID 1001 e permissões; imagens auxiliares também precisam digest |
 | Evolution API | [2.3.7](https://github.com/evolution-foundation/evolution-api/releases/tag/2.3.7) → `evoapicloud/evolution-api:v2.3.7` | **Alto**, embora ordenado antes de Dify: Prisma, Baileys, LID/JID, sessões e integração Chatwoot |
 | PostgreSQL + pgvector | [PG 18.6; PG16 16.15](https://www.postgresql.org/support/versioning/) + [vector 0.8.6](https://github.com/pgvector/pgvector/blob/master/CHANGELOG.md) | **Crítico**: primeiro fixar PG16 + vector 0.8.6; major 18.6 apenas W14 opcional, dump/restore |
 | Redis | [8.10.2](https://github.com/redis/redis/releases/tag/8.10.2) → inicialmente `redis:7.2.16-alpine`; depois `redis:8.10.2-alpine` | Patch [7.2.16](https://github.com/redis/redis/releases/tag/7.2.16) reduz salto inicial; major exige prova Sidekiq/Celery e backup RDB/AOF |
@@ -239,8 +240,9 @@ Todos os pré-passos, gates, validações e rollback comuns acima são parte de 
 | **W5a — Redis7.2.16-alpine** | S | Drenar filas/parar produtores e consumidores, backup frio redis-data; `dc up -d --no-deps redis`; PING auth, AOF OK, noeviction, tarefas Sidekiq/Celery concluídas após restart | R1 Redis7.2.4+AOF/RDB; CI: simular persistência/reconexão |
 | **W5b — Redis8.10.2-alpine, condicional** | S, documentação de clientes/licença | Só após provar compatibilidade dos clientes atuais; novo backup frio; `dc up -d --no-deps redis`; mesmas verificações, sem aumentar memória implicitamente | R1 dados7.2.16+pin, nunca abrir AOF8 com7; **CI muda**, se falhar adiar até após Chatwoot |
 | **W6 — Evolution2.3.7** | N, fixture Prisma/API, CI; contrato abaixo (sem nova chave de operador) | Backup DB evolution + volume/sessões Redis; suspender autoheal durante migrations; `dc up -d --no-deps evolution-api`; esperar Prisma e reconectar instância; texto/áudio/documento inbound/outbound pelo Chatwoot, sem contatos duplicados | R1 evolution/instances/chaves Redis da instância +2.1.1; **CI muda**, migrations/fixtures, Meta validado live |
-| **W7a — Squid7.7 + Alpine3.24.2** | D, futura receita `deploy/squid/Dockerfile` + config/entrypoint, backup-host.sh, exemplos | **Bloqueada para release até imagem reproduzível verificada.** Build Squid7.7 com checksums, ACL e proxy envs; `dc up -d --no-deps dify-ssrf-proxy`; helper Alpine via backup de teste; init chown em fixture, não reexecutar recursivamente live sem necessidade | R0 imagem/config anterior capturada; **CI muda** ACL, HTTP tool e sandbox |
-| **W7b — Dify1.17.1 + sandbox0.2.15 + plugin0.6.10-local** | D, root/isolated/CI override se serviços mudarem, `.env.production.example`, dify-apps, clients/testes middleware/admin | Backup `dify`, `dify_plugin`, api-storage+plugin-storage; sequência detalhada abaixo; checks RAG/Azure/SSE/handoff/config; init Alpine já fixado em W7a | R1 dois DBs+volumes+pins1.13.3/0.2.14/0.5.3-local; **CI muda**, upgrade fixture e readiness |
+| **W6b — Alpine3.24.2** | D, backup-host.sh, sondas Tempo/Collector | Init em fixture, round-trip de arquivo; nada recriado live; próximo backup usa o helper novo | R0 referências anteriores; CI: `test-alpine-helpers.sh` + guard de backup |
+| **W7a — Squid7.7** | D, futura receita `deploy/squid/Dockerfile` + config/entrypoint, exemplos | **Bloqueada para release até imagem reproduzível verificada.** Build Squid7.7 com checksums, ACL e proxy envs; `dc up -d --no-deps dify-ssrf-proxy`; Alpine separado em W6b | R0 imagem/config anterior capturada; **CI muda** ACL, HTTP tool e sandbox |
+| **W7b — Dify1.17.1 + sandbox0.2.15 + plugin0.6.10-local** | D, root/isolated/CI override se serviços mudarem, `.env.production.example`, dify-apps, clients/testes middleware/admin | Backup `dify`, `dify_plugin`, api-storage+plugin-storage; sequência detalhada abaixo; checks RAG/Azure/SSE/handoff/config; init Alpine já fixado em W6b | R1 dois DBs+volumes+pins1.13.3/0.2.14/0.5.3-local; **CI muda**, upgrade fixture e readiness |
 | **W8 — Chatwoot4.18.0-ce (3 pins)** | C, ai_agents.rb se necessário, onboarding/fixtures webhook | Backup chatwoot+storage; migrar antes de rails/sidekiq, sequência abaixo; login/admin/Platform API/attachments/WhatsApp/Instagram/handoff | R1 DB+storage+4.13.0-ce; **CI muda**, fixture Rails/CE e onboarding |
 | **W9 — Node24.21.0-alpine3.24; npm compatíveis** | Dois Dockerfiles, M/S/R/O/P manifests+locks, engines/types24.19.0, workflows ativos, exemplos de imagem | Axios1.20.0, Fastify5.12.5, pg8.23.0, OTel conjunto da tabela; demais updates dentro da mesma major da tabela (sensible6.0.6, types/pg8.23.1, tsx4.23.15, yaml2.9.1); manter por ora os majors separados em W10. Builds por commit+digest; `dc up -d --no-deps middleware self-healing-agent`; testar ESM/CJS, Config API fail-loud, auth/redaction/debounce | R0 imagens anteriores; **CI muda**, npm ci/build/typecheck/unit nos dois pacotes |
 | **W10a — Vitest5.0.2 / Playwright1.63.0** | M/S/O manifests+locks, configs Vitest/Playwright e fixtures | Node W9 pré-requisito. npm test em M/S; onboarding test:all e browsers novos; corrigir mocks/pools sem enfraquecer assertions; subir M/S apenas se artefato prod mudar | R0 locks/imagens; **CI muda** cache/browsers e suites |
@@ -551,3 +553,38 @@ validated live** now. The synthetic pass is not evidence for those flows; valida
 terminal sent/delivered states through Chatwoot when an operator provisions a real
 instance. Hosted CI, production apply, restore rehearsal and observation remain
 operator release gates.
+
+### W6b — Alpine 3.24.2 operational contract
+
+All four helpers (Dify init, backup default, Tempo and Collector probes) use
+`alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6`.
+Verified with `docker buildx imagetools inspect` on 2026-10-02: the `3.24` tag
+resolves to the same OCI index; [upstream releases](https://alpinelinux.org/releases/)
+list 3.24.2 as the newest 3.24 patch. `BACKUP_HELPER_IMAGE` remains env-overridable.
+
+BusyBox moves from 1.36.1 (3.19.9/3.20.10) to 1.37.0. The relevant help/flags
+are unchanged: `tar czf - -C /data .`, `chown -R 1001:1001`, and HTTP
+`wget -qO- -T 2/5`. Synthetic old/new fixtures confirm archive metadata/content
+and recursive ownership/mode preservation; a second init is idempotent.
+The actual Compose init invokes only chown (no mkdir/sh wrapper).
+BusyBox tar extraction on both old and new images leaves symlinks root-owned,
+although the archive records their original UID/GID. The regression restores
+with BusyBox tar (including volume-root metadata) plus `docker cp -a` (symlink
+ownership) and compares names, sizes, modes, UID/GID, link targets and contents.
+This is an existing restore limitation, not lost backup metadata.
+`scripts/tests/test-alpine-helpers.sh` derives the init from Compose and extracts
+the backup tar invocation; pulls precede its <60s test/cleanup deadline.
+The existing backup size-guard suite remains separate. Playwright N/A: internal
+filesystem helpers; the Tempo/Collector suites exercise the changed wget probes.
+
+Operator sequence after CI/review: no running service is recreated for this wave.
+Dify init is one-shot and picks up the pin on the next normal Dify `up` (not a
+`--no-deps` service recreation); do not rerun recursive chown live just for this bump.
+The backup helper is pulled on the next backup run if absent locally. Manually run
+`scripts/backup-host.sh`, require success, check archive integrity/listings and
+UID/GID/modes/link targets, `.last-success` coverage and the off-host copy.
+Rollback restores the previous references: Dify `alpine:3.19`, backup default
+`alpine:3.20`, and both probes
+`alpine:3.21@sha256:ce64758a109eb420d874a118f87920e625e12d3634e03b4a5573fd9f6e5d3507`;
+the first two were unpinned, so retain their pre-change image IDs for exact rollback.
+Production backup/apply/validation is operator-only and was not run in this worktree.
