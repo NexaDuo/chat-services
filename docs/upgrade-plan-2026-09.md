@@ -1045,10 +1045,12 @@ recreate middleware.
   first two are deprecated aliases in 4.x). Beyond the unit tests, the real
   production environment of the running middleware was parsed with the new
   build in a container without network, and an invalid environment is still
-  rejected with the same per-key messages.
+  rejected key by key. The message text changes with Zod 4 (for example a
+  missing key reads `Invalid input: expected string, received undefined`
+  instead of `Required`); nothing in this repo matches on the old text.
 - **Pino 10.3.1** in middleware and self-healing. Fastify 5.12 accepts it as
   its logger; the redaction path was exercised in the built self-healing image.
-- **dotenv 18.0.4** in root, provisioning and onboarding. Since 17 it prints a
+- **dotenv 18.0.5** in root, provisioning and onboarding. Since 17 it prints a
   line to stdout on every `config()`; all 13 call sites now pass `quiet: true`
   so scripts that emit machine-readable output are not polluted.
 - **Commander 15** in provisioning: the CLI builds and its commands still
