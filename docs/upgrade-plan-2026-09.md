@@ -461,13 +461,17 @@ and the immutable old image in the migration test.
   `CHATWOOT_ENABLED=false` remains the bundled default: no existing integration
   or session is configured. Enabling/configuring the WhatsApp→Chatwoot bridge is a
   separate operator prerequisite before claiming that product path works.
-- Keep HTTP 8080, `GET /` JSON/version healthcheck, 512MiB limit and
-  `/evolution/instances`. Both images default to root; no ownership migration.
+- Keep HTTP 8080, 512MiB limit and `/evolution/instances`. Both images default to root; no ownership migration.
   Node moves 20→24. The manager remains at `/manager` (new manager assets), enabled
   unless `SERVER_DISABLE_MANAGER=true`; its API still requires `apikey`.
   The [router](https://github.com/evolution-foundation/evolution-api/blob/2.3.7/src/api/routes/index.router.ts)
-  also fetches the latest WhatsApp Web version on `/`, so outbound lookup latency
-  can affect this existing probe. The test uses a new private bridge with egress,
+  now fetches the latest WhatsApp Web version from the internet on every `GET /`.
+  The container healthcheck therefore moves to an authenticated
+  `/instance/fetchInstances` (router, `apikey` guard and Postgres, no outbound
+  call), so an egress outage cannot mark it unhealthy and trigger autoheal. The key
+  is expanded inside the container, never stored in the healthcheck definition.
+  `GET /` stays public and is still what external probes see; expect it to be slow
+  when egress is degraded. The test uses a new private bridge with egress,
   no published ports, no real WhatsApp credentials or connection.
 - The [entrypoint](https://github.com/evolution-foundation/evolution-api/blob/2.3.7/Docker/scripts/deploy_database.sh)
   runs Prisma deploy and generate before serving HTTP, exiting on failure.
@@ -504,8 +508,8 @@ Operator-only apply (future work; use section 3's `dc`, coordinate the outage):
    or other table rows, empty Redis DB2 and empty instances volume; if that changes,
    preserve the new session/Redis state before proceeding.
 2. Take a fresh DB dump and **cold** instances archive using the existing backup
-   script with a wave-specific override:
-   `BACKUP_VOLUME_SUFFIXES="chatwoot-storage dify-api-storage evolution-instances grafana-data" scripts/backup-host.sh`.
+   script; its default `BACKUP_VOLUME_SUFFIXES` already includes
+   `evolution-instances`, so a plain `scripts/backup-host.sh` run is enough.
    This runs `pg_dump --clean --if-exists` for DB `evolution`; verify its dump is
    present, `gzip -t` passes, and the migration/table counts match the baseline.
    Verify the archive selected `chat-services_evolution-instances`, its tar integrity
@@ -532,7 +536,9 @@ Operator-only apply (future work; use section 3's `dc`, coordinate the outage):
    existing Postgres container, then
    `gzip -dc "$EVOLUTION_DUMP" | dc exec -T postgres psql -v ON_ERROR_STOP=1 -U postgres -d evolution`
    with `set -o pipefail`. Restore the matching cold instances archive into an empty
-   replacement volume, never overlay files; restore only Evolution Redis keys if
+   volume, never overlay files: with Evolution stopped and removed, set the failed
+   `chat-services_evolution-instances` aside by archiving it, recreate it empty
+   under the same name (Compose binds it by name) and extract the archive into it; restore only Evolution Redis keys if
    backed up. Reinstate the old v2.1.1 tag@digest above and old config/volume binding,
    `dc up -d --no-deps evolution-api`, verify the 42-migration baseline, data, auth
    and health, then resume autoheal/ingress. No global restore, shared Postgres

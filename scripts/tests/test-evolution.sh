@@ -113,9 +113,17 @@ def verify(version):
     assert all(saved.get({'byEvents': 'webhookByEvents', 'base64': 'webhookBase64'}.get(k, k)) == v
                for k, v in webhook.items()), 'Webhook changed'
     assert sql('SELECT count(*) FROM "_prisma_migrations" WHERE finished_at IS NULL OR rolled_back_at IS NOT NULL') == '0'
-    health = evo['healthcheck']['test']
-    assert health[0] == 'CMD'
-    docker('exec', api, *health[1:])
+    # `compose config` keeps the $$ escape; the engine receives a single $.
+    health = [part.replace('$$', '$') for part in evo['healthcheck']['test']]
+    # The probe must not carry the key itself nor depend on the egress-bound "/".
+    assert health[0] == 'CMD-SHELL' and '$AUTHENTICATION_API_KEY' in health[1]
+    assert '/instance/fetchInstances' in health[1]
+    docker('exec', api, 'sh', '-c', health[1])
+    # Same probe with a wrong key must fail: it really exercises the guard.
+    try:
+        docker('exec', '-e', 'AUTHENTICATION_API_KEY=wrong', api, 'sh', '-c', health[1])
+    except RuntimeError: pass
+    else: raise AssertionError('Healthcheck passed with a wrong key')
 
 # Only aliases postgres/redis on our new private network resolve Compose URIs.
 docker('network', 'create', name)

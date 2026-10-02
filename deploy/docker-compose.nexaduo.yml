@@ -29,13 +29,14 @@ services:
       TELEMETRY_ENABLED: 'false'
     volumes:
       - 'evolution-instances:/evolution/instances'
-    # Root path is Evolution's own app-level status response (JSON:
-    # status/message/version), served by its request router — not just a
-    # TCP accept (verified: no dedicated /health route exists, it 404s;
-    # "/" is the real app-served endpoint, same one health-check-all.sh
-    # already probes).
+    # Authenticated instance listing: exercises the router, the apikey guard
+    # and Postgres with no outbound call. Since 2.3.x "/" fetches the WhatsApp
+    # Web version from the internet on every request, so probing it would let
+    # an egress outage mark the container unhealthy and trigger autoheal.
+    # $$ defers expansion to the container shell: the key never reaches
+    # `docker inspect`.
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "-T", "5", "http://127.0.0.1:8080/"]
+      test: ["CMD-SHELL", "wget -qO /dev/null -T 5 --header \"apikey: $$AUTHENTICATION_API_KEY\" http://127.0.0.1:8080/instance/fetchInstances"]
       interval: 20s
       timeout: 10s
       retries: 5
