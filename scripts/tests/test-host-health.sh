@@ -10,6 +10,7 @@ export PATH="$TMP/bin:$PATH" BACKUP_DIR="$TMP/dumps" DUMPS_DIR="$TMP/dumps"
 export ENV_FILE="$TMP/test.env"
 unset ALLOW_NON_DESKTOP_ENGINE SKIP_BACKUP_CHECK
 echo 'CHATWOOT_FRONTEND_URL=https://chat.example.test' > "$ENV_FILE"
+echo 'DIFY_PLUGIN_DIFY_INNER_API_KEY=synthetic' >> "$ENV_FILE"
 cat > "$TMP/bin/docker" <<'STUB'
 #!/bin/bash
 case "$*" in

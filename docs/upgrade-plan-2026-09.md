@@ -16,10 +16,10 @@ Legenda: **T** = tag de versão explícita, ainda mutável; **F** = flutuante (l
 |---|---|---|
 | `deploy/docker-compose.chatwoot.yml:34,72,126` | `chatwoot/chatwoot:v4.13.0-ce` | T |
 | `deploy/docker-compose.dify.yml:32` | `alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6` | D (W6b) |
-| `deploy/docker-compose.dify.yml:43,124` | `langgenius/dify-api:1.13.3` | T |
-| `deploy/docker-compose.dify.yml:180` | `langgenius/dify-web:1.13.3` | T |
-| `deploy/docker-compose.dify.yml:217` | `langgenius/dify-sandbox:0.2.14` | T |
-| `deploy/docker-compose.dify.yml:236` | `langgenius/dify-plugin-daemon:0.5.3-local` | T |
+| `deploy/docker-compose.dify.yml:43,124` | `langgenius/dify-api:1.17.1@sha256:ceede5b9…` (W7b; antes 1.13.3) | D |
+| `deploy/docker-compose.dify.yml:180` | `langgenius/dify-web:1.17.1@sha256:6353fe8e…` (W7b; antes 1.13.3) | D |
+| `deploy/docker-compose.dify.yml:217` | `langgenius/dify-sandbox:0.2.15@sha256:750e1111…` (W7b; antes 0.2.14) | D |
+| `deploy/docker-compose.dify.yml:236` | `langgenius/dify-plugin-daemon:0.6.10-local@sha256:34412a22…` (W7b; antes 0.5.3-local) | D |
 | `deploy/docker-compose.dify.yml:268` | `nexaduo/squid:7.7-local`, build local de `deploy/squid/Dockerfile` (W7a; antes `ubuntu/squid`) | D (tarball por SHA-256 + assinatura, base por digest) |
 | `deploy/docker-compose.localproxy.yml:61` | `traefik:v3.6.25` | T |
 | `deploy/docker-compose.nexaduo.yml:16` | `evoapicloud/evolution-api:v2.3.7@sha256:1bd8afc4a6cf48822e6cf02469aeae7bd35a12a6b616eacd1291926307f4d339` (W6; prior inventory: 2.1.1) | D |
@@ -650,3 +650,117 @@ Operator-only apply (use section 3's `dc`, from the main checkout):
    `ubuntu/squid:6.6-24.04_beta@sha256:6a097f68bae708cedbabd6188d68c7e2e7a38cedd05a176e1cc0ba29e3bbe029`,
    drop the `build:` line, and `dc up -d --no-deps dify-ssrf-proxy`. The
    `max_filedescriptors` line is valid on 6.13 and should stay.
+
+### W7b — Dify 1.17.1 operational contract
+
+Pins (index digests, verified with `docker buildx imagetools inspect`):
+
+- `langgenius/dify-api:1.17.1@sha256:ceede5b903afaa20348f7ad80ebf847379dc56d886a99b9ec6a08913dacd7732` (api and worker)
+- `langgenius/dify-web:1.17.1@sha256:6353fe8e04481aaef873ef7317507bfa9ac862572118fd037563a71bff9f4d08`
+- `langgenius/dify-sandbox:0.2.15@sha256:750e1111426ef31a9217b81c98cccfb750f17b182af3221102e420afa9f0928e`
+- `langgenius/dify-plugin-daemon:0.6.10-local@sha256:34412a22d1e1d1a6c73727fef88cffbcdd9be7a21bf9ad3076b4bf5c1b88fd9b`
+
+Reviewed the upstream release notes for 1.14.0, 1.14.1, 1.14.2, 1.15.0, 1.16.0,
+1.16.1, 1.17.0 and [1.17.1](https://github.com/langgenius/dify/releases/tag/1.17.1),
+and the upstream `docker/docker-compose.yaml` at both tags. What applies here:
+
+- **Migrations are forward-only.** 1.17.1 includes the legacy model type
+  migration (`5578e028b2f2`), whose downgrade is a no-op. Production holds two
+  `text-generation` rows that it rewrites to `llm`. No manual `flask
+  data-migrate` step is needed from 1.17.1 on. Rollback is restore, not downgrade.
+- **Weaviate ladder does not apply**: this stack uses pgvector.
+- **Agent App (Beta) stays off.** Since 1.16 it is on by default and needs two
+  new services (`agent_backend`, a shell sandbox) plus a second proxy. None is
+  added; `NEXT_PUBLIC_ENABLE_AGENT_V2=false` hides it in the web UI. The API and
+  worker boot and serve existing apps without `agent_backend` (rehearsed).
+  Collaboration (`api_websocket`) is also left off, its upstream default.
+- **No beat container**, as before the upgrade: scheduled triggers and periodic
+  clean-up tasks do not run. Unchanged behaviour, recorded here as a known gap.
+- **Environment.** `dify-api` and `dify-worker` now share one block
+  (`x-dify-app-env`). Before, the worker only had database and broker settings
+  and used in-image defaults for the vector store, sandbox and plugin daemon.
+  `INNER_API_KEY_FOR_PLUGIN` is now set from `DIFY_PLUGIN_DIFY_INNER_API_KEY`:
+  it was unset, so the API kept the in-image default while the plugin daemon
+  sent the configured key (compared by hash on the live 1.13.3 containers: they
+  differed). No new operator key; `.env.production.example` is unchanged.
+- **Service API contract used by this repo is unchanged**: `POST
+  /v1/chat-messages` in streaming mode still emits `agent_message`,
+  `agent_thought` and `message_end` (middleware), and `POST /v1/workflows/run`
+  in blocking mode returns `data.outputs` (self-healing). Both were exercised.
+- **Console auth**: session cookies are `Secure` and requests need the
+  `X-CSRF-Token` header. Browsers through the tunnel are unaffected; scripts
+  talking plain HTTP to the API must send the cookies themselves.
+
+**Rehearsal on a copy of production data.** `scripts/rehearse-dify-upgrade.sh`
+restores the newest `dify` and `dify_plugin` dumps into a throwaway Postgres,
+copies both storage volumes (the live plugin volume is mounted read-only), and
+runs the pinned images on a private network with Traefik/autoheal labels reset
+and the log driver off, so the live proxy, autoheal and Loki never see it. It
+runs the cutover's migration command, boots everything, and checks: Alembic
+revision moved and is stable on a second boot, row counts unchanged, no legacy
+model types left, inner API key equal between API and plugin daemon, console
+login (password reset in the copy only) listing apps, an active model provider
+and the installed plugins. It then creates a text document in the first
+knowledge base, waits for the worker to index it and retrieves it by keyword.
+With `--invoke` it sends one message or workflow run per app that has a service
+API token, using the copied credentials against the real model provider. The
+copy has internet egress and carries the apps' real tool configuration, so
+`--invoke` refuses to run when an app has non-builtin tools or HTTP nodes
+unless they were reviewed (`--allow-external-tools`). Today the apps only use
+the builtin `current_time` tool.
+
+Result on 2026-10-02 against the 03:34 dumps: migration in 15 to 18 seconds
+(`6b5f9f8b1a2c` to `c3f1a9b2e6d4`); 12 table counts and both plugin counts
+unchanged; console lists 3 apps, 1 active provider, 2 plugins; a document was
+indexed by the worker and retrieved (the knowledge base is in `economy`
+keyword mode and no embedding model is configured, so pgvector indexing is
+**not** exercised and stays unproven on either version); the agent-chat
+app answered and the self-healing workflow returned `root_cause`, `severity`,
+`suggested_fix`; no restart or OOM; api ~505 MiB, worker ~495 to 865 MiB,
+plugin daemon ~240 MiB, all inside their limits. About 95 to 115 seconds end
+to end. There is no CI upgrade fixture: CI boots the pinned version from an
+empty database (the fresh-install path), and the upgrade path is covered by
+this rehearsal on real data, which a synthetic fixture cannot represent.
+Playwright: the existing Stage 1 suite already probes `/console/api/setup` and
+the Dify edge routes; no new web flow is introduced.
+
+Operator-only apply (use section 3's `dc`, from the main checkout):
+
+1. Four CI gates and both reviews pass. `dc pull dify-api dify-web dify-sandbox
+   dify-plugin-daemon`. Run `scripts/rehearse-dify-upgrade.sh --invoke` on the
+   merged commit; do not continue unless it passes.
+2. Turn the kill switch on (`docs/dify-kill-switch.md`) and confirm the row, so
+   the middleware stops calling Dify and messages stay in Chatwoot.
+   `dc stop autoheal`, then `dc stop dify-web dify-api dify-worker
+   dify-plugin-daemon`. Never stop or recreate Postgres or Redis.
+3. Back up with the consumers stopped, adding the plugin volume to the default
+   set: `BACKUP_VOLUME_SUFFIXES="chatwoot-storage dify-api-storage
+   evolution-instances grafana-data dify-plugin-storage" scripts/backup-host.sh`.
+   Verify `gzip -t` on the `dify` and `dify_plugin` dumps and on both Dify
+   volume archives; note their paths for R1. Record the row counts and the
+   Alembic revision.
+4. Migrate once: `dc run --rm --no-deps -l traefik.enable=false -l
+   autoheal=false -e MODE=migration -e MIGRATION_ENABLED=true dify-api`. The
+   labels keep the one-off container out of the live Traefik router and away
+   from autoheal. It must exit 0 and the revision must move.
+5. `dc up -d --no-deps dify-sandbox dify-plugin-daemon`, wait for
+   `http://dify-plugin-daemon:5002/health/check`, then `dc up -d --no-deps
+   dify-api dify-worker dify-web`. The API re-runs the migration command on
+   boot; it must be a no-op. With `--no-deps`, `dify-init` does not run: storage
+   ownership is already uid 1001 and is not touched.
+6. Verify: three services healthy, revision unchanged since step 4, row counts
+   equal to step 3, no legacy model types, inner API key equal and non-empty
+   on API and daemon, no restart loop or OOM. Send one message through the service API to
+   prove credentials and the plugin runtime in production. Then turn the kill
+   switch off, `dc start autoheal`, `scripts/run-stack.sh validate` and
+   `scripts/health-check-all.sh`. Console login through the tunnel and the next
+   real conversation (reply, memory, handoff) are operator checks.
+7. **R1:** kill switch on, stop the four Dify services and autoheal. Archive
+   the failed state. Drop and recreate **only** the `dify` and `dify_plugin`
+   databases in the existing Postgres and restore the step 3 dumps with
+   `ON_ERROR_STOP=1`; empty and restore both Dify volumes from their archives;
+   revert the compose change (pins 1.13.3 / 0.2.14 / 0.5.3-local); `dc up -d
+   --no-deps` the same services; verify; kill switch off. Redis is not
+   restored: Dify keeps only queue and cache state there, and with the workers
+   stopped before the backup no job is pending. Writes made after the backup
+   are lost and must be reconciled from Chatwoot.
