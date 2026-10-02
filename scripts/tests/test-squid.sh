@@ -125,6 +125,13 @@ YAML
 # heredoc-fed script and bash would exit 0 at the first exec (vacuous pass).
 cat > "$work/test.sh" <<'TEST'
 start=$SECONDS
+# Uncapped descriptor tables idle at ~125MiB against the 128MiB limit: require
+# the peak to stay under half of it. The ACL suite restarts Squid, which resets
+# VmHWM, so this runs at every measurement point; a missing line fails too.
+rss_ok() {
+  docker compose exec -T dify-ssrf-proxy awk \
+    '/^VmHWM:/ { found=1; if ($2 >= 65536) exit 1 } END { if (!found) exit 1 }' /proc/1/status
+}
 docker compose --env-file /dev/null config -q
 docker compose --env-file /dev/null up -d
 version=$(docker compose exec -T dify-ssrf-proxy squid -v)
@@ -143,10 +150,12 @@ for _ in $(seq 1 30); do
 done
 echo 'Idle Squid memory (kB):'
 docker compose exec -T dify-ssrf-proxy sh -c 'grep -E "^Vm(RSS|HWM):" /proc/1/status'
+rss_ok
 # Same command/assertions as the full-stack CI and operator path, including restart.
 bash "$SQUID_TEST_ROOT/scripts/test-ssrf-proxy.sh"
 echo 'Squid memory after ACL suite and restart (kB):'
 docker compose exec -T dify-ssrf-proxy sh -c 'grep -E "^Vm(RSS|HWM):" /proc/1/status'
+rss_ok
 # Concurrent allowed requests exercise the 128m container without changing ACLs.
 docker compose exec -T dify-api sh -ec '
   pids=""
@@ -159,9 +168,7 @@ docker compose exec -T dify-api sh -ec '
 '
 echo 'Squid memory after concurrent requests (kB):'
 docker compose exec -T dify-ssrf-proxy sh -c 'grep -E "^Vm(RSS|HWM):" /proc/1/status'
-# Uncapped descriptor tables idle at ~125MiB against the 128MiB limit: require
-# the peak to stay under half of it.
-docker compose exec -T dify-ssrf-proxy awk '/^VmHWM:/ { exit !($2 < 65536) }' /proc/1/status
+rss_ok
 echo "PASS: Squid 7.7 contract in $((SECONDS - start))s"
 TEST
 # 155s + 2s kill grace + 17s cleanup <180s, excluding both image builds.
