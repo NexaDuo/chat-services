@@ -28,7 +28,7 @@ image=$(sed -n 's/^    image: \(otel\/opentelemetry-collector-contrib:.*\)$/\1/p
 tempo_image=$(sed -n 's/^    image: \(grafana\/tempo:.*\)$/\1/p' "$ROOT/deploy/docker-compose.nexaduo.yml")
 [[ $tempo_image =~ ^grafana/tempo:3\.[^@]+@sha256:[a-f0-9]{64}$ ]]
 old_image=otel/opentelemetry-collector-contrib:0.111.0@sha256:a2a52e43c1a80aa94120ad78c2db68780eb90e6d11c8db5b3ce2f6a0cc6b5029
-probe_image=alpine:3.21@sha256:ce64758a109eb420d874a118f87920e625e12d3634e03b4a5573fd9f6e5d3507
+probe_image=alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
 for img in "$image" "$old_image" "$tempo_image" "$probe_image"; do docker pull "$img" >/dev/null; done
 config=(--mount "type=bind,src=$ROOT/observability/otel-collector/config.yaml,dst=/etc/otel.yaml,readonly")
 docker run --rm --name "$verify" "${config[@]}" "$image" validate --config=/etc/otel.yaml
