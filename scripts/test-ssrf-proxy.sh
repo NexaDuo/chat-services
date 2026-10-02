@@ -74,4 +74,10 @@ for _ in $(seq 1 30); do
     --proxy "$proxy" --noproxy '' --max-time 5 http://example.com/ && break
   sleep 1
 done
-probe 200 http://example.com/
+# The container's DNS name can flap for a moment right after the restart
+# ("Could not resolve proxy" once in CI): retry the final assertion briefly.
+for attempt in 1 2 3 4 5; do
+  probe 200 http://example.com/ && break
+  [[ "$attempt" == 5 ]] && exit 1
+  sleep 2
+done
