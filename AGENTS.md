@@ -257,7 +257,7 @@ Dumps: `~/nexaduo-local/dumps/<db>-<YYYY-MM-DD>-HHMM.sql.gz` (+ off-host mirror 
 - **Dify SSRF proxy (issue #222):** `deploy/squid/squid.conf` is the versioned
   destination ACL, mounted read-only; API/worker use SSRF proxy URLs and
   sandbox uses HTTP(S)_PROXY without NO_PROXY bypasses. The plugin daemon is
-  NOT proxied (0.5.3 ignores SSRF_PROXY_*; HTTP(S)_PROXY would also route its
+  NOT proxied (0.5.3 ignored SSRF_PROXY_*, not re-checked on 0.6.10; HTTP(S)_PROXY would also route its
   inner-API calls to dify-api into the deny ACL) — see #229. Public egress
   permits only 80/443 (CONNECT only 443), denying internal/reserved IPs even
   through DNS names. The only internal exception is an HTTP POST to
@@ -467,6 +467,16 @@ fields you need.
   value's meaning). A wrong assumption once cost a whole reverted migration.
 - **No premature success on async flows.** Confirm the terminal state (status/log/job
   result), not the enqueue step.
+
+## Dify upgrades
+Dify is pinned to 1.17.1 (api, worker, web), sandbox 0.2.15 and plugin daemon
+0.6.10, all by digest. Its migrations are forward-only, so every upgrade is
+rehearsed first on a copy of production data with
+`scripts/rehearse-dify-upgrade.sh --invoke`, then applied with the kill switch
+on, a fresh backup that includes `dify-plugin-storage`, and a one-shot
+`MODE=migration` run. Agent App (Beta) and its extra services stay disabled.
+Sequence and rollback: W7b operational contract in
+[the upgrade plan](docs/upgrade-plan-2026-09.md#w7b--dify-1171-operational-contract).
 
 ## Tempo 3.0 monolithic operations
 Tempo is pinned to 3.0.3; Kafka is not required (`target: all`). Backend scheduler

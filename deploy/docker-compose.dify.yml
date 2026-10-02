@@ -27,6 +27,41 @@ x-logging-forensic: &forensic-logging
     max-size: "20m"
     max-file: "4"
 
+# Shared by dify-api and dify-worker (same image, same code paths): the worker
+# runs indexing, workflow and plugin tasks, so it needs the vector store,
+# sandbox and plugin daemon settings too. Before W7b it only had the database
+# and broker and fell back to in-image defaults for everything else.
+x-dify-app-env: &dify-app-env
+  SSRF_PROXY_HTTP_URL: http://dify-ssrf-proxy:3128
+  SSRF_PROXY_HTTPS_URL: http://dify-ssrf-proxy:3128
+  SECRET_KEY: ${DIFY_SECRET_KEY}
+  DB_USERNAME: postgres
+  DB_PASSWORD: ${POSTGRES_PASSWORD}
+  DB_HOST: postgres
+  DB_DATABASE: dify
+  REDIS_HOST: redis
+  REDIS_PASSWORD: ${REDIS_PASSWORD}
+  CELERY_BROKER_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
+  VECTOR_STORE: pgvector
+  PGVECTOR_HOST: postgres
+  PGVECTOR_USER: postgres
+  PGVECTOR_PASSWORD: ${POSTGRES_PASSWORD}
+  PGVECTOR_DATABASE: dify
+  CODE_EXECUTION_ENDPOINT: http://dify-sandbox:8194
+  CODE_EXECUTION_API_KEY: ${DIFY_SANDBOX_API_KEY}
+  PLUGIN_DAEMON_URL: http://dify-plugin-daemon:5002
+  PLUGIN_DAEMON_KEY: ${DIFY_PLUGIN_DAEMON_KEY}
+  # Must equal the daemon's DIFY_INNER_API_KEY. Unset, the API kept the
+  # in-image default: plugin callbacks were rejected and the inner API
+  # accepted a publicly known key from anything on the network.
+  INNER_API_KEY_FOR_PLUGIN: '${DIFY_PLUGIN_DIFY_INNER_API_KEY}'
+  CONSOLE_API_URL: ${DIFY_CONSOLE_API_URL}
+  CONSOLE_WEB_URL: ${DIFY_CONSOLE_API_URL}
+  SERVICE_API_URL: ${DIFY_CONSOLE_API_URL}
+  APP_API_URL: ${DIFY_APP_API_URL}
+  APP_WEB_URL: ${DIFY_APP_API_URL}
+  DIFY_LOG_LEVEL: INFO
+
 services:
   dify-init:
     image: alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
@@ -40,7 +75,7 @@ services:
     networks:
       - chat-network
   dify-api:
-    image: langgenius/dify-api:1.13.3
+    image: langgenius/dify-api:1.17.1@sha256:ceede5b903afaa20348f7ad80ebf847379dc56d886a99b9ec6a08913dacd7732
     restart: unless-stopped
     logging: *default-logging
     # Issue #157 "everything else" tier: measured ~396MiB RSS; limit = 4x
@@ -81,37 +116,13 @@ services:
       - "traefik.http.routers.dify-api.priority=20"
       - "traefik.http.services.dify-api.loadbalancer.server.port=5001"
     environment:
+      <<: *dify-app-env
       MODE: api
-      SSRF_PROXY_HTTP_URL: http://dify-ssrf-proxy:3128
-      SSRF_PROXY_HTTPS_URL: http://dify-ssrf-proxy:3128
       MIGRATION_ENABLED: "true"
-      SECRET_KEY: ${DIFY_SECRET_KEY}
-      DB_USERNAME: postgres
-      DB_PASSWORD: ${POSTGRES_PASSWORD}
-      DB_HOST: postgres
-      DB_DATABASE: dify
-      REDIS_HOST: redis
-      REDIS_PASSWORD: ${REDIS_PASSWORD}
-      CELERY_BROKER_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
-      VECTOR_STORE: pgvector
-      PGVECTOR_HOST: postgres
-      PGVECTOR_USER: postgres
-      PGVECTOR_PASSWORD: ${POSTGRES_PASSWORD}
-      PGVECTOR_DATABASE: dify
-      CODE_EXECUTION_ENDPOINT: http://dify-sandbox:8194
-      CODE_EXECUTION_API_KEY: ${DIFY_SANDBOX_API_KEY}
-      PLUGIN_DAEMON_URL: http://dify-plugin-daemon:5002
-      PLUGIN_DAEMON_KEY: ${DIFY_PLUGIN_DAEMON_KEY}
       ENABLE_SOCIAL_OAUTH_LOGIN: "true"
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
-      CONSOLE_API_URL: ${DIFY_CONSOLE_API_URL}
-      CONSOLE_WEB_URL: ${DIFY_CONSOLE_API_URL}
-      SERVICE_API_URL: ${DIFY_CONSOLE_API_URL}
-      APP_API_URL: ${DIFY_APP_API_URL}
-      APP_WEB_URL: ${DIFY_APP_API_URL}
       CONSOLE_OAUTH_REGISTRATION_ENABLED: "true"
-      DIFY_LOG_LEVEL: INFO
       COOKIE_DOMAIN: ${COOKIE_DOMAIN:-}
       SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-false}
       DIFY_API_ENABLE_METRICS: ${DIFY_API_ENABLE_METRICS:-false}
@@ -123,7 +134,7 @@ services:
     networks:
       - chat-network
   dify-worker:
-    image: langgenius/dify-api:1.13.3
+    image: langgenius/dify-api:1.17.1@sha256:ceede5b903afaa20348f7ad80ebf847379dc56d886a99b9ec6a08913dacd7732
     restart: unless-stopped
     logging: *default-logging
     # Issue #157 priority group 2 (background job runner, likeliest to
@@ -140,17 +151,8 @@ services:
     # point-in-time re-measurement here doesn't prevent it recurring.
     mem_limit: 2176m
     environment:
+      <<: *dify-app-env
       MODE: worker
-      SSRF_PROXY_HTTP_URL: http://dify-ssrf-proxy:3128
-      SSRF_PROXY_HTTPS_URL: http://dify-ssrf-proxy:3128
-      SECRET_KEY: ${DIFY_SECRET_KEY}
-      DB_USERNAME: postgres
-      DB_PASSWORD: ${POSTGRES_PASSWORD}
-      DB_HOST: postgres
-      DB_DATABASE: dify
-      REDIS_HOST: redis
-      REDIS_PASSWORD: ${REDIS_PASSWORD}
-      CELERY_BROKER_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
     volumes:
       - dify-api-storage:/app/api/storage
     # Real liveness, not process existence (issue #158): `celery inspect
@@ -181,7 +183,7 @@ services:
     networks:
       - chat-network
   dify-web:
-    image: langgenius/dify-web:1.13.3
+    image: langgenius/dify-web:1.17.1@sha256:6353fe8e04481aaef873ef7317507bfa9ac862572118fd037563a71bff9f4d08
     restart: unless-stopped
     logging: *default-logging
     # Issue #157 "everything else" tier: measured ~86MiB RSS; limit = 4x
@@ -191,6 +193,9 @@ services:
       CONSOLE_API_URL: ${DIFY_CONSOLE_API_URL}
       APP_API_URL: ${DIFY_APP_API_URL}
       NEXT_PUBLIC_COOKIE_DOMAIN: ${NEXT_PUBLIC_COOKIE_DOMAIN:-}
+      # Agent App (Beta, on by default since 1.16) needs agent_backend and a
+      # shell sandbox that this stack does not run. Keep it off.
+      NEXT_PUBLIC_ENABLE_AGENT_V2: "false"
     # dify-web's Next.js server binds only to its own container IP, not
     # 127.0.0.1/0.0.0.0 (verified inside the running container: `netstat -tlnp`
     # shows `LISTEN` on the container's eth0 address only) — a bare
@@ -218,7 +223,7 @@ services:
     networks:
       - chat-network
   dify-sandbox:
-    image: langgenius/dify-sandbox:0.2.14
+    image: langgenius/dify-sandbox:0.2.15@sha256:750e1111426ef31a9217b81c98cccfb750f17b182af3221102e420afa9f0928e
     restart: unless-stopped
     # Forensic tier — see x-logging-forensic rationale above (issue #156).
     logging: *forensic-logging
@@ -236,13 +241,13 @@ services:
       API_KEY: ${DIFY_SANDBOX_API_KEY}
       HTTP_PROXY: http://dify-ssrf-proxy:3128
       HTTPS_PROXY: http://dify-ssrf-proxy:3128
-      # Upstream 1.13.3 has no sandbox bypass list. Keep it empty explicitly.
+      # Upstream has no sandbox bypass list. Keep it empty explicitly.
       NO_PROXY: ""
       no_proxy: ""
     networks:
       - chat-network
   dify-plugin-daemon:
-    image: langgenius/dify-plugin-daemon:0.5.3-local
+    image: langgenius/dify-plugin-daemon:0.6.10-local@sha256:34412a22d1e1d1a6c73727fef88cffbcdd9be7a21bf9ad3076b4bf5c1b88fd9b
     restart: unless-stopped
     # Forensic tier — see x-logging-forensic rationale above (issue #156).
     logging: *forensic-logging
@@ -254,7 +259,7 @@ services:
     cpus: "2"
     environment:
       SERVER_KEY: ${DIFY_PLUGIN_DAEMON_KEY}
-      # No SSRF_PROXY_* here: plugin-daemon 0.5.3 reads only HTTP(S)_PROXY, and
+      # No SSRF_PROXY_* here: plugin-daemon reads only HTTP(S)_PROXY, and
       # those would also proxy its DIFY_INNER_API_URL calls (denied by the ACL).
       # Plugin egress is NOT proxied today — tracked with network isolation (#229).
       DIFY_INNER_API_URL: http://dify-api:5001
