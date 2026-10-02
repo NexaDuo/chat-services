@@ -4,8 +4,8 @@ name: Unit Tests
 # and on push to main. Kept separate from stack-compose-playwright.yml (issue
 # #155): the unit suites are fast (no ephemeral stack spin-up) and a stack
 # flake there must not mask a unit failure here, nor vice versa. The two
-# packages pin different vitest majors (self-healing ^2.1.9, middleware
-# ^4.1.6), so each gets its own job/install rather than a shared runner.
+# packages are separate npm projects (both on vitest 5 since W10a), so each
+# gets its own job/install rather than a shared runner.
 on:
   pull_request:
   push:
