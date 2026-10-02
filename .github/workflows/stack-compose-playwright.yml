@@ -60,7 +60,7 @@ jobs:
     #   27.5 + 15 = 42.5 min, rounded up to 45 for a clean number with a
     #   little extra headroom.
     timeout-minutes: 45
-    # Compose v2.30+ on ubuntu-24.04 forbids redefining services imported via
+    # Compose v2.30+ forbids redefining services imported via
     # `include:`. The root docker-compose.yml carries cross-stack `depends_on`
     # overrides, so we chain compose files via -f / COMPOSE_FILE instead.
     env:

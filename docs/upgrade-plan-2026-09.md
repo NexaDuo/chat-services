@@ -984,7 +984,7 @@ Test tooling only; no production image changes.
 
 - **Vitest 5.0.3** in middleware (from 4.1) and self-healing (from 2.1). The
   107 and 24 unit tests pass unchanged under Node 24. Self-healing gains a
-  `vitest.config.ts` limiting collection to `src/**/*.test.ts`: since Vitest 3
+  `vitest.config.mts` limiting collection to `src/**/*.test.ts`: since Vitest 3
   `dist/` is no longer excluded by default, so after a build the compiled
   copies of the tests were collected and failed. In self-healing the old Vitest
   had to be uninstalled first: Vitest 5 needs Vite 6.4 or newer as a peer and
@@ -998,5 +998,7 @@ Test tooling only; no production image changes.
 
 Operator apply: nothing is recreated. On the host, `npm ci` in `onboarding/`
 and `npx playwright install chromium` so `scripts/run-stack.sh validate` uses
-the new version, then run `validate` and `scripts/health-check-all.sh`.
+the new version (CI adds `--with-deps` because its runner starts without the
+system libraries; the host already has them), then run `validate` and
+`scripts/health-check-all.sh`.
 Rollback: revert the manifests and locks and reinstall.
