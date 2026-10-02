@@ -4,12 +4,13 @@ RUN apk add --no-cache build-base linux-headers perl curl gnupg xz
 COPY release-key.asc /tmp/release-key.asc
 WORKDIR /src
 # Official release archive, authenticated with the upstream release signing key.
+# gpgv, not gpg: it starts no agent or keybox daemon, so the layer needs no
+# `gpgconf --kill all` (which failed intermittently in CI) and cannot hang.
 RUN curl -fsSLO https://github.com/squid-cache/squid/releases/download/SQUID_7_7/squid-7.7.tar.xz \
     && echo 'e3bd613b91b1c498ec2992276063342a85cd6edddd5521294e04f44bc055da9b  squid-7.7.tar.xz' | sha256sum -c - \
     && curl -fsSLO https://github.com/squid-cache/squid/releases/download/SQUID_7_7/squid-7.7.tar.xz.asc \
-    && gpg --import /tmp/release-key.asc \
-    && gpg --verify squid-7.7.tar.xz.asc squid-7.7.tar.xz \
-    && gpgconf --kill all \
+    && gpg --dearmor < /tmp/release-key.asc > /tmp/release-key.gpg \
+    && gpgv --keyring /tmp/release-key.gpg squid-7.7.tar.xz.asc squid-7.7.tar.xz \
     && tar -xJf squid-7.7.tar.xz
 WORKDIR /src/squid-7.7
 # CONNECT is an opaque tunnel: no TLS library, interception, disk cache or helpers.
