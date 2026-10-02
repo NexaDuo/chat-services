@@ -1119,23 +1119,28 @@ Rollback: revert the manifest and lockfile.
 
 ### W12 — Terraform Cloudflare: blocked on operator inputs
 
-Not executed. Three prerequisites are missing on the production host, and none
-can be worked around from the repo:
+Not executed. The inputs it needs are held by the operator, outside this repo
+and outside the running stack:
 
-- The Terraform state lives in the GCS bucket `nexaduo-terraform-state`
-  (`envs/production/foundation/backend.tf`); GCP is decommissioned and no
-  `gcloud` credentials exist here, so the state cannot be read or migrated.
-- The Cloudflare API token was read from GCP Secret Manager
+- **State.** The backend is the GCS bucket `nexaduo-terraform-state`
+  (`envs/production/foundation/backend.tf`), which went away with GCP. The
+  operator kept an export of the foundation state taken before the
+  decommissioning (2026-06-29, Terraform 1.9.8, 25 resources, eight of them
+  Cloudflare: the tunnel, its config and six DNS records). It contains the
+  tunnel secret and is three months old, so it must be reconciled against the
+  live Cloudflare account before anything is planned from it.
+- **Credential.** The Cloudflare API token was read from GCP Secret Manager
   (`foundation/secrets.tf`); the host `.env` only holds the tunnel token.
-- The foundation root mixes the dead GCP resources with the live Cloudflare
-  tunnel and six DNS records, so it cannot be planned as it stands.
+- **Layout.** The foundation root mixes the dead GCP resources with the live
+  Cloudflare ones, so it cannot be planned as it stands, and no Terraform CLI
+  is installed on the host.
 
-The safe route, when the operator provides a Cloudflare API token and decides
-where the new state lives (never in this public repo: it holds the tunnel
-secret), is a new Cloudflare-only root on provider 5.x that **imports** the
-existing tunnel and records, with a plan that shows no destroy or replace
-before any apply. Until then the tunnel and DNS stay as they are, unmanaged by
-Terraform; nothing in the running stack depends on this wave.
+The safe route, once the operator supplies the token and decides where the new
+state lives (never in this public repo), is a new Cloudflare-only root on
+provider 5.x that **imports** the existing tunnel and records (or adopts the
+exported state after reconciling it), with a plan that shows no destroy or
+replace before any apply. Until then the tunnel and DNS stay as they are,
+unmanaged by Terraform; nothing in the running stack depends on this wave.
 
 ### W13 — PostgreSQL 16.15 + pgvector 0.8.6 pinned: operational contract
 
