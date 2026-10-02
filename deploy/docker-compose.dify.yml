@@ -277,15 +277,20 @@ services:
     networks:
       - chat-network
   dify-ssrf-proxy:
-    # Dify 1.13.3 uses latest; this versioned tag resolved to the same index.
-    image: ubuntu/squid:6.6-24.04_beta@sha256:6a097f68bae708cedbabd6188d68c7e2e7a38cedd05a176e1cc0ba29e3bbe029
+    # W7a: no published image carries Squid 7.x, so it is built from the
+    # checksum- and signature-verified upstream tarball (deploy/squid/Dockerfile).
+    # `up` builds it only when the tag is missing, so a boot never depends on
+    # the network; bump the tag whenever the Dockerfile changes.
+    image: nexaduo/squid:7.7-local
+    build: ${PWD}/deploy/squid
     # Static config: no template expansion or permissive image conf.d includes.
     entrypoint: ["/usr/sbin/squid", "-N", "-f", "/etc/squid/squid.conf"]
     volumes:
       - ${PWD}/deploy/squid/squid.conf:/etc/squid/squid.conf:ro
     restart: unless-stopped
     logging: *default-logging
-    # Measured ~26MiB RSS; 4x rounds under the 128m floor.
+    # ~13MiB RSS with max_filedescriptors capped (squid.conf); test-squid.sh
+    # asserts the headroom. Without the cap it idles at ~125MiB.
     mem_limit: 128m
     networks:
       - chat-network

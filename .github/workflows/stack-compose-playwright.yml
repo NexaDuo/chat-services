@@ -163,10 +163,14 @@ jobs:
           GOOGLE_OAUTH_CLIENT_SECRET=dummy-secret
           EOF
 
+      - name: Test isolated Squid 7.7 contract (under 180s after builds)
+        run: bash scripts/tests/test-squid.sh
+
       - name: Build local images
         run: |
           docker build -t ghcr.io/nexaduo/middleware:latest ./middleware
           docker build -t ghcr.io/nexaduo/self-healing-agent:latest ./agents/self-healing
+          docker compose build dify-ssrf-proxy
 
       - name: Start Stack
         # cloudflared is in deploy/docker-compose.shared.yml; we scale it to 0
