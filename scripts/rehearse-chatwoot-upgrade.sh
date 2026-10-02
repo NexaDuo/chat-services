@@ -190,8 +190,13 @@ rails_exec sh -ec '
   asset=$(wget -qO- http://127.0.0.1:3000/app/login | grep -o "/vite/assets/[A-Za-z0-9_.-]*\.js" | head -n 1)
   [ -n "$asset" ] || { echo "no vite asset referenced"; exit 1; }
   wget -qO /dev/null "http://127.0.0.1:3000$asset" || { echo "referenced asset not served"; exit 1; }
+  # Open Graph tags (issue #273) are only added for the public host, so ask as it.
+  host=${FRONTEND_URL#*://}; host=${host%%/*}
+  og=$(wget -qO- --header "Host: $host" http://127.0.0.1:3000/app/login | grep -c "<meta property=\"og:image\" content=\"http") || true
+  [ "$og" = 1 ] || { echo "expected one og:image tag for $host, found $og"; exit 1; }
+  wget -qO /dev/null http://127.0.0.1:3000/og-images/default.png || { echo "og-images/default.png not served"; exit 1; }
 ' sh "$version" > "$logdir/web.log" 2>&1 || die "web checks failed (see $logdir/web.log)"
-log "web: /api reports $version and the referenced frontend asset is served"
+log "web: /api reports $version, the referenced frontend asset is served, og:image is emitted and served"
 
 # Application-level checks inside Rails, after the count comparison because
 # the bot probe creates a contact, a conversation and a message in the copy.

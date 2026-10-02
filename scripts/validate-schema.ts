@@ -13,6 +13,11 @@ interface TenantConfig {
     chatwoot_url?: string;
     dify_url?: string;
   };
+  branding?: {
+    og_title?: string;
+    og_description?: string;
+    og_image_url?: string;
+  };
 }
 
 interface TenantsYaml {
@@ -42,11 +47,17 @@ function validate() {
     if (!tenant.environment) {
       throw new Error(`Tenant ${tenant.slug} missing environment field`);
     }
-    if (!['production', 'staging'].includes(tenant.environment)) {
+    if (!['production', 'staging', 'ci'].includes(tenant.environment)) {
       throw new Error(`Tenant ${tenant.slug} has invalid environment: ${tenant.environment}`);
     }
     if (!tenant.infra || !tenant.infra.chatwoot_url || !tenant.infra.dify_url) {
       throw new Error(`Tenant ${tenant.slug} missing explicit infra URLs`);
+    }
+    // Issue #273: the image ends up in og:image, which crawlers only accept as
+    // an absolute http(s) URL.
+    const image = tenant.branding?.og_image_url;
+    if (image !== undefined && !/^https?:\/\/[^\s"'<>]+$/.test(image)) {
+      throw new Error(`Tenant ${tenant.slug} branding.og_image_url must be an absolute http(s) URL`);
     }
   }
   console.log('✅ tenants.yaml schema validation passed');
