@@ -951,9 +951,14 @@ Dependency updates stay inside the current majors (majors are W10):
 Checked under the pinned Node 24 image: middleware `typecheck`, `build` and
 107 unit tests; self-healing `typecheck`, `build` and 24 unit tests; root
 `typecheck`; provisioning `build`; both images build and run as non-root on
-v24.21.0. npm 11 (shipped with Node 24) no longer runs dependency install
-scripts unless approved; the only one skipped is protobufjs's version-check
-postinstall, which the OpenTelemetry exporter does not need.
+v24.21.0. npm 11 (shipped with Node 24) warns on install that protobufjs's
+postinstall script is not approved; that script only checks a version and the
+OpenTelemetry exporter works without it (telemetry preload exercised under
+Node 24). `npm audit --omit=dev` is clean for self-healing. For middleware the
+`fast-uri` advisories were fixed in the lockfile (3.1.0 to 3.1.8); the
+remaining one is `@fastify/static` 8.x, whose fix is the 10.x major scheduled
+for W10b. Its exposure here is low: the plugin only serves the public admin
+assets, with no directory listing and no guarded route behind it.
 
 Operator-only apply (use section 3's `dc`, from the main checkout):
 
