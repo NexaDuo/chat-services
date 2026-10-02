@@ -1011,13 +1011,17 @@ server moves from `@fastify/static` 8.3 to 10.1.5.
 
 - **Security**: `npm audit --omit=dev` is now clean for middleware. The 8.x
   line of `@fastify/static` carried path-normalisation advisories (route guard
-  bypass, directory-listing traversal). The plugin here only serves the public
+  bypass, directory-listing traversal: GHSA-pr96-94w5-mx2h,
+  GHSA-x428-ghpx-8j92, GHSA-8pvw-jcv7-9cmj, GHSA-83w8-p2f5-377r). The plugin here only serves the public
   SPA assets under `/admin/app/assets/`, without listing, so exposure was low;
   the upgrade removes it.
 - **Behaviour pinned by a new test** (`src/handlers/admin-static.test.ts`): a
   built asset is served with a JavaScript content type; `..`, encoded `..`,
-  double-slash and directory requests under the prefix are refused; the SPA
-  entry still redirects to the login without a session. The plugin was never
+  backslash, null-byte, double-slash, sibling-prefix, dotfile and directory
+  requests are refused (several of them by Fastify's router before the plugin
+  is reached; the test pins the outcome, not which layer refuses); the SPA
+  entry still redirects to the login without a session. The plugin now sets
+  `dotfiles: "deny"`. The plugin was never
   registered in the existing unit tests, because the build output does not
   exist under `src/`.
 - No code change was needed in the SPA or the server: `typecheck`, both

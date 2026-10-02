@@ -10,3 +10,4 @@ dist
 Dockerfile
 .dockerignore
 README.md
+src/public/app

@@ -21,6 +21,7 @@ const pool = { query: async () => ({ rows: [], rowCount: 0 }) } as any;
 beforeAll(() => {
   fs.mkdirSync(assetsDir, { recursive: true });
   fs.writeFileSync(path.join(assetsDir, "fixture.js"), "export const fixture = 1;\n");
+  fs.writeFileSync(path.join(assetsDir, ".hidden.js"), "export const fixture = 1;\n");
   fs.writeFileSync(path.join(appDir, "index.html"), "<!doctype html><title>fixture</title>\n");
 });
 afterAll(() => {
@@ -46,10 +47,16 @@ test("the assets prefix never serves files outside the assets directory", async 
     "/admin/app/assets/%2e%2e/index.html",
     "/admin/app/assets/..%2f..%2f..%2fpackage.json",
     "/admin/app/assets//fixture.js",
+    "/admin/app/assets/fixture.js%00.png",
+    "/admin/app/assets/..%5cindex.html",
+    "/admin/app/assetsX/fixture.js",
+    "/admin/app/assets/.hidden.js",
   ]) {
     const res = await app.inject({ method: "GET", url });
     expect([400, 403, 404], url).toContain(res.statusCode);
-    expect(res.payload, url).not.toContain("fixture");
+    // File contents, not the word in the URL (Fastify's 404 body echoes the URL).
+    expect(res.payload, url).not.toContain("fixture = 1");
+    expect(res.payload, url).not.toContain("<title>");
   }
 });
 
