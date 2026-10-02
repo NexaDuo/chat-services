@@ -249,6 +249,12 @@ jobs:
           done
           [[ "${code}" == "200" ]] || { echo "::error::Middleware did not become ready in time."; exit 1; }
 
+      # Real Rails producer/job -> middleware; internal webhook flow, Playwright N/A.
+      - name: Test Chatwoot Agent Bot producer contract (under 120s)
+        env:
+          COMPOSE_PROJECT_NAME: nexaduo
+        run: bash scripts/tests/test-chatwoot-agent-bot.sh
+
       - name: Verify Squid SSRF destination policy
         run: bash scripts/test-ssrf-proxy.sh
 

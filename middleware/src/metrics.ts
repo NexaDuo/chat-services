@@ -7,6 +7,7 @@ export type Metrics = {
   difyRequestDuration: Histogram<"account_id" | "status">;
   errorsTotal: Counter<"account_id" | "reason">;
   handoffsTotal: Counter<"account_id">;
+  botOwnershipSkipsTotal: Counter<"account_id" | "reason">;
   /** Groups skipped because DIFY_KILL_SWITCH was ON at flush time (issue #184). */
   difyKillSwitchSkipsTotal: Counter<"account_id">;
   /**
@@ -68,6 +69,13 @@ export function createMetrics(): Metrics {
     registers: [registry],
   });
 
+  const botOwnershipSkipsTotal = new Counter({
+    name: "middleware_bot_ownership_skips_total",
+    help: "Messages or buffered groups skipped by bot ownership checks, per account and reason.",
+    labelNames: ["account_id", "reason"] as const,
+    registers: [registry],
+  });
+
   const handoffsTotal = new Counter({
     name: "middleware_handoffs_total",
     help: "Total human handoffs triggered via /tools/handoff, per account.",
@@ -103,6 +111,7 @@ export function createMetrics(): Metrics {
     difyRequestDuration,
     errorsTotal,
     handoffsTotal,
+    botOwnershipSkipsTotal,
     difyKillSwitchSkipsTotal,
     emptyContentTotal,
     contentMarkerWithTextTotal,

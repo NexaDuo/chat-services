@@ -61,6 +61,7 @@ services:
       PORT: 4000
       CHATWOOT_BASE_URL: http://chatwoot-rails:3000
       CHATWOOT_API_TOKEN: '${CHATWOOT_API_TOKEN}'
+      CHATWOOT_BOT_TOKEN: '${CHATWOOT_BOT_TOKEN:-}'
       CHATWOOT_WEBHOOK_TOKEN: '${CHATWOOT_WEBHOOK_TOKEN}'
       DIFY_BASE_URL: http://dify-api:5001/v1
       DATABASE_URL: 'postgresql://postgres:${POSTGRES_PASSWORD}@postgres:5432/middleware'

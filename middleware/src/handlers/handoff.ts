@@ -4,6 +4,8 @@ import type { AppConfig } from "../config.js";
 import type { Metrics } from "../metrics.js";
 import type { ChatwootClient } from "../chatwoot.js";
 
+import { getInFlightDifyTurn } from "../in-turn-handoff.js";
+
 const HandoffBodySchema = z.object({
   account_id: z.union([z.string(), z.number()]),
   conversation_id: z.union([z.string(), z.number()]),
@@ -45,12 +47,15 @@ export async function registerHandoffRoute(
     const { account_id, conversation_id, summary } = parsed.data;
     const accountIdStr = String(account_id);
 
+    // Capture this turn before the request: a slow handoff must not mark a later turn.
+    const turn = getInFlightDifyTurn(app, accountIdStr, conversation_id);
     try {
       await chatwoot.toggleConversationStatus({
         accountId: account_id,
         conversationId: conversation_id,
         status: "open",
       });
+      turn?.markHandedOff();
       await chatwoot.addLabels({
         accountId: account_id,
         conversationId: conversation_id,

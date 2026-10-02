@@ -36,6 +36,7 @@ async function main(): Promise<void> {
     config.chatwoot.baseUrl,
     config.chatwoot.apiToken,
     app.log,
+    config.chatwoot.botToken,
   );
 
   await app.register(sensible);

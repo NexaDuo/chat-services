@@ -1,0 +1,12 @@
+{
+  "name": "Multitenant Chat Services",
+  "endpoint": "http://middleware:4000/webhooks/chatwoot",
+  "legacy_endpoints": [
+    "http://middleware:4000/webhooks/chatwoot",
+    "https://middleware.nexaduo.com/webhooks/chatwoot",
+    "https://api.nexaduo.com/webhooks/chatwoot"
+  ],
+  "inboxes": [
+    { "account_id": 3, "name": "miau.duda", "channel_type": "Channel::Instagram" }
+  ]
+}
