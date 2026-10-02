@@ -32,7 +32,7 @@ Legenda: **T** = tag de versão explícita, ainda mutável; **F** = flutuante (l
 | `deploy/docker-compose.nexaduo.yml:257` | `otel/opentelemetry-collector-contrib:0.111.0` | T |
 | `deploy/docker-compose.nexaduo.yml:283` | `grafana/tempo:2.6.1` | T |
 | `deploy/docker-compose.shared.yml:55` | `pgvector/pgvector:pg16` | F |
-| `deploy/docker-compose.shared.yml:90` | `redis:7.2.16-alpine@sha256:29e8589c3f9ba699b5f7aa4b3c7733c58852a3626439e619aa0ee78de08c6ca0` (W5a; prior inventory: 7.2.4) | D |
+| `deploy/docker-compose.shared.yml:90` | `redis:8.10.2-alpine@sha256:38117873…` (W5b; antes 7.2.16-alpine) | D |
 | `deploy/docker-compose.shared.yml:151` | `cloudflare/cloudflared:latest` | F |
 | `deploy/docker-compose.shared.yml:201` | `willfarrell/autoheal:1.2.0` | T |
 | `middleware/Dockerfile:8,15,24,31` | `node:22-alpine` | F |
@@ -238,7 +238,7 @@ Todos os pré-passos, gates, validações e rollback comuns acima são parte de 
 | **W4a — Tempo2.10.8** | N, `observability/tempo/tempo.yaml` | Backup `tempo-data`; `dc up -d --no-deps tempo`; traces novos e históricos, preparar blocos vParquet4+ sem perder retenção120h | R1 volume +2.6.1; **CI muda** teste TraceQL/OTLP |
 | **W4b — Tempo3.0.3** | N, YAML Tempo, dashboards/health se necessário | Novo backup; migrar config monolítica, remover ingester/compactor; `dc up -d --no-deps tempo`; testar ingestão e busca de traces antigos/novos | **R1 obrigatório**, restaurar backup2.10.8; **CI muda** fixture de blocos e config |
 | **W5a — Redis7.2.16-alpine** | S | Drenar filas/parar produtores e consumidores, backup frio redis-data; `dc up -d --no-deps redis`; PING auth, AOF OK, noeviction, tarefas Sidekiq/Celery concluídas após restart | R1 Redis7.2.4+AOF/RDB; CI: simular persistência/reconexão |
-| **W5b — Redis8.10.2-alpine, condicional** | S, documentação de clientes/licença | Só após provar compatibilidade dos clientes atuais; novo backup frio; `dc up -d --no-deps redis`; mesmas verificações, sem aumentar memória implicitamente | R1 dados7.2.16+pin, nunca abrir AOF8 com7; **CI muda**, se falhar adiar até após Chatwoot |
+| **W5b — Redis8.10.2-alpine** (evidência no contrato abaixo) | S, documentação de clientes/licença | Só após provar compatibilidade dos clientes atuais; novo backup frio; `dc up -d --no-deps redis`; mesmas verificações, sem aumentar memória implicitamente | R1 dados7.2.16+pin, nunca abrir AOF8 com7; **CI muda**, se falhar adiar até após Chatwoot |
 | **W6 — Evolution2.3.7** | N, fixture Prisma/API, CI; contrato abaixo (sem nova chave de operador) | Backup DB evolution + volume/sessões Redis; suspender autoheal durante migrations; `dc up -d --no-deps evolution-api`; esperar Prisma e reconectar instância; texto/áudio/documento inbound/outbound pelo Chatwoot, sem contatos duplicados | R1 evolution/instances/chaves Redis da instância +2.1.1; **CI muda**, migrations/fixtures, Meta validado live |
 | **W6b — Alpine3.24.2** | D, backup-host.sh, sondas Tempo/Collector | Init em fixture, round-trip de arquivo; nada recriado live; próximo backup usa o helper novo | R0 referências anteriores; CI: `test-alpine-helpers.sh` + guard de backup |
 | **W7a — Squid7.7** | D, `deploy/squid/Dockerfile` + `squid.conf`, CI; contrato abaixo | Build Squid7.7 com checksum e assinatura, ACL e proxy envs; `dc build dify-ssrf-proxy` e `dc up -d --no-deps dify-ssrf-proxy`; Alpine separado em W6b | R0 imagem/config anterior capturada; **CI muda** ACL, HTTP tool e sandbox |
