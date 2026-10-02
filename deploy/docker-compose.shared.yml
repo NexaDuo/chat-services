@@ -52,25 +52,26 @@ x-logging: &default-logging
 # translate `deploy.resources` outside Swarm.
 services:
   postgres:
-    # W13: PostgreSQL 16.15 + pgvector 0.8.6, the exact image production already
-    # ran under the floating `pg16` tag (which has since moved on).
-    image: pgvector/pgvector:0.8.6-pg16@sha256:ccc6e83d6e35e931dc7c5def2022729d5a6c370318d099181995567ff1fb4d6b
+    # W14: PostgreSQL 18.6 + pgvector 0.8.6. The data was moved from 16 by
+    # dump/restore into a NEW volume; the 16 volume is kept for rollback.
+    image: pgvector/pgvector:0.8.6-pg18@sha256:2ba9ca5f2e7daa0f0e7723cba1ee9167bab54efd3640516a44ac1a928dd67e7a
     restart: unless-stopped
     logging: *default-logging
     # Any change to this block changes the Compose config hash, and the next
     # `up` then RECREATES the container that holds the SACRED
-    # chat-services_postgres-data volume. Change it only in a planned window
+    # chat-services_postgres18-data volume. Change it only in a planned window
     # (consumers stopped, fresh backup), never as a side effect of another PR.
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: postgres
       TZ: ${TZ:-UTC}
-      # Use a subdirectory of the mounted disk as PGDATA. Mounting the ext4
-      # disk root directly fails initdb because of its lost+found directory.
-      PGDATA: /var/lib/postgresql/data/pgdata
+    # 18+ images want ONE mount at /var/lib/postgresql and keep the cluster in
+    # a versioned subdirectory (PGDATA defaults to /var/lib/postgresql/18/docker).
+    # The image refuses to start on the pre-18 layout (a mount at .../data), so
+    # a 16 volume can never be opened by mistake.
     volumes:
-      - /opt/nexaduo/postgres-data:/var/lib/postgresql/data
+      - /opt/nexaduo/postgres18-data:/var/lib/postgresql
       - /opt/nexaduo/postgres/01-init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d postgres"]

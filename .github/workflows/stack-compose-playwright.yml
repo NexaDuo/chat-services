@@ -114,7 +114,7 @@ jobs:
         run: bash scripts/tests/test-redis.sh
 
       # Internal database image/backup regression; Playwright N/A.
-      - name: Test pinned Postgres image and dump/restore with pgvector (under 60s after pulls)
+      - name: Test Postgres 16 to 18 dump/restore with pgvector (under 60s after pulls)
         run: bash scripts/tests/test-postgres.sh
 
       # Synthetic Prisma migration/config persistence; no WhatsApp session required.

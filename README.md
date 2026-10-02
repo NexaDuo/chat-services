@@ -71,7 +71,7 @@ Para provisionar uma nova instância do Instagram Direct Messages:
 ## 🛠️ Stack Components
 
 *   **Runtime:** Node.js 22 (Fastify), Ruby on Rails (Chatwoot), Python (Dify).
-*   **Persistence:** Postgres 16 (pgvector), Redis 7 (Alpine).
+*   **Persistence:** Postgres 18 (pgvector), Redis 8 (Alpine).
 *   **Infrastructure:** GCP (GCE), Cloudflare Tunnel, Terraform, Bash/Docker.
 *   **Testing:** Playwright (TypeScript) for E2E and Onboarding.
 

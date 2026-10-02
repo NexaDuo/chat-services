@@ -26,7 +26,7 @@ WhatsApp ─▶ Evolution API ─▶ Chatwoot (Webhook) ─▶ Middleware (Adapt
   sends responses back, and is the centralized config provider for internal agents.
 - **Self-Healing Agent** — analyzes Loki logs via Dify to find root causes.
 - **Observability** — Loki, Alloy, Prometheus, Grafana.
-- **Postgres 16+** (shared, separate DBs) + **pgvector** (primary vector store);
+- **Postgres 18** (shared, separate DBs) + **pgvector** (primary vector store);
   **Redis 7+** (Sidekiq + Celery). **Azure OpenAI** — `gpt-4o` + `gpt-4o-mini`.
 
 **Human handoff** is a Dify tool (HTTP) that sets the Chatwoot conversation to `open`
@@ -129,7 +129,7 @@ Reproducible bootstrap (no manual drift — issue #109):
 7. **Compose project name:** `chat-services` (renamed from the legacy `nexaduo`
    default on 2026-07-08 to match the multi-tenant terminology below — see
    "Terminology"). Container names are `chat-services-<service>-1`; volumes are
-   `chat-services_<volume>` (e.g. the SACRED `chat-services_postgres-data`). The
+   `chat-services_<volume>` (e.g. the SACRED `chat-services_postgres18-data`). The
    Docker network stays fixed as `nexaduo-network` (external, not project-scoped).
    Override with `COMPOSE_PROJECT_NAME` if ever needed.
 
@@ -220,7 +220,9 @@ states, scans logs for known anomalies, and files structured GitHub issues.
     staleness-checks it the same way. Set `BACKUP_RCLONE_REMOTE` (see
     `.env.production.example` for Google Drive setup) or it stays local-only.
 - **Postgres data is SACRED.** It lives in the Docker named volume
-  `chat-services_postgres-data`. **Never** `docker compose down -v` or prune it;
+  `chat-services_postgres18-data` (PostgreSQL 18 since W14; the 16 cluster stays
+  in `chat-services_postgres-data` as the rollback copy — prune neither).
+  **Never** `docker compose down -v` or prune it;
   `run-stack.sh down` deliberately omits `-v`. The host serves production and is shared
   with concurrent work — do **not** recreate the postgres container casually.
 - **Observability:** Grafana + Prometheus for queue depths and **token usage per
@@ -488,6 +490,16 @@ must come from the image, never a named volume. Rehearse, then apply with the
 kill switch on, a fresh backup and `chatwoot-init`. Sequence and rollback: W8
 operational contract in
 [the upgrade plan](docs/upgrade-plan-2026-09.md#w8--chatwoot-4180-ce-operational-contract).
+
+## Postgres major upgrades
+PostgreSQL is pinned to 18.6 with pgvector 0.8.6, by digest. A major upgrade is
+a dump/restore into a NEW volume, never an in-place `pg_upgrade`: 18+ images
+mount `/var/lib/postgresql` and refuse the pre-18 layout, so an old volume
+cannot be opened by mistake. Prove it first with
+`scripts/rehearse-postgres-major.sh` (production dumps restored into both
+majors, manifests compared) and `scripts/pg-manifest.sh` before/after the real
+cutover. Sequence and rollback: W14 operational contract in
+[the upgrade plan](docs/upgrade-plan-2026-09.md#w14--postgresql-18-operational-contract).
 
 ## Tempo 3.0 monolithic operations
 Tempo is pinned to 3.0.3; Kafka is not required (`target: all`). Backend scheduler

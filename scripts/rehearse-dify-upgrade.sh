@@ -63,7 +63,7 @@ cleanup() {
   else
     dc down --timeout 5 >/dev/null 2>&1 || true
     docker rm -fv "$proj-postgres" "$proj-redis" >/dev/null 2>&1 || true
-    docker volume rm "${proj}_dify-api-storage" "${proj}_dify-plugin-storage" "${proj}_pg" >/dev/null 2>&1 || true
+    docker volume rm "${proj}_dify-api-storage" "${proj}_dify-plugin-storage" >/dev/null 2>&1 || true
     docker network rm "$proj" >/dev/null 2>&1 || true
   fi
   [[ -z "$work" ]] || rm -rf "$work"
@@ -127,7 +127,7 @@ wait_for() { # description, seconds, command...
 
 log "project $proj; dumps: $(basename "$dify_dump"), $(basename "$plugin_dump"); storage: $(basename "$storage_tar")"
 docker network create "$proj" >/dev/null
-for v in dify-api-storage dify-plugin-storage pg; do docker volume create "${proj}_$v" >/dev/null; done
+for v in dify-api-storage dify-plugin-storage; do docker volume create "${proj}_$v" >/dev/null; done
 docker run --rm -i -v "${proj}_dify-api-storage:/dst" "$helper" tar xzf - -C /dst < "$storage_tar"
 # The plugin volume is not in the default backup set: copy it from the live
 # volume, mounted read-only.
@@ -135,7 +135,7 @@ docker run --rm -v "${PROD_PROJECT}_dify-plugin-storage:/src:ro" \
   -v "${proj}_dify-plugin-storage:/dst" "$helper" cp -a /src/. /dst/
 
 docker run -d --name "$proj-postgres" --network "$proj" --network-alias postgres \
-  --log-driver none -e POSTGRES_PASSWORD -v "${proj}_pg:/var/lib/postgresql/data" "$pg_image" >/dev/null
+  --log-driver none -e POSTGRES_PASSWORD "$pg_image" >/dev/null
 docker run -d --name "$proj-redis" --network "$proj" --network-alias redis \
   --log-driver none -e REDIS_PASSWORD "$redis_image" \
   sh -c 'exec redis-server --requirepass "$REDIS_PASSWORD"' >/dev/null

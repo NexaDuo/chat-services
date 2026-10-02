@@ -36,7 +36,7 @@
 #   reload-alloy- checksum-gated restart of only Alloy after a config edit
 #   status      - docker compose ps
 #
-# SAFETY: `down` never passes -v. The Postgres Docker volume (nexaduo_postgres-data)
+# SAFETY: `down` never passes -v. The Postgres Docker volume (chat-services_postgres18-data)
 # is SACRED. The live host serves production traffic and is shared with other
 # work — do NOT recreate postgres casually. See AGENTS.md Operational
 # Non-Negotiables.

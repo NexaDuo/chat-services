@@ -31,7 +31,7 @@ Legenda: **T** = tag de versão explícita, ainda mutável; **F** = flutuante (l
 | `deploy/docker-compose.nexaduo.yml:232` | `${SELF_HEALING_IMAGE}` | V |
 | `deploy/docker-compose.nexaduo.yml:257` | `otel/opentelemetry-collector-contrib:0.111.0` | T |
 | `deploy/docker-compose.nexaduo.yml:283` | `grafana/tempo:2.6.1` | T |
-| `deploy/docker-compose.shared.yml:55` | `pgvector/pgvector:0.8.6-pg16@sha256:ccc6e83d…` (W13; antes `pg16` flutuante) | D |
+| `deploy/docker-compose.shared.yml:55` | `pgvector/pgvector:0.8.6-pg18@sha256:2ba9ca5f…` (W14; W13 fixou 0.8.6-pg16) | D |
 | `deploy/docker-compose.shared.yml:90` | `redis:8.10.2-alpine@sha256:38117873…` (W5b; antes 7.2.16-alpine) | D |
 | `deploy/docker-compose.shared.yml:151` | `cloudflare/cloudflared:latest` | F |
 | `deploy/docker-compose.shared.yml:201` | `willfarrell/autoheal:1.2.0` | T |
@@ -1192,3 +1192,76 @@ Operator-only apply (use section 3's `dc`; the only planned Postgres recreate):
 6. **Rollback:** the previous image is the same image, so reverting the pin to
    the floating tag only changes the reference. If the volume were ever
    damaged, restore from the step 3 dumps as in AGENTS.md.
+
+### W14 — PostgreSQL 18 operational contract
+
+Compose pins `pgvector/pgvector:0.8.6-pg18@sha256:2ba9ca5f2e7daa0f0e7723cba1ee9167bab54efd3640516a44ac1a928dd67e7a`
+(index digest, verified with `docker buildx imagetools inspect`): PostgreSQL
+18.6 with pgvector 0.8.6. The move from 16 is a **dump/restore into a new
+volume**; nothing is upgraded in place and the 16 volume is never mounted by 18.
+
+- **Layout.** 18+ images take one mount at `/var/lib/postgresql` and keep the
+  cluster in a versioned subdirectory; the image refuses to start on the old
+  layout (a mount at `.../data`). The service therefore mounts the new named
+  volume `postgres18-data` at `/var/lib/postgresql` and no longer sets
+  `PGDATA`. `postgres-data` (the 16 cluster) stays declared and on disk, with
+  no service mounting it: it is the rollback copy.
+- **What is carried over.** One role (`postgres`), seven application
+  databases, all UTF8 / `en_US.utf8`, no custom server settings. The per-DB
+  dumps of `scripts/backup-host.sh` are therefore the whole dataset. The
+  versioned `01-init.sql` creates the databases on the new volume first, as on
+  any fresh bootstrap.
+- **Extensions.** `vector` stays 0.8.6. Two contrib modules follow the server:
+  `pg_stat_statements` 1.10 to 1.12 and `pgcrypto` 1.3 to 1.4.
+- **Data checksums** are on by default for a cluster initialised by 18.
+
+Evidence gathered before the cutover (2026-10-02, production dumps of 09:25):
+
+- `scripts/rehearse-postgres-major.sh`: the seven dumps restored with
+  `ON_ERROR_STOP=1` into a 16.15 and an 18.6 server give **identical
+  manifests**: 7 databases, 395 tables, 4266 rows, 170 sequences, the same
+  index and constraint totals, no invalid index. Restore takes 7 to 13 seconds.
+- `scripts/rehearse-chatwoot-upgrade.sh` and
+  `scripts/rehearse-dify-upgrade.sh --invoke` pass against 18.6 (Chatwoot
+  4.18.0-ce and Dify 1.17.1 on a copy of production data, including the bot
+  delivery and one real request per Dify app).
+- `scripts/tests/test-evolution.sh` (Prisma migrations) and
+  `scripts/tests/test-grafana.sh` (Grafana 11 to 13 migrations) pass on 18.6;
+  `scripts/tests/test-postgres.sh` is now a 16 to 18 dump/restore fixture with
+  a pgvector HNSW index. The ephemeral CI stack boots every service on 18.
+
+`scripts/pg-manifest.sh <container>` prints the manifest used above: per
+database, extensions, the exact row count of every table, every sequence's
+last value, index and constraint totals. NOT NULL constraints are left out
+(18 catalogs them, 16 does not) and extension versions sit on their own lines.
+
+Operator-only apply (use section 3's `dc`, from the main checkout; avoid 03:00
+and minute 15 of the hour):
+
+1. Four CI gates and both reviews pass. `scripts/rehearse-postgres-major.sh`
+   passes on the merged commit. The 18 image is pulled.
+2. Kill switch on. Stop `autoheal`, then every consumer (the W13 list).
+   Confirm no client connection remains.
+3. With the old (16) container still running and idle:
+   `scripts/pg-manifest.sh chat-services-postgres-1 > before.txt`, then
+   `scripts/backup-host.sh`. Copy the seven dumps of that run into an empty
+   directory and verify `gzip -t`.
+4. `dc up -d --no-deps postgres`. Compose replaces the container; the new one
+   mounts the empty `chat-services_postgres18-data`, runs `initdb` and
+   `01-init.sql`. The 16 volume is left untouched. Wait for `healthy` and
+   confirm `server_version` is 18.x.
+5. Restore each dump with `ON_ERROR_STOP=1` into its database, then
+   `vacuumdb --all --analyze-in-stages`.
+6. `scripts/pg-manifest.sh chat-services-postgres-1 > after.txt`. The two
+   manifests must be identical apart from the `extversion|` lines. Do not start
+   any consumer otherwise.
+7. Start the consumers in dependency order, then `autoheal`; kill switch off;
+   `scripts/run-stack.sh validate` and `scripts/health-check-all.sh`. Run
+   `scripts/backup-host.sh` once more so the newest dumps come from 18.
+8. **Rollback** (before or after opening traffic): kill switch on, stop the
+   consumers and Postgres, check out the previous commit of the two compose
+   files, `dc up -d --no-deps postgres` (16 on the untouched
+   `chat-services_postgres-data`), start the consumers. Anything written to 18
+   after the cutover is not in 16: reconcile it from a dump of the 18 databases
+   taken before going back (an 18 dump is not guaranteed to restore into 16).
+   Keep the 16 volume until the upgrade is accepted; never prune volumes.

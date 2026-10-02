@@ -79,7 +79,7 @@ docker volume create "$volume" >/dev/null
 docker volume create "$pg_volume" >/dev/null
 docker run -d --name "$pg" --network "$network" --network-alias postgres \
   -e POSTGRES_PASSWORD -e POSTGRES_USER -e POSTGRES_DB=grafana \
-  --mount "type=volume,src=$pg_volume,dst=/var/lib/postgresql/data" "$pg_image" >/dev/null
+  --mount "type=volume,src=$pg_volume,dst=/var/lib/postgresql" "$pg_image" >/dev/null
 until docker exec "$pg" pg_isready -U postgres -d grafana >/dev/null 2>&1; do sleep 1; done
 api() {
   curl -fsS --max-time 3 -u "$GF_SECURITY_ADMIN_USER:$GF_SECURITY_ADMIN_PASSWORD" "$url$1"

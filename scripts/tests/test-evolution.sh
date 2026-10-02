@@ -130,7 +130,7 @@ docker('network', 'create', name)
 for suffix in ('-instances', '-pg', '-redis'): docker('volume', 'create', name + suffix)
 docker('run', '-d', '--name', pg, '--network', name, '--network-alias', 'postgres',
        '-e', 'POSTGRES_PASSWORD=' + os.environ['POSTGRES_PASSWORD'], '-e', 'POSTGRES_DB=evolution',
-       '-v', name + '-pg:/var/lib/postgresql/data', cfg['postgres']['image'])
+       cfg['postgres']['image'])
 docker('run', '-d', '--name', redis, '--network', name, '--network-alias', 'redis',
        '-v', name + '-redis:/data', cfg['redis']['image'], *cfg['redis']['command'])
 wait(lambda: sql('SELECT 1') == '1', 'Postgres', 25)
