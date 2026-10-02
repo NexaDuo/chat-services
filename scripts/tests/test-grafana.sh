@@ -79,7 +79,7 @@ docker volume create "$volume" >/dev/null
 docker volume create "$pg_volume" >/dev/null
 docker run -d --name "$pg" --network "$network" --network-alias postgres \
   -e POSTGRES_PASSWORD -e POSTGRES_USER -e POSTGRES_DB=grafana \
-  --mount "type=volume,src=$pg_volume,dst=/var/lib/postgresql/data" "$pg_image" >/dev/null
+  --mount "type=volume,src=$pg_volume,dst=/var/lib/postgresql" "$pg_image" >/dev/null
 until docker exec "$pg" pg_isready -U postgres -d grafana >/dev/null 2>&1; do sleep 1; done
 api() {
   curl -fsS --max-time 3 -u "$GF_SECURITY_ADMIN_USER:$GF_SECURITY_ADMIN_PASSWORD" "$url$1"
@@ -113,7 +113,12 @@ snapshot() {
   # Dashboard file provisioning may finish after the HTTP listener starts.
   until api '/api/search?type=dash-db&limit=1000' | jq -r '.[].uid' | sort > "$work/$phase-dashboards" &&
     cmp -s "$work/expected-dashboards" "$work/$phase-dashboards"; do sleep 1; done
-  api /api/datasources > "$work/$phase-sources.json"
+  # Grafana 13 updates bundled datasource plugins in the background right after
+  # boot; while the PostgreSQL plugin is being swapped the API reports the
+  # legacy type id `postgres`. Wait for it to settle (the surrounding test
+  # deadline bounds this loop) so the comparison below is not racing it.
+  until api /api/datasources > "$work/$phase-sources.json" &&
+    jq -e 'all(.[]; .type != "postgres")' "$work/$phase-sources.json" >/dev/null; do sleep 1; done
   jq -r '.[].uid' "$work/$phase-sources.json" | sort > "$work/$phase-datasources"
   api /api/v1/provisioning/alert-rules > "$work/$phase-rules.json"
   jq -e 'length > 0 and all(.[]; .provenance == "file")' "$work/$phase-rules.json" >/dev/null

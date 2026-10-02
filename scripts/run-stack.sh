@@ -36,7 +36,7 @@
 #   reload-alloy- checksum-gated restart of only Alloy after a config edit
 #   status      - docker compose ps
 #
-# SAFETY: `down` never passes -v. The Postgres Docker volume (nexaduo_postgres-data)
+# SAFETY: `down` never passes -v. The Postgres Docker volume (chat-services_postgres18-data)
 # is SACRED. The live host serves production traffic and is shared with other
 # work — do NOT recreate postgres casually. See AGENTS.md Operational
 # Non-Negotiables.
@@ -145,15 +145,37 @@ restore() {
     docker exec -i "$pg" psql -U postgres -c "ALTER USER postgres PASSWORD '${pgpass}';" >/dev/null 2>&1 || \
       warn "could not ALTER postgres password (may already match)"
   fi
+  # Only the NEWEST dump of each database: the dumps directory keeps a history,
+  # and replaying every file in order only to end on the newest is slow and
+  # leaves the outcome to glob ordering.
+  local -A newest=()
+  local dump db
   shopt -s nullglob
   for dump in "$DUMPS_DIR"/*.sql.gz; do
-    local db; db="$(basename "$dump" | sed -E 's/-[0-9]{4}-[0-9]{2}-[0-9]{2}.*//')"
+    db="$(basename "$dump" | sed -E 's/-[0-9]{4}-[0-9]{2}-[0-9]{2}.*//')"
     [[ "$db" =~ ^(postgres|template0|template1)$ ]] && continue
-    log "  restoring $db <- $(basename "$dump")"
-    docker exec -i "$pg" psql -U postgres -c "CREATE DATABASE \"$db\";" >/dev/null 2>&1 || true
-    zcat "$dump" | docker exec -i "$pg" psql -U postgres -v ON_ERROR_STOP=0 -d "$db" >/dev/null
+    [[ "$db" =~ ^[a-z_][a-z0-9_]*$ ]] || { warn "skipping unexpected dump name: $(basename "$dump")"; continue; }
+    if [[ -z "${newest[$db]:-}" || "$dump" > "${newest[$db]}" ]]; then newest[$db]="$dump"; fi
   done
   shopt -u nullglob
+  (( ${#newest[@]} > 0 )) || die "no dumps found in $DUMPS_DIR"
+  # RESTORE_STRICT=1 stops at the first SQL error and fails the command (used by
+  # planned migrations). The default stays tolerant for disaster recovery, where
+  # a partly restored database beats none.
+  local strict="${RESTORE_STRICT:-0}" dbs
+  mapfile -t dbs < <(printf '%s\n' "${!newest[@]}" | sort)
+  for db in "${dbs[@]}"; do
+    dump="${newest[$db]}"
+    log "  restoring $db <- $(basename "$dump")"
+    docker exec -i "$pg" psql -U postgres -c "CREATE DATABASE \"$db\";" >/dev/null 2>&1 || true
+    if [[ "$strict" == 1 ]]; then
+      # stderr is dropped: a failed COPY quotes row data in its CONTEXT line.
+      zcat "$dump" | docker exec -i "$pg" psql -U postgres -v ON_ERROR_STOP=1 -d "$db" >/dev/null 2>&1 \
+        || die "restore of $db failed (RESTORE_STRICT=1); the database may be partly restored"
+    else
+      zcat "$dump" | docker exec -i "$pg" psql -U postgres -v ON_ERROR_STOP=0 -d "$db" >/dev/null
+    fi
+  done
   log "restore complete. NOTE: pg_dump excludes Dify per-workspace RSA privkeys"
   warn "  and chatwoot-storage uploads (Docker volumes). If model-provider creds"
   warn "  show PrivkeyNotFoundError, restore the Docker volumes too (see AGENTS.md DR)."

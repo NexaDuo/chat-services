@@ -14,7 +14,7 @@
 -- Notes:
 --   - The owner is the default POSTGRES_USER passed to the container; each
 --     app then manages its own schema with that user.
---   - `vector` requires the `pgvector/pgvector:pg16` image (ships the .so).
+--   - `vector` requires a `pgvector/pgvector` image (ships the .so).
 -- =============================================================================
 
 \set ON_ERROR_STOP on

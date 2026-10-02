@@ -132,7 +132,7 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      - postgres-data:/var/lib/postgresql/data
+      - postgres18-data:/var/lib/postgresql
       - ${PWD}/infrastructure/postgres/01-init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
 
   self-healing-agent:
@@ -144,4 +144,8 @@ volumes:
   # Retain legacy positions for rollback.
   promtail-data:
   alloy-data:
+  # SACRED: the live PostgreSQL 18 cluster.
+  postgres18-data:
+  # The PostgreSQL 16 cluster as it was at the W14 cutover. No service mounts
+  # it; it stays declared (and on disk) as the rollback copy.
   postgres-data:

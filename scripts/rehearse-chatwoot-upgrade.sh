@@ -51,7 +51,7 @@ cleanup() {
   else
     dc down --timeout 5 >/dev/null 2>&1 || true
     docker rm -fv "$proj-postgres" "$proj-redis" "$proj-receiver" >/dev/null 2>&1 || true
-    docker volume rm "${proj}_chatwoot-storage" "${proj}_pg" >/dev/null 2>&1 || true
+    docker volume rm "${proj}_chatwoot-storage" >/dev/null 2>&1 || true
     docker network rm "$proj" >/dev/null 2>&1 || true
   fi
   [[ -z "$work" ]] || rm -rf "$work"
@@ -110,11 +110,11 @@ wait_for() { # description, seconds, command...
 
 log "project $proj; dump: $(basename "$dump"); storage: $(basename "$storage_tar"); image: ${cw_image%%@*}"
 docker network create --internal "$proj" >/dev/null
-for v in chatwoot-storage pg; do docker volume create "${proj}_$v" >/dev/null; done
+for v in chatwoot-storage; do docker volume create "${proj}_$v" >/dev/null; done
 docker run --rm -i --network none -v "${proj}_chatwoot-storage:/dst" "$helper" tar xzf - -C /dst < "$storage_tar"
 
 docker run -d --name "$proj-postgres" --network "$proj" --network-alias postgres \
-  --log-driver none -e POSTGRES_PASSWORD -v "${proj}_pg:/var/lib/postgresql/data" "$pg_image" >/dev/null
+  --log-driver none -e POSTGRES_PASSWORD "$pg_image" >/dev/null
 docker run -d --name "$proj-redis" --network "$proj" --network-alias redis \
   --log-driver none -e REDIS_PASSWORD "$redis_image" \
   sh -c 'exec redis-server --requirepass "$REDIS_PASSWORD"' >/dev/null
