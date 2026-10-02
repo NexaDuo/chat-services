@@ -14,7 +14,13 @@ set -euo pipefail
 container=${1:?usage: pg-manifest.sh <postgres container>}
 q() { docker exec -i "$container" psql -v ON_ERROR_STOP=1 -U postgres -At -F '|' "$@"; }
 
-for db in $(q -d postgres -c "select datname from pg_database where not datistemplate and datname <> 'postgres' order by 1"); do
+# An array, not `for db in $(...)`: a database name must never be word-split
+# or glob-expanded by the shell.
+mapfile -t dbs < <(q -d postgres -c "select datname from pg_database where not datistemplate and datname <> 'postgres' order by 1" </dev/null)
+# A failed listing must not yield an empty manifest that compares equal to
+# another empty one.
+(( ${#dbs[@]} > 0 )) || { echo "pg-manifest: no application database listed from $container" >&2; exit 1; }
+for db in "${dbs[@]}"; do
   echo "== $db"
   q -d "$db" -c "select 'encoding', pg_encoding_to_char(encoding), datcollate, datctype from pg_database where datname = current_database()"
   q -d "$db" -c "select 'extension', extname from pg_extension where extname <> 'plpgsql' order by 2"

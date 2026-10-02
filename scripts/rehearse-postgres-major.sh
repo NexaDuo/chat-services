@@ -48,7 +48,12 @@ shopt -u nullglob
 for db in "${!dumps[@]}"; do gzip -t "${dumps[$db]}" || die "corrupt: ${dumps[$db]}"; done
 
 start() { # suffix image
-  docker run -d --name "$proj-$1" --network none -e POSTGRES_PASSWORD="$(openssl rand -hex 24)" \
+  # The cluster lives in RAM, on the image's own data path: a copy of
+  # production data must not outlive the container, even after a SIGKILL.
+  local datapath
+  datapath=$(docker image inspect "$2" --format '{{range $k, $_ := .Config.Volumes}}{{$k}}{{end}}')
+  [[ "$datapath" == /var/lib/postgresql* ]] || die "unexpected data path in $2: $datapath"
+  docker run -d --name "$proj-$1" --network none --tmpfs "$datapath" -e POSTGRES_PASSWORD="$(openssl rand -hex 24)" \
     -v "$ROOT/infrastructure/postgres/01-init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro" \
     "$2" >/dev/null
   local n=0
@@ -59,13 +64,18 @@ start() { # suffix image
   done
 }
 restore() { # suffix
-  local db
-  for db in $(printf '%s\n' "${!dumps[@]}" | sort); do
+  local db dbs
+  mapfile -t dbs < <(printf '%s\n' "${!dumps[@]}" | sort)
+  for db in "${dbs[@]}"; do
+    # Database names come from dump file names: accept only plain identifiers.
+    [[ "$db" =~ ^[a-z_][a-z0-9_]*$ ]] || die "unexpected database name in $DUMPS_DIR: $db"
     docker exec "$proj-$1" psql -U postgres -Atc "select 1 from pg_database where datname = '$db'" | grep -q 1 \
       || docker exec "$proj-$1" psql -U postgres -Atc "create database \"$db\"" >/dev/null
+    # Only the first ERROR line is shown: later lines (CONTEXT of a failed COPY)
+    # can quote row data.
     gzip -dc "${dumps[$db]}" | docker exec -i "$proj-$1" psql -v ON_ERROR_STOP=1 -U postgres -d "$db" \
       >/dev/null 2>"$work/restore-$1-$db.err" \
-      || die "restore of $db into $1 failed: $(tail -n 1 "$work/restore-$1-$db.err" | cut -c1-200)"
+      || die "restore of $db into $1 failed: $(grep -m1 -E '^(psql:.*)?ERROR:' "$work/restore-$1-$db.err" | cut -c1-160)"
   done
 }
 
@@ -82,6 +92,7 @@ t=$SECONDS; restore new; log "restored into the new server in $((SECONDS - t))s"
 
 "$ROOT/scripts/pg-manifest.sh" "$proj-old" > "$work/old.txt"
 "$ROOT/scripts/pg-manifest.sh" "$proj-new" > "$work/new.txt"
+[[ "$(grep -c '^table|' "$work/new.txt")" -gt 0 ]] || die "empty manifest from the new server"
 # Contrib extension versions follow the server major; everything else must match.
 if ! diff <(grep -v '^extversion|' "$work/old.txt") <(grep -v '^extversion|' "$work/new.txt") > "$work/manifest.diff"; then
   # Table names and counts only: no row content.

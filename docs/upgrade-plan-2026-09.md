@@ -1250,8 +1250,9 @@ and minute 15 of the hour):
    mounts the empty `chat-services_postgres18-data`, runs `initdb` and
    `01-init.sql`. The 16 volume is left untouched. Wait for `healthy` and
    confirm `server_version` is 18.x.
-5. Restore each dump with `ON_ERROR_STOP=1` into its database, then
-   `vacuumdb --all --analyze-in-stages`.
+5. Restore the newest dump of each database, stopping at the first error:
+   `RESTORE_STRICT=1 DUMPS_DIR=<the directory from step 3> scripts/run-stack.sh restore`.
+   Then `docker exec chat-services-postgres-1 vacuumdb -U postgres --all --analyze-in-stages`.
 6. `scripts/pg-manifest.sh chat-services-postgres-1 > after.txt`. The two
    manifests must be identical apart from the `extversion|` lines. Do not start
    any consumer otherwise.
@@ -1264,4 +1265,7 @@ and minute 15 of the hour):
    `chat-services_postgres-data`), start the consumers. Anything written to 18
    after the cutover is not in 16: reconcile it from a dump of the 18 databases
    taken before going back (an 18 dump is not guaranteed to restore into 16).
-   Keep the 16 volume until the upgrade is accepted; never prune volumes.
+   If the 16 data itself must be rebuilt, use the step 3 dumps, not the newer
+   ones taken from 18. The 16 volume is no longer mounted by any container, so
+   `docker volume prune` WOULD delete it: keep it until the upgrade is accepted
+   and never prune volumes on this host.
