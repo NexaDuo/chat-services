@@ -1002,3 +1002,33 @@ the new version (CI adds `--with-deps` because its runner starts without the
 system libraries; the host already has them), then run `validate` and
 `scripts/health-check-all.sh`.
 Rollback: revert the manifests and locks and reinstall.
+
+### W10b — React 19, Vite 8 and @fastify/static 10 operational contract
+
+Middleware only. The admin SPA (`middleware/admin-ui`, two components) moves to
+React 19.3 with `@types/react` 19, Vite 8.3 and `@vitejs/plugin-react` 6.1; the
+server moves from `@fastify/static` 8.3 to 10.1.5.
+
+- **Security**: `npm audit --omit=dev` is now clean for middleware. The 8.x
+  line of `@fastify/static` carried path-normalisation advisories (route guard
+  bypass, directory-listing traversal). The plugin here only serves the public
+  SPA assets under `/admin/app/assets/`, without listing, so exposure was low;
+  the upgrade removes it.
+- **Behaviour pinned by a new test** (`src/handlers/admin-static.test.ts`): a
+  built asset is served with a JavaScript content type; `..`, encoded `..`,
+  double-slash and directory requests under the prefix are refused; the SPA
+  entry still redirects to the login without a session. The plugin was never
+  registered in the existing unit tests, because the build output does not
+  exist under `src/`.
+- No code change was needed in the SPA or the server: `typecheck`, both
+  TypeScript builds, the Vite build and the 110 unit tests pass on Node 24.
+  The bundle grows from about 149 kB to about 225 kB (48 to 71 kB gzipped).
+
+Operator apply: tag the current middleware image `:pre-w10b`, build from the
+merged commit, `dc up -d --no-deps middleware`. Verify `/health`, that
+`/admin/login` renders, that the asset referenced by `/admin/app` (after login)
+is served with 200, that a traversal attempt under `/admin/app/assets/` is
+refused, then `scripts/run-stack.sh validate` and
+`scripts/health-check-all.sh`. The React screens themselves need a logged-in
+browser check by the operator. **R0:** retag `:pre-w10b` to `:local` and
+recreate middleware.
