@@ -70,7 +70,7 @@ docker exec "$name-src" pg_dump -U postgres -d dify --no-owner --clean --if-exis
 [[ "$(q dst dify -c "$nearest")" == "$src_nearest" ]]
 [[ "$(q dst dify -c "select count(*) from pg_indexes where indexname='w13_items_hnsw' and indexdef like '%hnsw%'")" == 1 ]]
 # The sequence continues after the restore and the unique constraint holds.
-[[ "$(q dst dify -c "insert into w13_items (label, embedding) values ('after', '[1,1,1]') returning id")" == 201* ]]
+[[ "$(q dst dify -c "insert into w13_items (label, embedding) values ('after', '[1,1,1]') returning id" | head -n 1)" == 201 ]]
 if q dst dify -c "insert into w13_items (label, embedding) values ('after', '[1,1,1]')" >/dev/null 2>&1; then
   echo "FAIL: unique constraint lost in restore" >&2; exit 1
 fi

@@ -1166,7 +1166,9 @@ unreviewed image on the next pull. No extension update and no data change.
 Operator-only apply (use section 3's `dc`; the only planned Postgres recreate):
 
 1. Four CI gates and both reviews pass. Confirm the pinned digest is present
-   locally (it is the running image).
+   locally (it is the running image). Run from the main checkout, and keep
+   clear of the 03:00 backup cron and of minute 15 of each hour (the scheduled
+   health probe), so neither runs against a stopped Postgres.
 2. Kill switch on. Stop `autoheal`, then every consumer: `self-healing-agent`,
    `middleware`, `evolution-api`, `chatwoot-rails`, `chatwoot-sidekiq`,
    `dify-web`, `dify-api`, `dify-worker`, `dify-plugin-daemon`, `grafana`.

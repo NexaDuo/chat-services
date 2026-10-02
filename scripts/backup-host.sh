@@ -127,7 +127,7 @@ fi
 #    (an upgrade rehearsal runs a throwaway "...-postgres" container too).
 PG="$(docker ps --filter "name=^/${COMPOSE_PROJECT_NAME:-chat-services}-postgres-1$" --format '{{.Names}}' | head -n1)"
 if [[ -z "$PG" ]]; then
-  log "ERRO: container Postgres não encontrado (docker ps name=postgres)."
+  log "ERRO: container Postgres não encontrado (esperado: ${COMPOSE_PROJECT_NAME:-chat-services}-postgres-1)."
   exit 1
 fi
 log "Container Postgres: $PG"
