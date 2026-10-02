@@ -52,20 +52,15 @@ x-logging: &default-logging
 # translate `deploy.resources` outside Swarm.
 services:
   postgres:
-    image: pgvector/pgvector:pg16
+    # W13: PostgreSQL 16.15 + pgvector 0.8.6, the exact image production already
+    # ran under the floating `pg16` tag (which has since moved on).
+    image: pgvector/pgvector:0.8.6-pg16@sha256:ccc6e83d6e35e931dc7c5def2022729d5a6c370318d099181995567ff1fb4d6b
     restart: unless-stopped
     logging: *default-logging
-    # NOTE (issue #156): the line above IS committed (a from-scratch bootstrap
-    # must produce a compliant postgres container), but the LIVE production
-    # container has deliberately NOT been recreated to pick it up in this PR.
-    # Postgres holds the SACRED chat-services_postgres-data volume and
-    # AGENTS.md requires explicit sign-off before touching it, even for a
-    # non-destructive attribute like logging (`docker compose up` alone does
-    # not reconfigure a running container — only a recreate does, and a
-    # recreate of postgres is exactly the "don't fold it into a bulk
-    # recreate" case). health-check-all.sh's log-policy assertion will
-    # legitimately flag the live postgres container until this recreate is
-    # explicitly approved and performed.
+    # Any change to this block changes the Compose config hash, and the next
+    # `up` then RECREATES the container that holds the SACRED
+    # chat-services_postgres-data volume. Change it only in a planned window
+    # (consumers stopped, fresh backup), never as a side effect of another PR.
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}

@@ -70,12 +70,9 @@ APPLY="${BACKFILL_APPLY:-0}"
 [[ "${1:-}" == "--apply" ]] && APPLY=1
 
 # Locate the Postgres container the same way scripts/backup-host.sh does.
-PG="$(docker ps --filter 'name=postgres' --filter 'ancestor=pgvector/pgvector:pg16' --format '{{.Names}}' | head -n1)"
+PG="$(docker ps --filter "name=^/${COMPOSE_PROJECT_NAME:-chat-services}-postgres-1$" --format '{{.Names}}' | head -n1)"
 if [[ -z "$PG" ]]; then
-  PG="$(docker ps --filter 'name=^/chat-services-postgres' --format '{{.Names}}' | head -n1)"
-fi
-if [[ -z "$PG" ]]; then
-  echo "ERRO: container Postgres não encontrado (docker ps name=postgres)." >&2
+  echo "ERRO: container Postgres não encontrado (esperado: ${COMPOSE_PROJECT_NAME:-chat-services}-postgres-1)." >&2
   exit 1
 fi
 

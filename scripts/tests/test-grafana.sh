@@ -6,7 +6,7 @@ image=$(sed -n 's/^    image: \(grafana\/grafana:.*\)$/\1/p' "$ROOT/deploy/docke
 [[ $image =~ ^grafana/grafana:13\.[^@]+@sha256:[a-f0-9]{64}$ ]]
 old_image=grafana/grafana:11.6.16@sha256:d67af92050b8d93b393dc741864752a69c9da1ffa39c1bb9af49ad5d9e47d2c3
 bridge_image=grafana/grafana:12.4.11@sha256:3ea272e5cab64a4a62240c682e2c62433b25614d956d44c299a10cb6994f6f2e
-# Use the repository's PG16 variant (currently a floating pg16 tag, not a digest).
+# Use the repository's pinned PG16 image.
 pg_image=$(sed -n 's/^    image: \(pgvector\/pgvector:.*\)$/\1/p' "$ROOT/deploy/docker-compose.shared.yml")
 [[ -n $pg_image ]]
 if [[ ${1:-} != --bounded ]]; then

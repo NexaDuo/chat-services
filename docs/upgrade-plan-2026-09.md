@@ -31,7 +31,7 @@ Legenda: **T** = tag de versão explícita, ainda mutável; **F** = flutuante (l
 | `deploy/docker-compose.nexaduo.yml:232` | `${SELF_HEALING_IMAGE}` | V |
 | `deploy/docker-compose.nexaduo.yml:257` | `otel/opentelemetry-collector-contrib:0.111.0` | T |
 | `deploy/docker-compose.nexaduo.yml:283` | `grafana/tempo:2.6.1` | T |
-| `deploy/docker-compose.shared.yml:55` | `pgvector/pgvector:pg16` | F |
+| `deploy/docker-compose.shared.yml:55` | `pgvector/pgvector:0.8.6-pg16@sha256:ccc6e83d…` (W13; antes `pg16` flutuante) | D |
 | `deploy/docker-compose.shared.yml:90` | `redis:8.10.2-alpine@sha256:38117873…` (W5b; antes 7.2.16-alpine) | D |
 | `deploy/docker-compose.shared.yml:151` | `cloudflare/cloudflared:latest` | F |
 | `deploy/docker-compose.shared.yml:201` | `willfarrell/autoheal:1.2.0` | T |
@@ -1116,3 +1116,79 @@ pnpm 10 (format 9.0, from 6.0) and `packageManager` now pins pnpm 10.34.6.
   the code still builds against the pinned toolchain.
 
 Rollback: revert the manifest and lockfile.
+
+### W12 — Terraform Cloudflare: blocked on operator inputs
+
+Not executed. The inputs it needs are held by the operator, outside this repo
+and outside the running stack:
+
+- **State.** The backend is the GCS bucket `nexaduo-terraform-state`
+  (`envs/production/foundation/backend.tf`), which went away with GCP. The
+  operator kept an export of the foundation state taken before the
+  decommissioning (2026-06-29, Terraform 1.9.8, 25 resources, eight of them
+  Cloudflare: the tunnel, its config and six DNS records). It contains the
+  tunnel secret and is three months old, so it must be reconciled against the
+  live Cloudflare account before anything is planned from it.
+- **Credential.** The Cloudflare API token was read from GCP Secret Manager
+  (`foundation/secrets.tf`); the host `.env` only holds the tunnel token.
+- **Layout.** The foundation root mixes the dead GCP resources with the live
+  Cloudflare ones, so it cannot be planned as it stands, and no Terraform CLI
+  is installed on the host.
+
+The safe route, once the operator supplies the token and decides where the new
+state lives (never in this public repo), is a new Cloudflare-only root on
+provider 5.x that **imports** the existing tunnel and records (or adopts the
+exported state after reconciling it), with a plan that shows no destroy or
+replace before any apply. Until then the tunnel and DNS stay as they are,
+unmanaged by Terraform; nothing in the running stack depends on this wave.
+
+### W13 — PostgreSQL 16.15 + pgvector 0.8.6 pinned: operational contract
+
+Compose pins `pgvector/pgvector:0.8.6-pg16@sha256:ccc6e83d6e35e931dc7c5def2022729d5a6c370318d099181995567ff1fb4d6b`
+(index digest, verified with `docker buildx imagetools inspect`). This is the
+image the production container was already running under the floating `pg16`
+tag: same image ID, server 16.15, and `vector` 0.8.6 already installed in the
+two databases that use it (`chatwoot`, `dify`). The `pg16` tag has since moved
+to a newer build, so the pin freezes what is validated instead of adopting an
+unreviewed image on the next pull. No extension update and no data change.
+
+- **Container lookup by exact name.** `scripts/backup-host.sh`,
+  `scripts/run-stack.sh restore` and
+  `scripts/backfill-contact-dify-conversations.sh` located Postgres by the
+  image tag `pgvector/pgvector:pg16` plus a loose `name=postgres` filter. The
+  image filter breaks with any pin, and the loose name also matches the
+  throwaway Postgres of an upgrade rehearsal. They now match
+  `<project>-postgres-1` exactly.
+- **`scripts/tests/test-postgres.sh`** (CI): pin guard, server major, pgvector
+  version shipped by the image, databases created by the versioned
+  `01-init.sql`, and a dump with the flags `backup-host.sh` uses restored into
+  a second server: row count, nearest-neighbour result, HNSW index, sequence
+  continuity and unique constraint all carried across.
+- The compose comment saying the live container had not been recreated since
+  issue #156 was stale: the live container's config hash already matched the
+  compose file (the container was created on 2026-09-27, after the restore).
+
+Operator-only apply (use section 3's `dc`; the only planned Postgres recreate):
+
+1. Four CI gates and both reviews pass. Confirm the pinned digest is present
+   locally (it is the running image). Run from the main checkout, and keep
+   clear of the 03:00 backup cron and of minute 15 of each hour (the scheduled
+   health probe), so neither runs against a stopped Postgres.
+2. Kill switch on. Stop `autoheal`, then every consumer: `self-healing-agent`,
+   `middleware`, `evolution-api`, `chatwoot-rails`, `chatwoot-sidekiq`,
+   `dify-web`, `dify-api`, `dify-worker`, `dify-plugin-daemon`, `grafana`.
+   Confirm no client connection remains besides the session used to check.
+3. `scripts/backup-host.sh` with the consumers stopped; verify `gzip -t` on
+   every dump. Record per-database row counts for a few key tables and the
+   extension versions.
+4. `dc up -d --no-deps postgres`. Compose recreates the container because the
+   image reference changed; the named volume `chat-services_postgres-data` and
+   `PGDATA` are untouched. Wait for `healthy`.
+5. Verify: same server version, same extension versions, same row counts, the
+   volume is the same one, clean start in the log (no recovery beyond a normal
+   shutdown checkpoint). Start the consumers in dependency order, then
+   `autoheal`; kill switch off; `scripts/run-stack.sh validate` and
+   `scripts/health-check-all.sh`.
+6. **Rollback:** the previous image is the same image, so reverting the pin to
+   the floating tag only changes the reference. If the volume were ever
+   damaged, restore from the step 3 dumps as in AGENTS.md.
