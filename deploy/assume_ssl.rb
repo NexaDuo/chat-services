@@ -9,7 +9,7 @@
 # header. The scheme mismatch fails `verified_request?` and every PATCH/POST in the
 # Rails `/super_admin` panel returns HTTP 422 (`unverified_request`).
 #
-# Chatwoot v4.13.0 runs `config.load_defaults 7.0` and never wires the
+# Chatwoot (checked on v4.13.0 and v4.18.0) runs `config.load_defaults 7.0` and never wires the
 # `RAILS_ASSUME_SSL` env into `config.assume_ssl`, so setting the env alone is inert.
 # This initializer wires it: when `RAILS_ASSUME_SSL` is truthy, `config.assume_ssl`
 # inserts `ActionDispatch::AssumeSSL`, which normalizes the rack env to https

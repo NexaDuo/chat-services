@@ -14,7 +14,7 @@ Legenda: **T** = tag de versão explícita, ainda mutável; **F** = flutuante (l
 
 | Arquivo:linha | Referência atual | Tipo |
 |---|---|---|
-| `deploy/docker-compose.chatwoot.yml:34,72,126` | `chatwoot/chatwoot:v4.13.0-ce` | T |
+| `deploy/docker-compose.chatwoot.yml:34,72,133` | `chatwoot/chatwoot:v4.18.0-ce@sha256:faaa58a9…` (W8; antes v4.13.0-ce) | D |
 | `deploy/docker-compose.dify.yml:32` | `alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6` | D (W6b) |
 | `deploy/docker-compose.dify.yml:43,124` | `langgenius/dify-api:1.17.1@sha256:ceede5b9…` (W7b; antes 1.13.3) | D |
 | `deploy/docker-compose.dify.yml:180` | `langgenius/dify-web:1.17.1@sha256:6353fe8e…` (W7b; antes 1.13.3) | D |
@@ -764,3 +764,102 @@ Operator-only apply (use section 3's `dc`, from the main checkout):
    restored: Dify keeps only queue and cache state there, and with the workers
    stopped before the backup no job is pending. Writes made after the backup
    are lost and must be reconciled from Chatwoot.
+
+### W8 — Chatwoot 4.18.0-ce operational contract
+
+All three services (`chatwoot-init`, `chatwoot-rails`, `chatwoot-sidekiq`) pin
+`chatwoot/chatwoot:v4.18.0-ce@sha256:faaa58a911cda8f2ab9d717ddf8ca4332163b07da4c5da10711d896e5d667442`
+(index digest, verified with `docker buildx imagetools inspect`). Reviewed the
+upstream release notes for every release from 4.14.0 to
+[4.18.0](https://github.com/chatwoot/chatwoot/releases/tag/v4.18.0) and read the
+4.18.0 image where the notes were not specific. What applies here:
+
+- **Webhooks go through SafeFetch and private addresses are refused** (since
+  4.14; `lib/webhooks/trigger.rb`, `lib/safe_fetch.rb`). The Agent Bot endpoint
+  is `http://middleware:4000/webhooks/chatwoot` on the Docker network. Without
+  a change the bot goes silent and, because a failed bot delivery moves the
+  conversation, every `pending` conversation is opened. The only switch 4.18 CE
+  offers is `SAFE_FETCH_ALLOW_PRIVATE_NETWORK=true`, now set on rails and
+  sidekiq. It is all-or-nothing: avatar and upload-by-URL fetches can reach
+  private addresses too, as they could on 4.13, which had no SafeFetch.
+  Tracked in #260 with the two narrower alternatives.
+- **`chatwoot-public` is no longer mounted.** The named volume at `/app/public`
+  held the 4.13 frontend assets and would have masked the 4.18 ones (under
+  `vite/assets`, 122 of the 298 files of the new image were missing from the
+  volume, and the Vite manifest differs). It contained exactly the
+  4.13 image content and nothing written at runtime, so the mount is removed
+  and assets are served from the image. The Docker volume itself is left on
+  the host, untouched, for rollback.
+- **Rails 7.1 to 7.2, Ruby 3.4.** `deploy/ai_agents.rb` still differs from
+  upstream only by the table-existence guard (the upstream file is byte
+  identical in 4.13 and 4.18). `deploy/assume_ssl.rb` is still needed: 4.18
+  keeps `load_defaults 7.0` and does not wire `RAILS_ASSUME_SSL`. The entrypoint
+  script and `config/initializers/omniauth.rb` are unchanged in place.
+- **Migrations are forward-only** in practice: more than 50 migrations between
+  schema `20260410092753` and `20260831000000`. Rollback is restore.
+- **Agent Bot contract**: the bot's access token is still accepted by the
+  messages API, and new conversations in a bot inbox still start `pending`.
+  Deliveries are HMAC-signed with the bot's `secret`
+  (`X-Chatwoot-Signature` over timestamp and body), which is what #252 needs.
+- Not used here and not reviewed further: Captain (Enterprise), voice/calling,
+  Dyte to RealtimeKit, Help Center, Intercom/Freshdesk imports. No new operator
+  key; `.env.production.example` is unchanged.
+
+**Rehearsal on a copy of production data.**
+`scripts/rehearse-chatwoot-upgrade.sh` restores the newest `chatwoot` dump and
+`chatwoot-storage` archive into throwaway resources on an **internal** network
+(no egress: the copy carries real channel credentials), with Traefik/autoheal
+labels reset and the log driver off. It runs the cutover's migration command
+(`chatwoot-init`), boots rails and sidekiq, and checks: schema version stable
+on boot, 16 table counts unchanged, `/api` reports the pinned version, the
+login page references a Vite asset that the container actually serves (image
+self-consistency; the rehearsal never mounts the old public volume), no
+pending migration, `assume_ssl` applied, every attached blob present in storage
+and one downloaded, a real incoming message in the bot inbox stays `pending`
+and reaches a stand-in receiver at `middleware:4000`, the bot token posts a
+reply through the API, and a negative control with the SafeFetch switch off is
+blocked and opens the conversation.
+
+Result on 2026-10-02 against the 05:09 dump: migration in 16 seconds; counts
+unchanged (2 accounts, 16 conversations, 195 messages, 38 blobs); web, storage,
+bot delivery, bot reply and negative control as expected; no restart or OOM;
+rails ~465 MiB of 1536, sidekiq ~460 MiB of 2048. About 60 seconds end to end.
+CI covers the fresh-install path and runs the Agent Bot producer contract
+against the real middleware on the pinned image; the upgrade path is covered by
+this rehearsal. Playwright: the existing Stage 1 suite probes the Chatwoot edge
+route; login and onboarding flows are unchanged.
+
+Operator-only apply (use section 3's `dc`, from the main checkout):
+
+1. Four CI gates and both reviews pass. `dc pull chatwoot-rails`. Run
+   `scripts/rehearse-chatwoot-upgrade.sh` on the merged commit; do not continue
+   unless it passes.
+2. Kill switch on (`docs/dify-kill-switch.md`). `dc stop autoheal`. Confirm the
+   Sidekiq queues are empty, then `dc stop chatwoot-rails chatwoot-sidekiq`.
+   While Chatwoot is down the edge answers 502 and Meta retries its webhooks
+   later; keep the window short. Never stop or recreate Postgres or Redis.
+3. `scripts/backup-host.sh` with the consumers stopped (the default set already
+   includes `chatwoot-storage`). Verify `gzip -t` on the `chatwoot` dump and the
+   storage archive; note their paths for R1. Record row counts and the schema
+   version.
+4. Migrate once: `dc run --rm --no-deps chatwoot-init`. It must exit 0.
+5. `dc up -d --no-deps chatwoot-rails chatwoot-sidekiq`.
+6. Verify: both healthy, `/api` reports 4.18.0, schema `20260831000000`, row
+   counts equal to step 3, attached blobs readable, the login page's asset is
+   served, `SafeFetch.allow_private_network?` true in rails and sidekiq, no
+   restart loop or OOM. Kill switch off, `dc start autoheal`,
+   `scripts/run-stack.sh validate`, `scripts/health-check-all.sh`. The bot is
+   not probed with a synthetic conversation in production (it would call Dify
+   and Meta for a fake contact): watch the next real message reach the
+   middleware, be answered, and stay `sent` with a `source_id`. Login through
+   the tunnel and attachments in the UI are operator checks.
+7. **R1:** stop autoheal, rails and sidekiq. Archive the failed state. Drop and
+   recreate **only** the `chatwoot` database in the existing Postgres and
+   restore the step 3 dump with `ON_ERROR_STOP=1`; empty and restore
+   `chatwoot-storage` from its archive; revert the compose change (4.13.0-ce
+   pins, the `chatwoot-public` mounts **and** its top-level volume declaration;
+   the volume is still on the host, so do not run `docker volume prune` until
+   the upgrade is accepted);
+   `dc up -d --no-deps chatwoot-rails chatwoot-sidekiq`; verify. Messages that
+   arrived after the backup are lost in Chatwoot and must be recovered from the
+   channels.
