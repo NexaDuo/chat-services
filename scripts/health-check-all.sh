@@ -67,11 +67,23 @@ check_backup_freshness() {
     [[ -d "$BACKUP_DIR" ]] || fail "backup dir ${BACKUP_DIR} does not exist (no dumps ever taken?)"
     if [[ -f "${BACKUP_DIR}/.backup-last-fail" ]]; then
       cat "${BACKUP_DIR}/.backup-last-fail" >&2
-      if grep -q 'offhost=failed' "${BACKUP_DIR}/.last-success" 2>/dev/null \
-         && [[ -n "$(find "${BACKUP_DIR}/.last-success" -mmin "-$(( BACKUP_MAX_AGE_HOURS * 60 ))" 2>/dev/null)" ]]; then
-        fail "LAST BACKUP RUN FAILED OFF-HOST ONLY: the LOCAL backup is fresh (local restore possible); see reason= in ${BACKUP_DIR}/.last-success"
+      # "OFF-HOST ONLY" ONLY if .last-success is fresh (<MAX_AGE), says local=ok (not partial),
+      # offhost=failed, and the failure marker belongs to that same run (written within
+      # minutes after it); a LATER outright failure leaves the marker much newer.
+      ls_f="${BACKUP_DIR}/.last-success"; mk_f="${BACKUP_DIR}/.backup-last-fail"
+      if [[ -f "$ls_f" ]] && grep -Eq 'local=ok .*offhost=failed' "$ls_f" 2>/dev/null; then
+        ls_m="$(stat -c %Y "$ls_f")"; mk_m="$(stat -c %Y "$mk_f")"
+        if (( $(date +%s) - ls_m < BACKUP_MAX_AGE_HOURS * 3600 && mk_m - ls_m <= 600 )); then
+          fail "LAST BACKUP RUN FAILED OFF-HOST ONLY: the LOCAL backup is fresh (local restore possible); see reason= in ${ls_f}"
+        fi
       fi
       fail "LAST BACKUP RUN FAILED (${BACKUP_DIR}/.backup-last-fail; cleared by the next successful backup-host.sh run)"
+    fi
+    if [[ -f "${BACKUP_DIR}/.backup-skipped" ]]; then
+      skip_n="$(sed -n 's/^count=\([0-9]*\).*/\1/p' "${BACKUP_DIR}/.backup-skipped" | head -n1)"
+      if [[ "${skip_n:-0}" =~ ^[0-9]+$ ]] && (( skip_n >= 3 )); then
+        echo "WARN: backup-host.sh was skipped ${skip_n}x by lock contention ($(cat "${BACKUP_DIR}/.backup-skipped")); a hung run may hold the lock" >&2
+      fi
     fi
     newest_dump="$(find "$BACKUP_DIR" -type f -name '*.sql.gz' -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -n1)"
     [[ -n "$newest_dump" ]] || fail "no *.sql.gz dumps in ${BACKUP_DIR} — daily backup cron is not producing dumps"

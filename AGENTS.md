@@ -271,7 +271,16 @@ states, scans logs for known anomalies, and files structured GitHub issues.
     (plaintext secrets are never uploaded while a recipient is configured), the run
     ends non-zero, `.last-success` records `local=ok|partial offhost=failed reason=...`
     and `health-check-all.sh` reports "OFF-HOST ONLY" while the local copy is fresh.
-    Long steps are wrapped in `timeout` (`BACKUP_STEP_TIMEOUT`, 3600s); a contended
+    Two distinct plaintext cases: (1) NO recipient configured (current production state):
+    normal `env-`/`clone-secrets-<ts>.tar.gz` ARE produced and uploaded, with the loud
+    plaintext warning, by policy; (2) a recipient is configured but encryption is broken:
+    the plaintext fallback is written ONLY to `quarantine-plaintext/` (0700, files 0600),
+    a location no upload filter matches regardless of what later runs resolve (an
+    unconditional first `--filter '- /quarantine-plaintext/**'`), and the next good run
+    leaves it there until rotation. Modes 0700/0600 are asserted, not assumed, and a remote
+    equal to/inside/above `BACKUP_DIR` is refused. Long steps are wrapped in
+    `timeout -k 5` (`BACKUP_STEP_TIMEOUT`, 3600s; volume helper containers are
+    named and `docker rm -f`'d on timeout; killing `docker exec` closes pg_dump's pipe); a contended
     `flock` skips with a counter in `$BACKUP_DIR/.backup-skipped`, any other flock error
     fails. A remote folder belongs to ONE host (a second clone's plaintext archives
     would be purged). Test hooks (`BACKUP_CLOCK_CMD`, `BACKUP_SLEEP_CMD`,

@@ -39,9 +39,11 @@ case "$1" in
     if [[ "$*" == *pg_isready* ]]; then
       n="$(cat "$FAKE_LOG_DIR/pg-count" 2>/dev/null || echo 0)"; echo $((n+1)) > "$FAKE_LOG_DIR/pg-count"
       (( n >= ${FAKE_PG_NOTREADY_CALLS:-0} )) || { echo "no response" >&2; exit 2; }
-    elif [[ "$*" == *psql* ]]; then printf 'chatwoot\nmiddleware\n'; [[ -z "${FAKE_DB_EXTRA:-}" ]] || echo "$FAKE_DB_EXTRA"; else seq 1 800; fi ;;
+    elif [[ "$*" == *psql* ]]; then printf 'chatwoot\nmiddleware\n'; [[ -z "${FAKE_DB_EXTRA:-}" ]] || echo "$FAKE_DB_EXTRA"; else [[ -z "${FAKE_HANG_DUMP:-}" ]] || exec sleep 30; seq 1 800; fi ;;
   volume) echo chat-services_chatwoot-storage ;;
-  run) seq 1 800 | gzip ;;
+  rm) echo "rm $*" >> "$FAKE_LOG_DIR/docker-rm.log" ;;
+  run) [[ -z "${FAKE_HANG_RUN:-}" ]] || exec sleep 30
+    echo "run $*" >> "$FAKE_LOG_DIR/docker-run.log"; seq 1 800 | gzip ;;
   *) echo "unexpected docker $*" >&2; exit 99 ;;
 esac
 STUB
@@ -128,7 +130,7 @@ scenario() {
   export FAKE_LOG_DIR="$S/log" BACKUP_DIR="$S/dumps" BACKUP_REPO_ROOT="$S/clone" ENV_FILE="$S/clone/.env"
   echo 0 > "$S/log/clock"
   export BACKUP_TEST_MODE=1 BACKUP_WAIT_SECONDS=5 NOTIFY_STATE_DIR="$S/notify-state" BACKUP_SLEEP_CMD="$TMP/bin/fake-sleep" BACKUP_CLOCK_CMD="$TMP/bin/fake-clock"
-  unset FAKE_DOCKER_DOWN_CALLS FAKE_PG_NOTREADY_CALLS FAKE_RCLONE_SKIP FAKE_GPG_FAIL_AFTER FAKE_DB_EXTRA BACKUP_CLONE_REQUIRED_PATHS BACKUP_RCLONE_REMOTE BACKUP_GPG_RECIPIENT BACKUP_KEEP_DAYS BACKUP_CLONE_SECRET_PATHS || true
+  unset FAKE_DOCKER_DOWN_CALLS FAKE_PG_NOTREADY_CALLS FAKE_RCLONE_SKIP FAKE_GPG_FAIL_AFTER FAKE_HANG_DUMP FAKE_HANG_RUN BACKUP_STEP_TIMEOUT FAKE_DB_EXTRA BACKUP_CLONE_REQUIRED_PATHS BACKUP_RCLONE_REMOTE BACKUP_GPG_RECIPIENT BACKUP_KEEP_DAYS BACKUP_CLONE_SECRET_PATHS || true
 }
 run_backup() { bash "$ROOT/scripts/backup-host.sh" > "$S/out" 2>&1; }
 
@@ -235,6 +237,33 @@ run_backup || { cat "$S/out"; fail "run after lock release"; }
 [[ ! -e "$S/dumps/.backup-skipped" ]] || fail ".backup-skipped not cleared on success"
 ok "numeric settings decimal+bounded, deterministic wait, flock skips overlap without stuck lock"
 
+# SEC-18: remote overlapping BACKUP_DIR is refused (not off-host); local backup still taken
+scenario overlap
+export BACKUP_RCLONE_REMOTE="$S/dumps"
+if run_backup; then fail "remote == BACKUP_DIR must fail"; fi
+grep -q 'igual/dentro/acima de BACKUP_DIR' "$S/out" || fail "no overlap message"
+has "$S/dumps/chatwoot-*.sql.gz" || fail "overlap must not block local dumps"
+export BACKUP_RCLONE_REMOTE="$S"
+if run_backup; then fail "remote above BACKUP_DIR must fail"; fi
+mkdir -p "$S/dumps/sub"; export BACKUP_RCLONE_REMOTE="$S/dumps/sub"
+if run_backup; then fail "remote inside BACKUP_DIR must fail"; fi
+ok "remote overlapping BACKUP_DIR refused; local backup kept"
+
+# REV-24: BACKUP_STEP_TIMEOUT kills hung steps; no partial archive counts; no .last-success
+scenario hangdump
+export BACKUP_STEP_TIMEOUT=1 FAKE_HANG_DUMP=1
+if run_backup; then fail "hung pg_dump must fail the run"; fi
+grep -q 'timeout' "$S/out" || fail "no timeout message"
+has "$S/dumps/chatwoot-*.sql.gz" && fail "partial dump left behind"
+[[ ! -e "$S/dumps/.last-success" && -s "$S/dumps/.backup-last-fail" ]] || fail "hung dump: .last-success/marker wrong"
+scenario hangrun
+export BACKUP_STEP_TIMEOUT=1 FAKE_HANG_RUN=1
+if run_backup; then fail "hung volume tar must fail the run"; fi
+has "$S/dumps/chat-services_chatwoot-storage-*.tar.gz" && fail "partial volume archive left behind"
+grep -q 'rm -f nexaduo-backup-chat-services_chatwoot-storage' "$S/log/docker-rm.log" || fail "helper container not force-removed on timeout"
+[[ ! -e "$S/dumps/.last-success" && -s "$S/dumps/.backup-last-fail" ]] || fail "hung run: .last-success/marker wrong"
+ok "BACKUP_STEP_TIMEOUT: hung pg_dump/volume tar killed, partials removed, container rm -f, no .last-success"
+
 # 4. required .env missing in clone fails
 scenario noenv
 rm "$S/clone/.env"; ENV_FILE="$S/other.env"; echo 'X=1' > "$ENV_FILE"; export ENV_FILE
@@ -317,10 +346,18 @@ if [[ -n "$REAL_GPG" ]]; then
   has "$S/dumps/.stage.*/*" && fail "staging not cleaned"
   [[ -s "$S/dumps/.backup-last-fail" ]] || fail "no fail marker after failed encryption"
   grep -q 'offhost=failed' "$S/dumps/.last-success" && grep -q 'encrypted=broken' "$S/dumps/.last-success" || fail ".last-success must record local ok / off-host failed"
-  [[ "$(stat -c%a "$(ls "$S"/dumps/env-*.tar.gz)")" == 600 ]] || fail "local plaintext fallback must be 0600"
+  has "$S/dumps/env-*.tar.gz" && fail "plaintext fallback must NOT use an upload-eligible name/location"
+  [[ "$(stat -c%a "$(ls "$S"/dumps/quarantine-plaintext/env-*.tar.gz)")" == 600 ]] || fail "plaintext fallback must be 0600 in quarantine-plaintext/"
+  [[ "$(stat -c%a "$S/dumps/quarantine-plaintext")" == 700 ]] || fail "quarantine dir must be 0700"
   has "$S/remote/chatwoot-*" && fail "nothing from a failed run may reach the remote"
   has "$S/remote/env-2*" && fail "plaintext secrets reached the remote"
   [[ -f "$S/remote/env-1999-01-01-0000.tar.gz" ]] || fail "remote plaintext deleted without verified encrypted replacement"
+  # SEC-17: a LATER run that resolves NO recipient (ENV_FILE gone, empty clone) must not upload the leftovers
+  mkdir -p "$S/emptyclone"
+  (unset BACKUP_GPG_RECIPIENT; export ENV_FILE="$S/missing.env" BACKUP_REPO_ROOT="$S/emptyclone" BACKUP_RCLONE_REMOTE="$S/remote" FAKE_GPG_FAIL_AFTER=; bash "$ROOT/scripts/backup-host.sh" > "$S/out2" 2>&1) && fail "run 2 should fail (no .env archive)"
+  has "$S/remote/env-2*" && fail "SEC-17: leftover plaintext env uploaded by a later recipient-less run"
+  has "$S/remote/clone-secrets-*" && fail "SEC-17: leftover plaintext clone-secrets uploaded by a later recipient-less run"
+  rm -f "$S/dumps/.backup-last-fail"
   unset FAKE_GPG_FAIL_AFTER
   echo legacy-plain > "$S/dumps/env-2000-01-01-0000.tar.gz"   # more legacy local plaintext
   run_backup || { cat "$S/out"; fail "run after failed encryption"; }

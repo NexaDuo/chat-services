@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 # verify-backup-decrypt.sh <clone-secrets-<ts>.tar.gz.gpg|.age|.tar.gz>
+# (A plaintext fallback may exist locally in quarantine-plaintext/ if encryption broke; this
+# script only checks the archive you pass it.)
 # Read-only proof that an off-host secrets archive is actually RECOVERABLE: decrypt with
 # the offline private key, validate and extract into a throwaway dir, check .env is
 # present, delete the scratch dir. Never prints content. Run this once after the first

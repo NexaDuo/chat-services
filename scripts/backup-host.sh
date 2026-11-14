@@ -166,7 +166,11 @@ fi
 #    (an upgrade rehearsal runs a throwaway "...-postgres" container too).
 #    The 03:00 cron can fire while Docker Desktop is still down (issue #291: 30
 #    days without a dump), so wait up to BACKUP_WAIT_SECONDS before failing.
-mkdir -p "$BACKUP_DIR"; chmod 700 "$BACKUP_DIR" 2>/dev/null || true
+assert_mode() { # path mode: verify, don't claim
+  local got; got="$(stat -c%a "$1" 2>/dev/null || echo missing)"
+  if [[ "$got" != "$2" ]]; then log "ERRO: permissão de '$1' é ${got}, esperado $2."; exit 1; fi
+}
+mkdir -p "$BACKUP_DIR"; chmod 700 "$BACKUP_DIR"; assert_mode "$BACKUP_DIR" 700
 FAIL_MARKER="${BACKUP_DIR}/.backup-last-fail"
 STAGE=""
 on_exit() {
@@ -192,7 +196,7 @@ num_setting BACKUP_KEEP_DAYS 1 3650           # 0 would empty the remote (and lo
 num_setting BACKUP_WAIT_SECONDS 0 86400
 num_setting BACKUP_WAIT_INTERVAL 1 3600
 : "${BACKUP_STEP_TIMEOUT:=3600}"   # hard cap per long step (pg_dump, volume tar, rclone) so a hung run cannot hold the lock forever
-num_setting BACKUP_STEP_TIMEOUT 10 86400
+num_setting BACKUP_STEP_TIMEOUT 1 86400
 # One backup at a time (two overlapping runs could race quarantine vs upload).
 # flock is released when the process dies, so a crashed run cannot leave it stuck.
 exec 8>"${BACKUP_DIR}/.backup.lock"
@@ -258,6 +262,10 @@ if [[ -n "$BACKUP_RCLONE_REMOTE" ]]; then
     log "ERRO: BACKUP_RCLONE_REMOTE inseguro. O backup LOCAL continua; off-host pulado."
   # The destination must ALREADY exist (a missing local-path remote means the
   # OneDrive path is wrong or the drive is unmounted: rclone would silently mkdir it).
+  elif _r="$(realpath -m -- "$BACKUP_RCLONE_REMOTE")"; _b="$(realpath -m -- "$BACKUP_DIR")"; \
+       [[ "$_r" == "$_b" || "$_r" == "$_b"/* || "$_b" == "$_r"/* ]]; then
+    DEFER_ERRS+=("remote sobrepõe BACKUP_DIR"); SKIP_UPLOAD=1
+    log "ERRO: BACKUP_RCLONE_REMOTE igual/dentro/acima de BACKUP_DIR (não é off-host). O backup LOCAL continua; off-host pulado."
   elif ! timeout 120 rclone lsf "$BACKUP_RCLONE_REMOTE" --max-depth 1 >/dev/null 2>&1; then
     DEFER_ERRS+=("remote inexistente/inacessível"); SKIP_UPLOAD=1
     log "ERRO: remote '${BACKUP_RCLONE_REMOTE}' inexistente/inacessível (caminho errado ou drive não montado?). O backup LOCAL continua; off-host pulado; o run terminará com falha."
@@ -319,7 +327,7 @@ FILES=()
 for DB in "${DBS[@]}"; do
   OUT="${BACKUP_DIR}/${DB}-${TS}.sql.gz"
   log "==> Dumping ${DB} → ${OUT}"
-  timeout "$BACKUP_STEP_TIMEOUT" docker exec "$PG" pg_dump -U "$POSTGRES_USER" -d "$DB" --no-owner --clean --if-exists \
+  timeout -k 5 "$BACKUP_STEP_TIMEOUT" docker exec "$PG" pg_dump -U "$POSTGRES_USER" -d "$DB" --no-owner --clean --if-exists \
     | gzip -9 > "$OUT" || { log "ERRO: pg_dump de ${DB} falhou/estourou o timeout; removendo dump parcial."; rm -f "$OUT"; exit 1; }
   FILES+=("$OUT")
 done
@@ -348,12 +356,17 @@ for suffix in $BACKUP_VOLUME_SUFFIXES; do
   log "==> Archiving volume ${vol} → ${OUT}"
   # -v <vol>:/data:ro read-only source; write the tarball to STDOUT and land it
   # on the host so we never need a host bind-mount to be writable by the image.
-  if timeout "$BACKUP_STEP_TIMEOUT" docker run --rm -v "${vol}:/data:ro" "$BACKUP_HELPER_IMAGE" \
+  # Named container so a timed-out run can be force-removed (killing the docker CLI alone
+  # would leave the helper container running). pg_dump: killing the `docker exec` client
+  # closes its stdout, so the server-side pg_dump dies on SIGPIPE at its next write.
+  cname="nexaduo-backup-${vol}-$$"
+  if timeout -k 5 "$BACKUP_STEP_TIMEOUT" docker run --rm --name "$cname" -v "${vol}:/data:ro" "$BACKUP_HELPER_IMAGE" \
         tar czf - -C /data . > "$OUT" 2>/dev/null && [[ -s "$OUT" ]]; then
     VOL_FILES+=("$OUT")
     RESOLVED_VOLS+=("$vol")
   else
     log "ERRO: falha ao arquivar volume ${vol} (tar/helper image ${BACKUP_HELPER_IMAGE})."
+    timeout 30 docker rm -f "$cname" >/dev/null 2>&1 || true
     rm -f "$OUT" 2>/dev/null || true
     MISSING_VOLS+=("$suffix")
   fi
@@ -387,13 +400,21 @@ do_secret_archive() {
 make_secret_archive() {
   local name="$1"; shift
   local tmp="${STAGE}/${name}.tmp" final="${BACKUP_DIR}/${name}"
+  # PLAINTEXT FALLBACK (encryption configured but broken): goes into quarantine-plaintext/,
+  # a location NO upload filter can ever match, regardless of what later runs resolve.
+  # (Plaintext by design, with NO recipient configured, keeps the normal upload-eligible name.)
+  if [[ "$ENC_MODE" == broken ]]; then
+    mkdir -p "$BACKUP_DIR/quarantine-plaintext"; chmod 700 "$BACKUP_DIR/quarantine-plaintext"
+    assert_mode "$BACKUP_DIR/quarantine-plaintext" 700
+    final="$BACKUP_DIR/quarantine-plaintext/${name}"
+  fi
   case "$ENC_MODE" in
     age) final="${final}.age"; tar czhf - "$@" | timeout 300 age -r "$BACKUP_AGE_RECIPIENT" -o "$tmp" || { rm -f "$tmp"; return 1; } ;;
     gpg) final="${final}.gpg"; tar czhf - "$@" | timeout 300 gpg --batch --yes --quiet -r "$BACKUP_GPG_RECIPIENT" -o "$tmp" --encrypt || { rm -f "$tmp"; return 1; } ;;
     *)   tar czhf "$tmp" "$@" || { rm -f "$tmp"; return 1; } ;;
   esac
   [[ -s "$tmp" ]] || { rm -f "$tmp"; return 1; }
-  chmod 600 "$tmp"; mv -f "$tmp" "$final"
+  chmod 600 "$tmp"; mv -f "$tmp" "$final"; assert_mode "$final" 600
   printf '%s' "$final"
 }
 
@@ -402,7 +423,7 @@ make_secret_archive() {
 if [[ "$ENC_MODE" == gpg || "$ENC_MODE" == age ]]; then
   shopt -s nullglob
   for _f in "$BACKUP_DIR"/env-*.tar.gz "$BACKUP_DIR"/clone-secrets-*.tar.gz; do
-    mkdir -p "$BACKUP_DIR/quarantine-plaintext"; chmod 700 "$BACKUP_DIR/quarantine-plaintext"
+    mkdir -p "$BACKUP_DIR/quarantine-plaintext"; chmod 700 "$BACKUP_DIR/quarantine-plaintext"; assert_mode "$BACKUP_DIR/quarantine-plaintext" 700
     mv -f "$_f" "$BACKUP_DIR/quarantine-plaintext/"
     log "AVISO: arquivo de segredos em TEXTO PLANO pré-existente '$(basename "$_f")' movido para quarantine-plaintext/ (NÃO será enviado off-host)."
   done
@@ -410,7 +431,7 @@ if [[ "$ENC_MODE" == gpg || "$ENC_MODE" == age ]]; then
 fi
 
 if [[ "$ENC_MODE" == broken ]]; then
-  log "AVISO: criptografia inoperante: arquivos de segredos locais ficam em TEXTO PLANO (0600, dir 0700) e NÃO serão enviados off-host."
+  log "AVISO: criptografia inoperante: arquivos de segredos locais ficam em TEXTO PLANO em quarantine-plaintext/ (0600, dir 0700) e NUNCA são enviados off-host."
 fi
 # 3c. Archive the host .env (production secrets, not in git — see header).
 ENV_FILE_OUT=""
@@ -472,7 +493,7 @@ find "$BACKUP_DIR" -type f \( -name '*.sql.gz' -o -name '*.tar.gz' -o -name '*.t
 # so foreign files in the target folder are never overwritten nor pruned. With a
 # recipient set, plaintext env-/clone-secrets- archives are excluded FIRST.
 D='[0-9]'; TSG="${D}${D}${D}${D}-${D}${D}-${D}${D}-${D}${D}${D}${D}"
-RCLONE_FILTERS=()
+RCLONE_FILTERS=(--filter '- /quarantine-plaintext/**')   # unconditional: the quarantine is never uploaded
 if (( RECIPIENT_SET )); then   # also when encryption is broken: plaintext secrets never leave the host
   RCLONE_FILTERS+=(--filter '- /env-*.tar.gz' --filter '- /clone-secrets-*.tar.gz')
 fi
@@ -503,7 +524,7 @@ else
     [[ -z "$_odd" ]] || log "AVISO: possíveis segredos em TEXTO PLANO com nome fora do padrão no remote (NÃO removidos; verifique à mão): $(tr '\n' ' ' <<<"$_odd")"
   fi
   log "==> Copiando para ${BACKUP_RCLONE_REMOTE} via rclone (dumps + volumes + .env + clone-secrets)"
-  if timeout "$BACKUP_STEP_TIMEOUT" rclone copy "$BACKUP_DIR" "$BACKUP_RCLONE_REMOTE" "${RCLONE_FILTERS[@]}"; then
+  if timeout -k 5 "$BACKUP_STEP_TIMEOUT" rclone copy "$BACKUP_DIR" "$BACKUP_RCLONE_REMOTE" "${RCLONE_FILTERS[@]}"; then
     UPLOADED=1
   else
     log "ERRO: rclone copy falhou/estourou o timeout."
@@ -610,13 +631,13 @@ if (( UPLOADED )); then
     _stale="$(grep -vxFf <(printf '%s\n' "$_ours") <<<"$_broad" || true)"
     [[ -z "$_stale" ]] || log "AVISO: remote tem arquivos de DB/volume fora do conjunto atual (removido/renomeado?), NÃO podados: $(tr '\n' ' ' <<<"$_stale")"
     log "==> Off-host verificado; podando remote com mais de ${BACKUP_KEEP_DAYS} dias"
-    timeout "$BACKUP_STEP_TIMEOUT" rclone delete "$BACKUP_RCLONE_REMOTE" --min-age "${BACKUP_KEEP_DAYS}d" "${RCLONE_FILTERS[@]}" \
+    timeout -k 5 "$BACKUP_STEP_TIMEOUT" rclone delete "$BACKUP_RCLONE_REMOTE" --min-age "${BACKUP_KEEP_DAYS}d" "${RCLONE_FILTERS[@]}" \
       || DEFER_ERRS+=("poda do remote falhou")
     # Plaintext secrets already on the remote: delete ONLY when a recipient is set AND
     # this run's encrypted env + clone-secrets archives were just verified remotely.
     if [[ ( "$ENC_MODE" == gpg || "$ENC_MODE" == age ) && -n "$_plain_remote" && -n "$ENV_FILE_OUT" && -n "$CLONE_OUT" ]]; then
       log "==> Removendo do remote os segredos em TEXTO PLANO (substitutos criptografados verificados): $(tr '\n' ' ' <<<"$_plain_remote")"
-      timeout "$BACKUP_STEP_TIMEOUT" rclone delete "$BACKUP_RCLONE_REMOTE" "${RCLONE_PLAIN_SECRETS[@]}" \
+      timeout -k 5 "$BACKUP_STEP_TIMEOUT" rclone delete "$BACKUP_RCLONE_REMOTE" "${RCLONE_PLAIN_SECRETS[@]}" \
         || DEFER_ERRS+=("remoção de plaintext remoto falhou")
     fi
   fi
