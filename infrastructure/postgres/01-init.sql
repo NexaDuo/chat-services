@@ -83,6 +83,14 @@ CREATE TABLE IF NOT EXISTS tenants (
 
 CREATE INDEX IF NOT EXISTS idx_tenants_subdomain ON tenants(subdomain);
 
+-- At most one ACTIVE tenant per Chatwoot account (issue #292 / #275). Two rows
+-- sharing an account id made resolveTenant pick one non-deterministically.
+-- Non-active rows (onboarding, etc.) may still share an id. Deliberately a plain
+-- CREATE (no auto-deactivation of data): if duplicate active rows ever exist this
+-- fails loudly so the operator decides which one stays active.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_tenants_active_chatwoot_account
+  ON tenants(chatwoot_account_id) WHERE status = 'active';
+
 -- users table
 CREATE TABLE IF NOT EXISTS users (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

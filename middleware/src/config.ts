@@ -155,12 +155,33 @@ export async function resolveTenant(
   const key = String(accountId);
 
   try {
+    // Deterministic (issue #292): active tenants first, then oldest, then slug.
+    // The partial unique index in 01-init.sql allows at most one active row per
+    // account; this ORDER BY and the ambiguity check below are defence in depth
+    // for databases where the index is not (yet) applied.
     const result = await pool.query(
-      "SELECT dify_api_key, dify_app_type FROM tenants WHERE chatwoot_account_id = $1",
+      `SELECT slug, status, dify_api_key, dify_app_type FROM tenants
+       WHERE chatwoot_account_id = $1
+       ORDER BY (status = 'active') DESC, created_at ASC, slug ASC`,
       [key]
     );
-    if (result.rows.length > 0) {
-      const row = result.rows[0];
+    const rows: Array<{ slug?: string; status?: string; dify_api_key: string; dify_app_type: string }> =
+      result.rows;
+    if (rows.length > 0) {
+      const active = rows.filter((r) => r.status === "active");
+      // Candidates: the active rows if any, otherwise every row (legacy
+      // behaviour for an account that only has a non-active tenant).
+      const candidates = active.length > 0 ? active : rows;
+      if (candidates.length > 1) {
+        // Never guess which tenant (and Dify key) owns the account.
+        console.error(
+          `AMBIGUOUS_TENANT_MAPPING: chatwoot_account_id=${key} matches ${candidates.length} ${
+            active.length > 0 ? "active" : "non-active"
+          } tenants (${candidates.map((r) => r.slug ?? "?").join(", ")}); refusing to resolve (issue #292)`
+        );
+        return null;
+      }
+      const row = candidates[0];
       return {
         apiKey: row.dify_api_key,
         baseUrl: config.dify.baseUrl,

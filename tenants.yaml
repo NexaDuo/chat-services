@@ -17,26 +17,6 @@ tenants:
       chatwoot_url: "https://chat.nexaduo.com"
       dify_url: "https://dify.nexaduo.com"
 
-  - slug: acme-dedicated
-    name: Acme Dedicated
-    chatwoot_account_id: 1
-    status: onboarding
-    environment: production
-    infra:
-      type: dedicated
-      chatwoot_url: "https://chat.acme.com"
-      dify_url: "https://dify.acme.com"
-
-  - slug: acme-stg
-    name: Acme Staging Tenant
-    chatwoot_account_id: 1
-    status: active
-    environment: staging
-    infra:
-      type: shared
-      chatwoot_url: "https://chat-stg.nexaduo.com"
-      dify_url: "https://dify-stg.nexaduo.com"
-
   - slug: duda
     name: Maria Eduarda
     chatwoot_account_id: 3

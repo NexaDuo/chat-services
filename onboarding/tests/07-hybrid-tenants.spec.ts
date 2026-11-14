@@ -20,6 +20,18 @@ test.describe('Hybrid Tenant Resolution Verification', () => {
     tenantsConfig = yaml.parse(fileContents);
   });
 
+  // Issue #292 / #275: two rows sharing chatwoot_account_id made tenant
+  // resolution non-deterministic. One account => one active tenant.
+  test('Each Chatwoot account maps to at most one active tenant in YAML', () => {
+    const seen = new Map<string, string>();
+    for (const tenant of tenantsConfig.tenants) {
+      if (tenant.status !== 'active') continue;
+      const account = String(tenant.chatwoot_account_id);
+      expect(seen.get(account), `account ${account} active in both ${seen.get(account)} and ${tenant.slug}`).toBeUndefined();
+      seen.set(account, tenant.slug);
+    }
+  });
+
   test('All tenants in YAML should resolve correctly via Middleware', async ({ request }) => {
     const middlewareUrl = process.env.MIDDLEWARE_URL || 'http://localhost:4000';
     const sharedSecret = process.env.HANDOFF_SHARED_SECRET;

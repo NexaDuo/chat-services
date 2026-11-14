@@ -5,6 +5,7 @@ import { Pool } from 'pg';
 import { execSync } from 'child_process';
 import dotenv from 'dotenv';
 import crypto from 'crypto';
+import { assertUniqueActiveAccounts, buildSeedSql, type TenantConfig } from '../middleware/src/tenants-seed.js';
 
 dotenv.config({ quiet: true });
 
@@ -40,23 +41,6 @@ const logger = {
   }
 };
 
-interface TenantConfig {
-  slug: string;
-  name: string;
-  chatwoot_account_id: number;
-  status: string;
-  environment: string;
-  infra?: {
-    type: string;
-    chatwoot_url?: string;
-    dify_url?: string;
-    dify_app_type?: string;
-    // May be a literal key or a `gcp-secret:<name>` reference, resolved by
-    // `resolveTenantSecrets` before seeding.
-    dify_api_key?: string;
-  };
-}
-
 interface TenantsYaml {
   global: {
     gcp_project_id: string;
@@ -70,6 +54,7 @@ interface TenantsYaml {
 }
 
 async function syncDatabase(pool: Pool, tenants: TenantConfig[]) {
+  assertUniqueActiveAccounts(tenants);
   logger.log('Syncing database...');
   for (const tenant of tenants) {
     const query = `
@@ -103,58 +88,6 @@ async function syncDatabase(pool: Pool, tenants: TenantConfig[]) {
     await pool.query(query, values);
     logger.log(`✅ Synced DB: ${tenant.slug}`);
   }
-}
-
-/** Quotes a value for inline SQL, or emits NULL. */
-function sqlLiteral(value: string | null): string {
-  if (value === null || value === undefined) return 'NULL';
-  return `'${String(value).replace(/'/g, "''")}'`;
-}
-
-/**
- * Builds an idempotent seed script (same upsert as `syncDatabase`) for piping
- * straight into `psql`. Used by CI to seed the middleware DB through
- * `docker exec` on the VM, because Postgres is only reachable on the internal
- * docker network (`postgres:5432`) and is not published on the VM host.
- */
-function buildSeedSql(tenants: TenantConfig[], admin?: { username: string; password: string }): string {
-  const rows = tenants.map((tenant) => {
-    const values = [
-      tenant.slug,
-      tenant.slug,
-      tenant.name,
-      tenant.chatwoot_account_id.toString(),
-      tenant.status,
-      tenant.infra?.type || 'shared',
-      tenant.infra?.chatwoot_url || null,
-      tenant.infra?.dify_url || null,
-      tenant.infra?.dify_app_type || 'chatflow',
-      tenant.infra?.dify_api_key || null,
-    ].map(sqlLiteral).join(', ');
-    return `INSERT INTO tenants (slug, subdomain, name, chatwoot_account_id, status, infra_type, chatwoot_url, dify_url, dify_app_type, dify_api_key)
-VALUES (${values})
-ON CONFLICT (slug) DO UPDATE
-SET subdomain = EXCLUDED.subdomain,
-    name = EXCLUDED.name,
-    chatwoot_account_id = EXCLUDED.chatwoot_account_id,
-    status = EXCLUDED.status,
-    infra_type = EXCLUDED.infra_type,
-    chatwoot_url = EXCLUDED.chatwoot_url,
-    dify_url = EXCLUDED.dify_url,
-    dify_app_type = EXCLUDED.dify_app_type,
-    dify_api_key = COALESCE(EXCLUDED.dify_api_key, tenants.dify_api_key),
-    updated_at = CURRENT_TIMESTAMP;`;
-  });
-
-  if (admin) {
-    const pwdHash = crypto.createHash('sha256').update(admin.password).digest('hex');
-    rows.push(`INSERT INTO users (username, password_hash, role)
-VALUES ('${admin.username}', '${pwdHash}', 'admin')
-ON CONFLICT (username)
-DO UPDATE SET password_hash = EXCLUDED.password_hash, updated_at = CURRENT_TIMESTAMP;`);
-  }
-
-  return `BEGIN;\n${rows.join('\n')}\nCOMMIT;\n`;
 }
 
 function syncSecrets(projectId: string, tenants: TenantConfig[]) {
@@ -313,6 +246,15 @@ async function main() {
   // Resolve any `gcp-secret:` dify_api_key references into literal keys before
   // seeding (both the --print-sql and direct-DB paths use the resolved values).
   resolveTenantSecrets(targetTenants, config.global.gcp_project_id);
+
+  // Reject duplicate active Chatwoot account ids up front (issue #292), before
+  // any DB write, in every mode (--print-sql, direct sync, SKIP_DB_SYNC).
+  try {
+    assertUniqueActiveAccounts(targetTenants);
+  } catch (err: any) {
+    logger.error(err.message);
+    process.exit(1);
+  }
 
   // --print-sql: emit an idempotent seed script to stdout and exit. CI pipes
   // this into `docker exec ... psql` on the VM (Postgres is docker-network-only,
