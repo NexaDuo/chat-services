@@ -143,54 +143,92 @@ export async function isDifyKillSwitchEnabled(
   }
 }
 
+
+export interface ResolvedTenant {
+  apiKey: string;
+  baseUrl: string;
+  appType: "chatflow" | "agent";
+}
+
 /**
- * Resolves the per-tenant Dify config for a given Chatwoot account_id from database.
- * Returns `null` if the account is not mapped.
+ * Why a Chatwoot account did not resolve to a tenant. Bounded set: these are
+ * used verbatim as the `reason` label of `middleware_errors_total`.
+ *  - no_tenant_mapping: no row for the account (or the lookup failed).
+ *  - tenant_inactive:   rows exist but none has status = 'active' (status is
+ *                       the off switch for a firm's bot, issue #292).
+ *  - tenant_ambiguous:  2+ active rows; we refuse to guess a Dify key.
  */
-export async function resolveTenant(
+export type TenantResolutionFailure = "no_tenant_mapping" | "tenant_inactive" | "tenant_ambiguous";
+
+export type TenantResolution =
+  | { ok: true; tenant: ResolvedTenant }
+  | { ok: false; reason: TenantResolutionFailure };
+
+/**
+ * Resolves the per-tenant Dify config for a Chatwoot account_id and reports
+ * WHY it failed when it does (issue #292). Only `status = 'active'` rows are
+ * served; the partial unique index in 01-init.sql allows at most one per
+ * account, and 2+ (index not yet applied) fails closed as `tenant_ambiguous`.
+ */
+export async function resolveTenantDetailed(
   config: AppConfig,
   accountId: string | number,
   pool: import("pg").Pool,
-): Promise<{ apiKey: string; baseUrl: string; appType: "chatflow" | "agent" } | null> {
+): Promise<TenantResolution> {
   const key = String(accountId);
 
   try {
-    // Deterministic (issue #292): active tenants first, then oldest, then slug.
-    // The partial unique index in 01-init.sql allows at most one active row per
-    // account; this ORDER BY and the ambiguity check below are defence in depth
-    // for databases where the index is not (yet) applied.
+    // ORDER BY slug only makes the slug list in the ambiguity log stable; the
+    // choice never depends on row order (0 or 2+ active rows never pick one).
     const result = await pool.query(
       `SELECT slug, status, dify_api_key, dify_app_type FROM tenants
        WHERE chatwoot_account_id = $1
-       ORDER BY (status = 'active') DESC, created_at ASC, slug ASC`,
+       ORDER BY slug ASC`,
       [key]
     );
     const rows: Array<{ slug?: string; status?: string; dify_api_key: string; dify_app_type: string }> =
       result.rows;
-    if (rows.length > 0) {
-      const active = rows.filter((r) => r.status === "active");
-      // Candidates: the active rows if any, otherwise every row (legacy
-      // behaviour for an account that only has a non-active tenant).
-      const candidates = active.length > 0 ? active : rows;
-      if (candidates.length > 1) {
-        // Never guess which tenant (and Dify key) owns the account.
-        console.error(
-          `AMBIGUOUS_TENANT_MAPPING: chatwoot_account_id=${key} matches ${candidates.length} ${
-            active.length > 0 ? "active" : "non-active"
-          } tenants (${candidates.map((r) => r.slug ?? "?").join(", ")}); refusing to resolve (issue #292)`
-        );
-        return null;
-      }
-      const row = candidates[0];
-      return {
+    if (rows.length === 0) return { ok: false, reason: "no_tenant_mapping" };
+
+    const active = rows.filter((r) => r.status === "active");
+    if (active.length === 0) {
+      console.error(
+        `TENANT_INACTIVE: chatwoot_account_id=${key} has ${rows.length} tenant row(s) but none is active (${rows
+          .map((r) => `${r.slug ?? "?"}:${r.status ?? "null"}`)
+          .join(", ")}); not answering (issue #292)`
+      );
+      return { ok: false, reason: "tenant_inactive" };
+    }
+    if (active.length > 1) {
+      console.error(
+        `AMBIGUOUS_TENANT_MAPPING: chatwoot_account_id=${key} matches ${active.length} active tenants (${active
+          .map((r) => r.slug ?? "?")
+          .join(", ")}); refusing to resolve (issue #292)`
+      );
+      return { ok: false, reason: "tenant_ambiguous" };
+    }
+    const row = active[0];
+    return {
+      ok: true,
+      tenant: {
         apiKey: row.dify_api_key,
         baseUrl: config.dify.baseUrl,
         appType: row.dify_app_type as "chatflow" | "agent",
-      };
-    }
+      },
+    };
   } catch (err) {
     console.error("Failed to resolve tenant from database", err);
   }
 
-  return null;
+  return { ok: false, reason: "no_tenant_mapping" };
+}
+
+/** Back-compat wrapper: the tenant, or `null` when it does not resolve. */
+export async function resolveTenant(
+  config: AppConfig,
+  accountId: string | number,
+  pool: import("pg").Pool,
+): Promise<ResolvedTenant | null> {
+  const r = await resolveTenantDetailed(config, accountId, pool);
+  return r.ok ? r.tenant : null;
 }

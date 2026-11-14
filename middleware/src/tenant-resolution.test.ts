@@ -3,7 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { test, expect, vi } from "vitest";
 import yaml from "yaml";
-import { resolveTenant } from "./config.js";
+import { resolveTenant, resolveTenantDetailed } from "./config.js";
 import { assertUniqueActiveAccounts, buildSeedSql, type TenantConfig } from "./tenants-seed.js";
 
 // Regression for issue #292 / #275: tenants.yaml seeded two rows with
@@ -66,16 +66,16 @@ function fakeTenantsDb(seedSql: string, opts: { enforceIndex: boolean }) {
     rows.push(next);
   }
   const pool = {
-    query: vi.fn(async (_sql: string, params: string[]) => ({
-      rows: rows
-        .filter((r) => r.chatwoot_account_id === params[0])
-        .sort(
-          (a, b) =>
-            Number(b.status === "active") - Number(a.status === "active") ||
-            a.created_at - b.created_at ||
-            a.slug.localeCompare(b.slug),
-        ),
-    })),
+    // Honours only what the issued SQL actually says: WHERE chatwoot_account_id = $1
+    // and, if present, ORDER BY slug. With no ORDER BY the rows come back in
+    // insertion order, so the DECISION must be made by resolveTenant itself (the
+    // pre-#292 code took rows[0] and fails when the non-active row came first).
+    query: vi.fn(async (sql: string, params: string[]) => {
+      expect(sql).toMatch(/WHERE\s+chatwoot_account_id\s*=\s*\$1/);
+      const out = rows.filter((r) => r.chatwoot_account_id === params[0]);
+      if (/ORDER BY\s+slug\s+ASC/i.test(sql)) out.sort((a, b) => a.slug.localeCompare(b.slug));
+      return { rows: out };
+    }),
   };
   return { rows, pool };
 }
@@ -174,6 +174,58 @@ test("resolveTenant refuses to guess when the DB has two active rows (index not 
   } finally {
     err.mockRestore();
   }
+});
+
+test("status is an off switch: a lone onboarding/suspended row does NOT resolve, with a distinct reason", async () => {
+  const base = realTenants()[0];
+  const err = vi.spyOn(console, "error").mockImplementation(() => {});
+  try {
+    for (const status of ["onboarding", "suspended"]) {
+      const row: TenantConfig = { ...base, status, infra: { ...base.infra!, dify_api_key: "key-x" } };
+      const { pool } = fakeTenantsDb(buildSeedSql([row]), { enforceIndex: true });
+      expect(await resolveTenant(config, base.chatwoot_account_id, pool as any)).toBeNull();
+      expect(await resolveTenantDetailed(config, base.chatwoot_account_id, pool as any)).toEqual({
+        ok: false,
+        reason: "tenant_inactive",
+      });
+    }
+    // Two non-active rows: still inactive (the index does not constrain them), never a guess.
+    const a: TenantConfig = { ...base, status: "onboarding" };
+    const b: TenantConfig = { ...base, slug: "other", status: "onboarding" };
+    const { pool } = fakeTenantsDb(buildSeedSql([a, b]), { enforceIndex: true });
+    expect((await resolveTenantDetailed(config, base.chatwoot_account_id, pool as any)).ok).toBe(false);
+  } finally {
+    err.mockRestore();
+  }
+});
+
+test("resolveTenantDetailed distinguishes no mapping, ambiguity and success", async () => {
+  const base = realTenants()[0];
+  const a: TenantConfig = { ...base, infra: { ...base.infra!, dify_api_key: "key-a" } };
+  const b: TenantConfig = { ...base, slug: "second-firm" };
+  const err = vi.spyOn(console, "error").mockImplementation(() => {});
+  try {
+    const ok = fakeTenantsDb(buildSeedSql([a]), { enforceIndex: true });
+    expect(await resolveTenantDetailed(config, base.chatwoot_account_id, ok.pool as any)).toMatchObject({ ok: true });
+    expect(await resolveTenantDetailed(config, 999, ok.pool as any)).toEqual({ ok: false, reason: "no_tenant_mapping" });
+    const amb = fakeTenantsDb(buildSeedSql([a]) + buildSeedSql([b]), { enforceIndex: false });
+    expect(await resolveTenantDetailed(config, base.chatwoot_account_id, amb.pool as any)).toEqual({
+      ok: false,
+      reason: "tenant_ambiguous",
+    });
+  } finally {
+    err.mockRestore();
+  }
+});
+
+test("admin flows cannot hit the unique violation by design: parent tenants are the single active row on account 1", () => {
+  // REV-4: admin.ts models parent (physical) tenants as `status='active' AND
+  // chatwoot_account_id='1'`, and client accounts as account != '1'. Under the
+  // index only one parent can be active; client-account inserts use account ids
+  // != '1', and POST import pre-checks `subdomain = $1 OR chatwoot_account_id = $2`.
+  const admin = fs.readFileSync(path.resolve(here, "handlers/admin.ts"), "utf8");
+  expect(admin).toMatch(/subdomain = \$1 OR chatwoot_account_id = \$2 LIMIT 1/);
+  expect(admin).toMatch(/chatwoot_account_id != '1'/);
 });
 
 test("the unique index is declared idempotently in 01-init.sql", () => {

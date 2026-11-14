@@ -2,7 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import yaml from 'yaml';
 import { Pool } from 'pg';
-import { execSync } from 'child_process';
+import { execFileSync } from 'child_process';
 import dotenv from 'dotenv';
 import crypto from 'crypto';
 import { assertUniqueActiveAccounts, buildSeedSql, type TenantConfig } from '../middleware/src/tenants-seed.js';
@@ -40,6 +40,27 @@ const logger = {
     console.error(output);
   }
 };
+
+// gcloud is invoked with an argument array (no shell), and every name taken from
+// tenants.yaml is validated first, so a crafted `gcp-secret:` value or project id
+// cannot inject shell syntax (issue #292 review, SEC-3).
+const SAFE_NAME = /^[A-Za-z0-9_-]+$/;
+function safeName(kind: string, value: string): string {
+  if (!SAFE_NAME.test(value)) {
+    throw new Error(`Refusing unsafe ${kind} "${value}" (allowed: A-Z a-z 0-9 _ -)`);
+  }
+  return value;
+}
+function gcloud(args: string[], opts: { stdio?: any; input?: string } = {}): Buffer {
+  return execFileSync('gcloud', args, opts) as Buffer;
+}
+function accessSecret(secretName: string, projectId: string): string {
+  return gcloud([
+    'secrets', 'versions', 'access', 'latest',
+    `--secret=${safeName('secret name', secretName)}`,
+    `--project=${safeName('project id', projectId)}`,
+  ]).toString().trim();
+}
 
 interface TenantsYaml {
   global: {
@@ -93,15 +114,17 @@ async function syncDatabase(pool: Pool, tenants: TenantConfig[]) {
 function syncSecrets(projectId: string, tenants: TenantConfig[]) {
   logger.log(`Syncing GCP Secrets for project: ${projectId}...`);
   for (const tenant of tenants) {
-    const secretName = `TENANT_${tenant.slug.toUpperCase().replace(/-/g, '_')}_API_KEY`;
+    // Validated outside the try: an unsafe slug/project must fail the sync, not fall into "create".
+    const secretName = safeName('secret name', `TENANT_${tenant.slug.toUpperCase().replace(/-/g, '_')}_API_KEY`);
+    safeName('project id', projectId);
     try {
-      execSync(`gcloud secrets describe ${secretName} --project=${projectId}`, { stdio: 'ignore' });
+      gcloud(['secrets', 'describe', secretName, `--project=${projectId}`], { stdio: 'ignore' });
       logger.log(`✅ Secret exists: ${secretName}`);
     } catch {
       logger.log(`Creating secret: ${secretName}...`);
       try {
-        execSync(`gcloud secrets create ${secretName} --replication-policy="automatic" --project=${projectId}`, { stdio: 'ignore' });
-        execSync(`gcloud secrets versions add ${secretName} --data-file=- --project=${projectId}`, {
+        gcloud(['secrets', 'create', secretName, '--replication-policy=automatic', `--project=${projectId}`], { stdio: 'ignore' });
+        gcloud(['secrets', 'versions', 'add', secretName, '--data-file=-', `--project=${projectId}`], {
           input: "placeholder-key",
           stdio: ['pipe', 'ignore', 'ignore']
         });
@@ -156,7 +179,7 @@ function resolveAdmin(admin?: { username: string; password: string }, projectId?
       if (!projectId) {
         throw new Error("GCP Project ID is required to resolve GCP secrets");
       }
-      username = execSync(`gcloud secrets versions access latest --secret=${secretName} --project=${projectId}`).toString().trim();
+      username = accessSecret(secretName, projectId);
     } catch (err) {
       if (process.env.ADMIN_EMAIL) {
         username = process.env.ADMIN_EMAIL;
@@ -173,7 +196,7 @@ function resolveAdmin(admin?: { username: string; password: string }, projectId?
       if (!projectId) {
         throw new Error("GCP Project ID is required to resolve GCP secrets");
       }
-      password = execSync(`gcloud secrets versions access latest --secret=${secretName} --project=${projectId}`).toString().trim();
+      password = accessSecret(secretName, projectId);
     } catch (err) {
       if (process.env.ADMIN_PASSWORD) {
         password = process.env.ADMIN_PASSWORD;
@@ -204,9 +227,7 @@ function resolveTenantSecrets(tenants: TenantConfig[], projectId?: string): void
       if (!projectId) {
         throw new Error('GCP Project ID is required to resolve GCP secrets');
       }
-      const value = execSync(
-        `gcloud secrets versions access latest --secret=${secretName} --project=${projectId}`
-      ).toString().trim();
+      const value = accessSecret(secretName, projectId);
       tenant.infra!.dify_api_key = value || undefined;
     } catch {
       logger.log(`⚠️ Failed to fetch dify_api_key secret ${secretName} for tenant ${tenant.slug}; leaving existing key untouched`);

@@ -93,7 +93,7 @@ SET subdomain = EXCLUDED.subdomain,
   if (admin) {
     const pwdHash = crypto.createHash('sha256').update(admin.password).digest('hex');
     rows.push(`INSERT INTO users (username, password_hash, role)
-VALUES ('${admin.username}', '${pwdHash}', 'admin')
+VALUES (${sqlLiteral(admin.username)}, '${pwdHash}', 'admin')
 ON CONFLICT (username)
 DO UPDATE SET password_hash = EXCLUDED.password_hash, updated_at = CURRENT_TIMESTAMP;`);
   }

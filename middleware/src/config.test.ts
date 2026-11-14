@@ -12,7 +12,7 @@ test('resolveTenant maps an account to its Dify app (agent => streaming)', async
   const config = { dify: { baseUrl: 'https://dify.nexaduo.com' } };
   const pool = {
     query: vi.fn().mockResolvedValue({
-      rows: [{ dify_api_key: 'app-test-key', dify_app_type: 'agent' }],
+      rows: [{ status: 'active', dify_api_key: 'app-test-key', dify_app_type: 'agent' }],
     }),
   };
 
