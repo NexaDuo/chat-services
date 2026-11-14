@@ -40,6 +40,7 @@ jobs:
         run: |
           bash scripts/test-backup-volume-guard.sh
           bash scripts/tests/test-host-health.sh
+          bash scripts/tests/test-health-check-continue.sh
 
       - name: Setup Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0

@@ -4,7 +4,9 @@
 # NexaDuo stack across all four Coolify stacks (shared, chatwoot, dify,
 # nexaduo). Safe to run anytime — does NOT touch state or volumes.
 #
-# Exit 0 = all services healthy. Non-zero = first failing check + log tail.
+# Exit 0 = all services healthy. Non-zero = at least one check failed. Every
+# check section runs even if an earlier one failed (issue #294); a summary of
+# the failed checks is printed at the end.
 # =============================================================================
 set -euo pipefail
 
@@ -14,6 +16,26 @@ step() { echo "==> $*"; }
 fail() {
   echo "FAIL: $1" >&2
   exit 1
+}
+
+# Continue-on-failure (issue #294). Each check section below is a function run
+# via run_check in its own subshell, so a `fail` (exit 1) inside it ends only
+# that section; the name is recorded and the script moves on to the next one.
+# The final summary exits non-zero if anything was recorded. `set -e` is lifted
+# in the parent only around the call (a `||` context would silently disable it
+# inside the subshell, which these sections rely on), then restored.
+FAILED_CHECKS=()
+run_check() {
+  local name="$1" rc=0
+  shift
+  set +e
+  ( set -e; "$@" )
+  rc=$?
+  set -e
+  if (( rc != 0 )); then
+    echo "FAILED CHECK: ${name} (exit ${rc})" >&2
+    FAILED_CHECKS+=("$name")
+  fi
 }
 
 # --host-only is the scheduled engine + backup probe; no container probes.
@@ -124,10 +146,13 @@ require_container() {
 # ---------------------------------------------------------------------------
 # 1. Restart-loop / unhealthy detector across all Coolify-labelled containers.
 # ---------------------------------------------------------------------------
+check_restart_loops() {
 step "Scanning for unhealthy or restarting Coolify-managed containers"
 bad=$(docker ps --filter "label=coolify.managed=true" --format '{{.Names}} {{.Status}}' \
         | grep -Ei 'restart|unhealthy' || true)
 [[ -z "$bad" ]] || { echo "$bad" >&2; fail "unhealthy/restarting containers detected"; }
+}
+run_check "restart-loop scan" check_restart_loops
 
 # ---------------------------------------------------------------------------
 # 2. Containers with explicit healthchecks must report 'healthy'.
@@ -155,16 +180,25 @@ HEALTHCHECK_SUBNAMES=(
   cloudflared
 )
 
+# Worst case (issue #294 review): each of the 14 healthcheck subnames waits up to
+# 60 x 5s = 5 min, so a stack where all are unhealthy takes ~70 min before the
+# summary prints. It still fails closed: every timeout is recorded and the run
+# exits non-zero. Tracked as a follow-up; behavior deliberately unchanged here.
+check_healthchecks() {
+local hc_failed=0
 for subname in "${HEALTHCHECK_SUBNAMES[@]}"; do
-  container="$(require_container "$subname")"
+  container="$(require_container "$subname" 2>/dev/null)" || { echo "FAIL: container for subName=${subname} not found" >&2; hc_failed=1; continue; }
   step "Checking ${container} (${subname}) health (up to 5 min)"
   for i in $(seq 1 60); do
     status=$(docker inspect -f '{{.State.Health.Status}}' "$container" 2>/dev/null || echo "missing")
     [[ "$status" == "healthy" ]] && break
     sleep 5
   done
-  [[ "$status" == "healthy" ]] || fail "${container} never became healthy (status=${status})"
+  [[ "$status" == "healthy" ]] || { echo "FAIL: ${container} never became healthy (status=${status})" >&2; hc_failed=1; }
 done
+(( hc_failed == 0 )) || fail "one or more containers are missing or never became healthy"
+}
+run_check "container healthchecks" check_healthchecks
 
 # ---------------------------------------------------------------------------
 # 3. Containers without healthchecks: must exist and be running.
@@ -185,12 +219,17 @@ RUNNING_SUBNAMES=(
   self-healing-agent
 )
 
+check_running() {
+local run_failed=0
 for subname in "${RUNNING_SUBNAMES[@]}"; do
-  container="$(require_container "$subname")"
+  container="$(require_container "$subname" 2>/dev/null)" || { echo "FAIL: container for subName=${subname} not found" >&2; run_failed=1; continue; }
   step "Checking ${container} (${subname}) is running"
   running=$(docker inspect -f '{{.State.Running}}' "$container" 2>/dev/null || echo "missing")
-  [[ "$running" == "true" ]] || fail "${container} is not running (state=${running})"
+  [[ "$running" == "true" ]] || { echo "FAIL: ${container} is not running (state=${running})" >&2; run_failed=1; }
 done
+(( run_failed == 0 )) || fail "one or more containers are missing or not running"
+}
+run_check "running containers" check_running
 
 # ---------------------------------------------------------------------------
 # 4. HTTP endpoint probes (sampling: one per stack tier).
@@ -220,21 +259,27 @@ declare -a HTTP_PROBES=(
   "Prometheus|prometheus|http://127.0.0.1:9090/-/healthy|200"
 )
 
+check_http_probes() {
+local probe_failed=0
 for probe in "${HTTP_PROBES[@]}"; do
   IFS="|" read -r name subname url expected_codes <<< "$probe"
-  container="$(require_container "$subname")"
+  container="$(require_container "$subname" 2>/dev/null)" || { echo "FAIL: container for subName=${subname} not found" >&2; probe_failed=1; continue; }
   step "Probing ${name} (${container}) ${url} (expect one of ${expected_codes}, up to 1 min)"
   for i in $(seq 1 12); do
     code="$(probe_internal "$container" "$url")"
     echo ",${expected_codes}," | grep -q ",${code}," && break
     sleep 5
   done
-  echo ",${expected_codes}," | grep -q ",${code}," || fail "${name} returned ${code} (expected one of ${expected_codes}) at ${url} (inside ${container})"
+  echo ",${expected_codes}," | grep -q ",${code}," || { echo "FAIL: ${name} returned ${code} (expected one of ${expected_codes}) at ${url} (inside ${container})" >&2; probe_failed=1; }
 done
+(( probe_failed == 0 )) || fail "one or more HTTP probes failed"
+}
+run_check "HTTP endpoint probes" check_http_probes
 
 # Middleware /config is the Bearer-authenticated endpoint internal agents
 # rely on; verify it only if HANDOFF_SHARED_SECRET is available (either
 # exported or fetchable via gcloud from Secret Manager).
+check_middleware_config() {
 if [[ -z "${HANDOFF_SHARED_SECRET:-}" ]] && command -v gcloud >/dev/null 2>&1; then
   HANDOFF_SHARED_SECRET="$(gcloud secrets versions access latest \
     --secret=handoff_shared_secret \
@@ -256,6 +301,8 @@ if [[ -n "${HANDOFF_SHARED_SECRET:-}" ]]; then
 else
   echo "WARN: skipping Middleware /config probe (HANDOFF_SHARED_SECRET unavailable)"
 fi
+}
+run_check "middleware /config" check_middleware_config
 
 # self-healing-agent must have received the same secret (issue #152: it was
 # silently missing from this container while present in middleware's) and
@@ -270,6 +317,7 @@ fi
 # this check doesn't contradict the agent's documented behaviour: WARN
 # instead of FAIL in that mode, and assert the allow-mode log line instead.
 # Production (flag unset/not "1") stays fail-closed — do not weaken that path.
+check_self_healing() {
 self_healing_container="$(container_by_subname "self-healing-agent")"
 if [[ -n "$self_healing_container" ]]; then
   allow_no_config="$(docker exec "$self_healing_container" sh -c 'echo "${SELF_HEALING_ALLOW_NO_CONFIG:-}"' 2>/dev/null || true)"
@@ -296,9 +344,12 @@ if [[ -n "$self_healing_container" ]]; then
 else
   echo "WARN: skipping self-healing-agent config check (container not found)"
 fi
+}
+run_check "self-healing-agent config" check_self_healing
 
 # Loki has no shell/wget. Probe its real HTTP readiness through the shared
 # network from middleware, including when host ports are isolated.
+check_loki() {
 loki_container="$(require_container "loki")"
 middleware_probe_container="$(require_container "middleware")"
 step "Probing Loki readiness from ${middleware_probe_container} (up to 1 min)"
@@ -311,10 +362,14 @@ for i in $(seq 1 12); do
 done
 loki_ready "$middleware_probe_container" \
   || fail "Loki readiness failed at http://loki:3100/ready (${loki_container})"
+}
+run_check "Loki readiness" check_loki
 
 # Tempo has no wget/shell; require a real HTTP round-trip from a sibling
 # (/api/echo, not /ready — see scripts/lib/tempo-ready.sh).
+check_tempo() {
 tempo_container="$(require_container "tempo")"
+middleware_probe_container="$(require_container "middleware")"
 source "$SCRIPT_DIR/lib/tempo-ready.sh"
 step "Probing Tempo /api/echo from ${middleware_probe_container} (up to 1 min)"
 for i in $(seq 1 12); do
@@ -323,6 +378,8 @@ for i in $(seq 1 12); do
 done
 tempo_ready "$middleware_probe_container" \
   || fail "Tempo probe failed at http://tempo:3200/api/echo (${tempo_container})"
+}
+run_check "Tempo /api/echo" check_tempo
 
 # otel-collector (issue #158): its image is distroless (no shell/curl/wget
 # inside it — verified, every exec attempt fails with "executable file not
@@ -332,6 +389,7 @@ tempo_ready "$middleware_probe_container" \
 # observability/otel-collector/config.yaml) is still verified live here, by
 # reaching it FROM a sibling container that does have wget — same
 # cross-container network the rest of this script already relies on.
+check_otel() {
 otel_container="$(require_container "otel-collector")"
 middleware_probe_container="$(require_container "middleware")"
 step "Probing otel-collector health_check extension (:13133/health) from inside ${middleware_probe_container} (up to 1 min)"
@@ -343,6 +401,8 @@ for i in $(seq 1 12); do
 done
 docker exec "$middleware_probe_container" wget -qO- http://otel-collector:13133/health >/dev/null 2>&1 \
   || fail "otel-collector health_check extension unreachable at http://otel-collector:13133/health (probed from ${middleware_probe_container}, container ${otel_container}) — collector may be wedged"
+}
+run_check "otel-collector health_check" check_otel
 
 # ---------------------------------------------------------------------------
 # Traefik Docker-provider routing check (issue #151). The Docker provider was
@@ -361,6 +421,7 @@ docker exec "$middleware_probe_container" wget -qO- http://otel-collector:13133/
 # coolify-proxy has a fixed `container_name: coolify-proxy` in
 # deploy/docker-compose.localproxy.yml (not project-name-templated like the
 # other services), so look it up directly rather than via require_container.
+check_traefik() {
 proxy_container="coolify-proxy"
 docker inspect "$proxy_container" >/dev/null 2>&1 || fail "container ${proxy_container} not found"
 step "Verifying Traefik Docker-provider routers inside ${proxy_container}"
@@ -369,6 +430,8 @@ routers_json="$(docker exec "$proxy_container" wget -qO- http://127.0.0.1:8080/a
 docker_enabled_count="$(echo "$routers_json" | grep -o '"provider":"docker"[^}]*"status":"enabled"\|"status":"enabled"[^}]*"provider":"docker"' | wc -l || true)"
 (( docker_enabled_count > 0 )) || fail "Traefik Docker provider has ZERO enabled routers (found ${docker_enabled_count}) — it may be silently down again (issue #151); routing could be surviving on the file-provider fallback alone without anyone noticing"
 echo "  docker-provider routers OK: ${docker_enabled_count} enabled"
+}
+run_check "Traefik docker-provider routers" check_traefik
 
 # ---------------------------------------------------------------------------
 # 4b. Log rotation coverage (issue #156). Only coolify-proxy had a bounded
@@ -398,6 +461,7 @@ echo "  docker-provider routers OK: ${docker_enabled_count} enabled"
 # regex metacharacters can't silently break the match (also flagged in the
 # same review).
 # ---------------------------------------------------------------------------
+check_log_policy() {
 step "Verifying every running chat-services-*/coolify-proxy container has a bounded log policy"
 # `postgres` was skipped pending explicit user sign-off to recreate the
 # SACRED `chat-services_postgres-data` volume (issue #156). Signed off and
@@ -559,6 +623,8 @@ done < <(docker ps --format '{{.Names}}')
 (( containers_checked > 0 )) || fail "${containers_found} container(s) matched but ALL were skipped (LOG_POLICY_SKIP_SUBNAMES='${LOG_POLICY_SKIP_SUBNAMES}') — no log policy was actually asserted this run. If this is expected (e.g. a deliberate temporary skip), it must not be the ONLY outcome of a health check; narrow the skip list or add a compliant container to check."
 (( log_policy_bad == 0 )) || fail "one or more containers have an unbounded/non-json-file/drifted log policy (issue #156 regression) — see UNBOUNDED/DRIFT lines above"
 echo "  log rotation coverage OK (${containers_checked} checked, ${containers_found} found)"
+}
+run_check "log rotation coverage" check_log_policy
 
 # ---------------------------------------------------------------------------
 # 4c. Memory-limit coverage (issue #157). Before this, `grep -rn
@@ -618,6 +684,7 @@ echo "  log rotation coverage OK (${containers_checked} checked, ${containers_fo
 # this script depending on the exact -f chain/`.env` run-stack.sh uses,
 # which this file has never required for any other check).
 # ---------------------------------------------------------------------------
+check_mem_limits() {
 step "Verifying every running chat-services-*/coolify-proxy container (except postgres) has a memory limit matching its declared value"
 
 declare -A MEM_LIMIT_EXPECTED_MIB=(
@@ -712,6 +779,8 @@ done < <(docker ps --format '{{.Names}}')
 (( mem_containers_checked > 0 )) || fail "${mem_containers_found} container(s) matched but ALL were skipped — no memory-limit coverage was actually asserted this run."
 (( mem_limit_bad == 0 )) || fail "one or more containers have no memory limit, an undeclared one, or a limit drifted from the compose file (issue #157 regression) — see UNBOUNDED/DRIFT/FAIL-ITEM lines above"
 echo "  memory-limit coverage OK (${mem_containers_checked} checked, ${mem_containers_found} found, postgres deliberately excluded)"
+}
+run_check "memory-limit coverage" check_mem_limits
 
 # ---------------------------------------------------------------------------
 # 4d. Healthcheck coverage (issue #158). Before this, 11 running services
@@ -735,6 +804,7 @@ echo "  memory-limit coverage OK (${mem_containers_checked} checked, ${mem_conta
 # lesson). If this list ever needs to change, that's a source-code diff and
 # a reviewed PR, not a runtime knob.
 # ---------------------------------------------------------------------------
+check_healthcheck_coverage() {
 step "Verifying every running chat-services-*/coolify-proxy container has a healthcheck AND reports healthy"
 # tempo, loki and otel-collector: distroless images, no exec tool for a Docker-native
 # healthcheck (see deploy/docker-compose.nexaduo.yml and the otel-collector
@@ -807,21 +877,26 @@ done < <(docker ps --format '{{.Names}}')
 (( hc_containers_checked > 0 )) || fail "${hc_containers_found} container(s) matched but ALL were skipped (fixed skip list: ${HEALTHCHECK_COVERAGE_SKIP_SUBNAMES[*]}) — no healthcheck coverage was actually asserted this run."
 (( hc_bad == 0 )) || fail "one or more containers have no healthcheck configured or are not reporting healthy (issue #158 regression) — see NO-HEALTHCHECK/UNHEALTHY lines above"
 echo "  healthcheck coverage OK (${hc_containers_checked} checked, ${hc_containers_found} found)"
+}
+run_check "healthcheck coverage" check_healthcheck_coverage
 
 # ---------------------------------------------------------------------------
 # 5. Cross-stack network membership: confirm at least one container per
 #    stack is attached to nexaduo-network (proves cross-stack DNS works).
 # ---------------------------------------------------------------------------
+check_network_membership() {
 step "Verifying nexaduo-network membership"
 members=$(docker network inspect nexaduo-network -f '{{range .Containers}}{{.Name}} {{end}}' 2>/dev/null || echo "")
 for required_subname in postgres chatwoot-rails dify-api middleware prometheus; do
   required_container="$(require_container "$required_subname")"
   echo "$members" | grep -qw "$required_container" || fail "nexaduo-network missing ${required_subname} (${required_container})"
 done
+}
+run_check "nexaduo-network membership" check_network_membership
 
 # 6. Backup freshness — runs here on full runs so a stale backup never hides
 #    the container/routing checks above (e.g. right after a DR restore).
-check_backup_freshness
+run_check "backup freshness" check_backup_freshness
 
 # ---------------------------------------------------------------------------
 # 7. Grafana Dify token-usage alert rules (issue #182) must still be
@@ -854,6 +929,7 @@ check_backup_freshness
 #    `jq: not found`), so parsing happens here on the host after `docker exec`
 #    fetches the raw body with `wget`, not inside the container.
 # ---------------------------------------------------------------------------
+check_alert_rules() {
 if [[ "${SKIP_ALERT_HEALTH_CHECK:-0}" == "1" ]]; then
   step "Skipping Grafana alert-rule health check (SKIP_ALERT_HEALTH_CHECK=1)"
 else
@@ -882,5 +958,15 @@ else
     echo "  Dify token-usage alert rules present and healthy"
   fi
 fi
+}
+run_check "Grafana alert rules" check_alert_rules
 
+if (( ${#FAILED_CHECKS[@]} > 0 )); then
+  echo "" >&2
+  echo "SUMMARY: ${#FAILED_CHECKS[@]} check(s) FAILED:" >&2
+  for failed_check in "${FAILED_CHECKS[@]}"; do
+    echo "  - ${failed_check}" >&2
+  done
+  exit 1
+fi
 echo "OK all stacks healthy — shared + chatwoot + dify + nexaduo"
