@@ -2455,4 +2455,106 @@ describe("registerChatwootWebhookRoute — never silence the customer (issues #2
       await app.close();
     }
   });
+  // ---- REV-1 (issue #293): tenant read errors are retried / answered, never a silent drop ----
+  // `tenantPlan(n)` decides the result of the n-th (1-based) `FROM tenants` query.
+  type TenantStep = "ok" | "throw" | "inactive" | "ambiguous" | "none";
+  function poolWithTenantPlan(plan: (n: number) => TenantStep) {
+    const pool = buildPool();
+    const base = pool.query.getMockImplementation()!;
+    let n = 0;
+    pool.query.mockImplementation((async (sql: string, params: unknown[]) => {
+      if (!sql.includes("FROM tenants")) return base(sql, params);
+      const step = plan(++n);
+      const row = { slug: "t", status: "active", dify_api_key: "k", dify_app_type: "chatflow" };
+      if (step === "throw") throw new Error("ECONNRESET reading tenants");
+      if (step === "inactive") return { rows: [{ ...row, status: "inactive" }] };
+      if (step === "ambiguous") return { rows: [row, { ...row, slug: "t2" }] };
+      if (step === "none") return { rows: [] };
+      return { rows: [row] };
+    }) as any);
+    return { pool, tenantCalls: () => n };
+  }
+
+  it("REV-1 handler: tenants query fails ONCE then succeeds => retried, normal Dify reply, no fallback", async () => {
+    const chatwoot = buildChatwoot();
+    const { pool } = poolWithTenantPlan((n) => (n === 1 ? "throw" : "ok"));
+    const { app, metrics } = await buildApp(pool, chatwoot);
+    const res = await post(app, chatwootMessageCreated({ id: 1, content: "oi", accountId: 42, conversationId: 80 }));
+    expect(res.json()).toEqual({ ok: true, buffered: true });
+    await wait(500);
+    expect(chatBlocking).toHaveBeenCalledTimes(1);
+    expect(chatwoot.postMessage).toHaveBeenCalledTimes(1);
+    expect(chatwoot.postMessage.mock.calls[0][0].content).toBe("resposta");
+    expect(await counter(metrics.flushAbortedTotal, { account_id: "42" })).toBe(0);
+    await app.close();
+  });
+
+  it("REV-1 flush: tenant read ok at the handler, fails ONCE at flush => retried, normal reply", async () => {
+    const chatwoot = buildChatwoot();
+    const { pool } = poolWithTenantPlan((n) => (n === 2 ? "throw" : "ok"));
+    const { app } = await buildApp(pool, chatwoot);
+    await post(app, chatwootMessageCreated({ id: 1, content: "oi", accountId: 42, conversationId: 81 }));
+    await wait(500);
+    expect(chatBlocking).toHaveBeenCalledTimes(1);
+    expect(chatwoot.postMessage).toHaveBeenCalledTimes(1);
+    expect(chatwoot.postMessage.mock.calls[0][0].content).toBe("resposta");
+    await app.close();
+  });
+
+  it("REV-1 flush: tenant read ok at the handler, fails PERSISTENTLY at flush => one fallback, no Dify, no silent drop", async () => {
+    const chatwoot = buildChatwoot();
+    const { pool, tenantCalls } = poolWithTenantPlan((n) => (n === 1 ? "ok" : "throw"));
+    const { app, metrics } = await buildApp(pool, chatwoot);
+    await post(app, chatwootMessageCreated({ id: 1, content: "oi", accountId: 42, conversationId: 82 }));
+    await wait(700);
+    expect(tenantCalls()).toBe(4); // 1 at the handler + 3 bounded tries at flush
+    expect(chatBlocking).not.toHaveBeenCalled();
+    expect(chatwoot.postMessage).toHaveBeenCalledTimes(1);
+    expect(chatwoot.postMessage.mock.calls[0][0].content).toBe("INSTABILIDADE");
+    expect(await counter(metrics.flushAbortedTotal, { account_id: "42", reason: "postgres_read_failed" })).toBe(1);
+    await app.close();
+  });
+
+  it("REV-1 handler: tenants query fails persistently => 3 tries, ack, ONE fallback", async () => {
+    const chatwoot = buildChatwoot();
+    const { pool, tenantCalls } = poolWithTenantPlan(() => "throw");
+    const { app } = await buildApp(pool, chatwoot);
+    const res = await post(app, chatwootMessageCreated({ id: 1, content: "oi", accountId: 42, conversationId: 83 }));
+    expect(res.json()).toEqual({ ok: true, fallback: "postgres_read_failed" });
+    await wait(500);
+    expect(tenantCalls()).toBe(3);
+    expect(chatwoot.postMessage).toHaveBeenCalledTimes(1);
+    await app.close();
+  });
+
+  it("deliberate tenant skips (inactive / ambiguous / none) are counted, not retried, and get NO reply", async () => {
+    for (const [step, reason] of [
+      ["inactive", "tenant_inactive"],
+      ["ambiguous", "tenant_ambiguous"],
+      ["none", "no_tenant_mapping"],
+    ] as const) {
+      const chatwoot = buildChatwoot();
+      const { pool, tenantCalls } = poolWithTenantPlan(() => step);
+      const { app, metrics } = await buildApp(pool, chatwoot);
+      const res = await post(app, chatwootMessageCreated({ id: 1, content: "oi", accountId: 42, conversationId: 84 }));
+      expect(res.json()).toEqual({ skipped: reason });
+      await wait(150);
+      expect(tenantCalls()).toBe(1);
+      expect(chatwoot.postMessage).not.toHaveBeenCalled();
+      expect(await counter(metrics.errorsTotal, { account_id: "42", reason })).toBe(1);
+      await app.close();
+    }
+  });
+
+  it("#296 REV-9: tenant becomes inactive between the handler and the flush => flush skip is counted, no reply", async () => {
+    const chatwoot = buildChatwoot();
+    const { pool } = poolWithTenantPlan((n) => (n === 1 ? "ok" : "inactive"));
+    const { app, metrics } = await buildApp(pool, chatwoot);
+    await post(app, chatwootMessageCreated({ id: 1, content: "oi", accountId: 42, conversationId: 85 }));
+    await wait(300);
+    expect(chatBlocking).not.toHaveBeenCalled();
+    expect(chatwoot.postMessage).not.toHaveBeenCalled();
+    expect(await counter(metrics.errorsTotal, { account_id: "42", reason: "tenant_inactive" })).toBe(1);
+    await app.close();
+  });
 });

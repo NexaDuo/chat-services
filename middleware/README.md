@@ -94,7 +94,7 @@ src/
   (#203 said to keep skipping; #293 reverses that). Now buffered with the burst:
   if the burst has any text, the Dify answer is the only reply; if all empty,
   one static "send text" reply. Messages with a media signal still reach Dify with a marker.
-- Postgres read failures (watermark, contact conversation id, tenant outage) are
+- Postgres read failures (watermark, contact conversation id, tenant lookup error `tenant_lookup_failed`) are
   retried (100/200 ms) and then answered with one static apology, never Dify.
   Both fallbacks are throttled to one per conversation per 5 min (in memory; a
   restart resets it, at most one extra message), only while `pending` (#250), and
