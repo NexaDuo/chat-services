@@ -33,6 +33,16 @@ export type Metrics = {
    * bug this issue fixes) would again be invisible.
    */
   contentMarkerWithTextTotal: Counter<"account_id" | "type">;
+  /**
+   * Customer-facing static fallback paths (issue #293): `empty_content` (no
+   * text, no media signal) and `postgres_read_failed` (reads exhausted their
+   * retries). `outcome` = replied | replied_kill_switch_unknown | throttled | suppressed (kill switch / bot no longer
+   * owns the conversation) | failed (the fallback post itself
+   * threw). Alert on `reason="postgres_read_failed"`.
+   */
+  fallbackRepliesTotal: Counter<"account_id" | "reason" | "outcome">;
+  /** Flush aborted by an infrastructure error (Postgres read), per account/reason (#213). */
+  flushAbortedTotal: Counter<"account_id" | "reason">;
 };
 
 export function createMetrics(): Metrics {
@@ -92,7 +102,7 @@ export function createMetrics(): Metrics {
 
   const emptyContentTotal = new Counter({
     name: "middleware_empty_content_total",
-    help: "Incoming messages with empty content, per account/type/outcome (answered_with_marker vs skipped) — issue #203.",
+    help: "Incoming messages with empty content, per account/type/outcome (answered_with_marker | answered_with_fallback | skipped) — issues #203/#293.",
     labelNames: ["account_id", "type", "outcome"] as const,
     registers: [registry],
   });
@@ -104,7 +114,23 @@ export function createMetrics(): Metrics {
     registers: [registry],
   });
 
+  const fallbackRepliesTotal = new Counter({
+    name: "middleware_fallback_replies_total",
+    help: "Static fallback replies to the customer, per account/reason/outcome — issue #293.",
+    labelNames: ["account_id", "reason", "outcome"] as const,
+    registers: [registry],
+  });
+
+  const flushAbortedTotal = new Counter({
+    name: "middleware_flush_aborted_total",
+    help: "Buffered groups aborted by an infrastructure error (e.g. Postgres read failure), per account/reason — issues #213/#293.",
+    labelNames: ["account_id", "reason"] as const,
+    registers: [registry],
+  });
+
   return {
+    fallbackRepliesTotal,
+    flushAbortedTotal,
     registry,
     difyTokensTotal,
     difyRequestsTotal,

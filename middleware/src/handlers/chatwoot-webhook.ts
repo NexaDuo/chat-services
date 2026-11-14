@@ -3,7 +3,13 @@ import { z } from "zod";
 import axios from "axios";
 import pg from "pg";
 import type { AppConfig } from "../config.js";
-import { resolveTenantDetailed, isDifyKillSwitchEnabled } from "../config.js";
+import {
+  resolveTenantDetailed,
+  isDifyKillSwitchEnabled,
+  DEFAULT_EMPTY_CONTENT_REPLY,
+  DEFAULT_INFRA_FALLBACK_REPLY,
+} from "../config.js";
+import type { TenantResolution } from "../config.js";
 import type { Metrics } from "../metrics.js";
 import type { ChatwootClient } from "../chatwoot.js";
 import { DifyClient } from "../dify.js";
@@ -67,7 +73,7 @@ const WebhookSchema = z
     // AGENTS.md). `.passthrough()` still lets the rest of the object (incl.
     // `story_url`) parse without throwing; we simply never read it.
     content_attributes: z.record(z.string(), z.unknown()).optional(),
-    // `file_type` is Chatwoot's internal numeric attachment-type enum.
+    // `file_type` is Chatwoot's attachment-type enum (name in webhooks, integer in the DB).
     // `external_url` is ALSO a Meta-signed URL — same non-negotiable as
     // `story_url` above: never logged, metriced, or forwarded to Dify.
     attachments: z
@@ -175,6 +181,8 @@ type BufferedIncomingMessage = {
   contactId: number | string;
   /** dify_conversation_id as read from THIS webhook's custom_attributes, if any. */
   difyConvIdHint?: string;
+  /** No text and no media signal (issue #293). Buffered so a text message in the same burst yields ONE reply. */
+  empty?: boolean;
 };
 
 function watermarkKey(accountIdStr: string, conversationId: number | string): string {
@@ -340,6 +348,198 @@ async function persistWatermarkResilient(
   );
 }
 
+/** Bounded retry for flush-time Postgres reads (issue #213): 3 attempts, 100ms then 200ms. */
+const DB_READ_ATTEMPTS = 3;
+
+async function readWithRetry<T>(
+  what: string,
+  fn: () => Promise<T>,
+  log: FastifyBaseLogger,
+  ctx: { accountId: string; conversationId: number | string },
+): Promise<T> {
+  let lastErr: unknown;
+  for (let attempt = 1; attempt <= DB_READ_ATTEMPTS; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastErr = err;
+      log.warn({ err, attempt, what, ...ctx }, "webhook: postgres read failed, retrying");
+      if (attempt < DB_READ_ATTEMPTS) await delay(100 * attempt);
+    }
+  }
+  throw lastErr;
+}
+
+/**
+ * Per-conversation, per-reason cooldown for static fallbacks (issues #293,
+ * SEC-2/REV-3: one apology per window, and an auto-responder on the other
+ * side cannot create a loop). `reserve` is synchronous so two concurrent
+ * webhooks cannot both pass the check before either stamps (REV-2); callers
+ * `release` when nothing was delivered so a failed/suppressed attempt does
+ * not mute the next one. In-memory on purpose: a restart forgets it (at most
+ * one extra nudge per conversation), which is cheaper than a DB write on a
+ * path that exists precisely because the DB may be down.
+ */
+const FALLBACK_COOLDOWN_MS = 5 * 60_000;
+
+class FallbackThrottle {
+  private readonly stamps = new Map<string, number>();
+  reserve(key: string): boolean {
+    const now = Date.now();
+    for (const [k, t] of this.stamps) {
+      if (now - t >= FALLBACK_COOLDOWN_MS) this.stamps.delete(k);
+    }
+    if (this.stamps.has(key)) return false;
+    this.stamps.set(key, now);
+    return true;
+  }
+  release(key: string): void {
+    this.stamps.delete(key);
+  }
+}
+
+/** account_id comes from the payload; only a plausible numeric id may become a label (SEC-6). */
+function labelAccount(accountId: string): string {
+  return /^\d{1,12}$/.test(accountId) ? accountId : "unknown";
+}
+
+type FallbackOutcome = "replied" | "suppressed" | "failed" | "throttled";
+
+/**
+ * Posts a static, customer-facing fallback (issue #293). Never throws.
+ * Honors DIFY_KILL_SWITCH (operator asked for total silence) and bot
+ * ownership (#250: only while the conversation is still `pending`).
+ *
+ * Kill switch ON + middleware DB unreadable: `isDifyKillSwitchEnabled`
+ * resolves a read error to OFF, so the static apology is still sent (operator
+ * decision: it is not a Dify call). That case is logged distinctly
+ * (`infra_fallback_sent_kill_switch_unknown`) and counted under
+ * `outcome="replied_kill_switch_unknown"`; the throttle bounds it to one per
+ * conversation per window. A readable ON switch suppresses.
+ */
+async function sendFallbackReply(
+  deps: {
+    metrics: Metrics;
+    chatwoot: ChatwootClient;
+    pool: pg.Pool;
+    log: FastifyBaseLogger;
+    throttle: FallbackThrottle;
+  },
+  p: { accountId: string; conversationId: number | string; reason: string; text: string },
+): Promise<FallbackOutcome> {
+  const { metrics, chatwoot, pool, log, throttle } = deps;
+  const acct = labelAccount(p.accountId);
+  const key = `${p.reason}:${p.accountId}:${p.conversationId}`;
+  const count = (outcome: string) =>
+    metrics.fallbackRepliesTotal.inc({ account_id: acct, reason: p.reason, outcome });
+  if (!throttle.reserve(key)) {
+    count("throttled");
+    return "throttled";
+  }
+  let delivered = false;
+  try {
+    let killSwitchReadFailed = false;
+    const killSwitchOn = await isDifyKillSwitchEnabled(pool, {
+      warn: () => {
+        killSwitchReadFailed = true;
+      },
+    });
+    if (killSwitchOn) {
+      count("suppressed");
+      return "suppressed";
+    }
+    if (!(await stillOwnedByBot(chatwoot, metrics, log, p.accountId, p.conversationId))) {
+      count("suppressed");
+      return "suppressed";
+    }
+    await chatwoot.postMessage({
+      accountId: p.accountId,
+      conversationId: p.conversationId,
+      content: p.text,
+      messageType: "outgoing",
+    });
+    delivered = true;
+    if (killSwitchReadFailed) {
+      log.warn(
+        { accountId: p.accountId, conversationId: p.conversationId, reason: p.reason },
+        "infra_fallback_sent_kill_switch_unknown: DIFY_KILL_SWITCH could not be read (Postgres unreadable); static fallback sent anyway (issue #293)",
+      );
+      count("replied_kill_switch_unknown");
+    } else {
+      count("replied");
+    }
+    return "replied";
+  } catch (err) {
+    log.error(
+      { err, accountId: p.accountId, conversationId: p.conversationId, reason: p.reason },
+      "webhook: FAILED to post fallback reply — the customer got no answer (issue #293)",
+    );
+    count("failed");
+    return "failed";
+  } finally {
+    if (!delivered) throttle.release(key);
+  }
+}
+
+/**
+ * Shared abort path for a Postgres failure that survived bounded retries
+ * (issue #213): loud log + metrics, then a static fallback reply.
+ * Never throws.
+ */
+async function abortOnPostgresFailure(
+  deps: {
+    config: AppConfig;
+    metrics: Metrics;
+    chatwoot: ChatwootClient;
+    pool: pg.Pool;
+    log: FastifyBaseLogger;
+    throttle: FallbackThrottle;
+  },
+  p: { accountId: string; conversationId: number | string; what: string; err: unknown; groupSize?: number },
+): Promise<void> {
+  const { config, metrics, chatwoot, pool, log, throttle } = deps;
+  const acct = labelAccount(p.accountId);
+  metrics.flushAbortedTotal.inc({ account_id: acct, reason: "postgres_read_failed" });
+  metrics.errorsTotal.inc({ account_id: acct, reason: "postgres_read_failed" });
+  log.error(
+    { err: p.err, what: p.what, accountId: p.accountId, conversationId: p.conversationId, groupSize: p.groupSize },
+    "webhook: ABORTED by postgres read failure after retries — sending fallback reply (issue #213)",
+  );
+  await sendFallbackReply(
+    { metrics, chatwoot, pool, log, throttle },
+    {
+      accountId: p.accountId,
+      conversationId: p.conversationId,
+      reason: "postgres_read_failed",
+      text: config.webhook?.infraFallbackReply ?? DEFAULT_INFRA_FALLBACK_REPLY,
+    },
+  );
+}
+
+/**
+ * Tenant lookup with bounded retry (issue #293 REV-1). `resolveTenantDetailed`
+ * reports a pool/query error as `tenant_lookup_failed`, distinct from a
+ * genuine not-found/inactive/ambiguous. Only the error case is retried
+ * (3 tries, 100/200 ms); an exhausted retry is returned as-is so the caller
+ * takes the infra-fallback path. Deliberate skips are never retried.
+ */
+async function resolveTenantWithRetry(
+  config: AppConfig,
+  accountId: string,
+  pool: pg.Pool,
+  log: FastifyBaseLogger,
+  ctx: { accountId: string; conversationId: number | string },
+): Promise<TenantResolution> {
+  let res: TenantResolution = { ok: false, reason: "tenant_lookup_failed" };
+  for (let attempt = 1; attempt <= DB_READ_ATTEMPTS; attempt++) {
+    res = await resolveTenantDetailed(config, accountId, pool);
+    if (res.ok || res.reason !== "tenant_lookup_failed") return res;
+    log.warn({ attempt, what: "tenant", ...ctx }, "webhook: tenant lookup failed, retrying");
+    if (attempt < DB_READ_ATTEMPTS) await delay(100 * attempt);
+  }
+  return res;
+}
+
 /**
  * Handles one already-grouped burst: resolves the tenant fresh (in case the
  * mapping changed since the messages arrived), calls Dify exactly once with
@@ -355,9 +555,10 @@ async function flushGroup(
     chatwoot: ChatwootClient;
     pool: pg.Pool;
     difyConvIdCache: Map<string, string>;
+    throttle: FallbackThrottle;
   },
 ): Promise<void> {
-  const { app, config, metrics, chatwoot, pool, difyConvIdCache } = deps;
+  const { app, config, metrics, chatwoot, pool, difyConvIdCache, throttle } = deps;
   const log: FastifyBaseLogger = app.log;
   const first = group.messages[0];
   const accountIdStr = first.accountIdStr;
@@ -369,7 +570,32 @@ async function flushGroup(
   // webhook retry/redelivery landing in the same group as a message already
   // accounted for, and against messages whose id we could not parse (kept
   // in the group for content, but never allowed to move the watermark).
-  const watermark = await readWatermark(pool, accountIdStr, conversationId);
+  //
+  // Issue #213: this read (and the contact read below) used to be unguarded:
+  // a transient Postgres failure rejected the whole flush and the customer got
+  // silence. Now: bounded retry, then a static fallback reply + metric.
+  // Proceeding WITHOUT the watermark is deliberately NOT chosen: the
+  // watermark is the guard against re-answering an already-answered message
+  // (#179), so "read failed" cannot be treated as "0". The group is abandoned
+  // un-advanced and the customer is told to resend.
+  const abortOnReadFailure = (what: string, err: unknown): Promise<void> =>
+    abortOnPostgresFailure(
+      { config, metrics, chatwoot, pool, log, throttle },
+      { accountId: accountIdStr, conversationId, what, err, groupSize: group.messages.length },
+    );
+
+  let watermark: number;
+  try {
+    watermark = await readWithRetry(
+      "watermark",
+      () => readWatermark(pool, accountIdStr, conversationId),
+      log,
+      { accountId: accountIdStr, conversationId },
+    );
+  } catch (err) {
+    await abortOnReadFailure("watermark", err);
+    return;
+  }
   const eligible = group.messages
     .filter((m) => m.id === undefined || m.id > watermark)
     .sort((a, b) => (a.id ?? 0) - (b.id ?? 0));
@@ -382,19 +608,56 @@ async function flushGroup(
     return;
   }
 
-  const content = eligible.map((m) => m.content).join("\n");
+  // Empty (no text, no media signal) members never reach Dify. If a text
+  // member is in the same burst, the Dify answer is the ONE reply (as on main).
+  const textual = eligible.filter((m) => !m.empty);
+  const content = textual.map((m) => m.content).join("\n");
   const maxId = eligible.reduce(
     (max, m) => (m.id !== undefined && m.id > max ? m.id : max),
     0,
   );
 
-  const resolution = await resolveTenantDetailed(config, accountIdStr, pool);
+  const resolution = await resolveTenantWithRetry(config, accountIdStr, pool, log, {
+    accountId: accountIdStr,
+    conversationId,
+  });
+  if (!resolution.ok && resolution.reason === "tenant_lookup_failed") {
+    // Pool/query error that survived the retries: an outage, NOT "unmapped".
+    await abortOnReadFailure("tenant", new Error("tenant lookup failed after retries"));
+    return;
+  }
   if (!resolution.ok) {
     log.warn({ accountId: accountIdStr, reason: resolution.reason }, `webhook: ${resolution.reason} (group dropped)`);
     metrics.errorsTotal.inc({ account_id: accountIdStr, reason: resolution.reason });
     return;
   }
   const tenant = resolution.tenant;
+
+  if (textual.length === 0) {
+    // Whole burst is empty: one polite "send text" nudge (issue #293), never Dify.
+    const outcome = await sendFallbackReply(
+      { metrics, chatwoot, pool, log, throttle },
+      {
+        accountId: accountIdStr,
+        conversationId,
+        reason: "empty_content",
+        text: config.webhook?.emptyContentReply ?? DEFAULT_EMPTY_CONTENT_REPLY,
+      },
+    );
+    metrics.emptyContentTotal.inc({
+      account_id: accountIdStr,
+      type: "none",
+      outcome: outcome === "replied" ? "answered_with_fallback" : "skipped",
+    });
+    log.info(
+      { accountId: accountIdStr, conversationId, outcome },
+      "webhook: empty content without media signal, static fallback attempted (issue #293)",
+    );
+    if (outcome === "replied" && maxId > 0) {
+      await persistWatermarkResilient(pool, accountIdStr, conversationId, maxId, log);
+    }
+    return;
+  }
 
   // Manual kill switch (issue #184) — checked HERE, at flush time, immediately
   // before the Dify call, and nowhere earlier in the pipeline. PR #180 made
@@ -459,7 +722,20 @@ async function flushGroup(
     : undefined;
   if (!difyConvId && contactId !== "unknown") {
     // (1) The new table is the source of truth for a real contact.
-    difyConvId = await readContactDifyConversationId(pool, accountIdStr, contactId);
+    // A failed read must NOT silently fall through to "new Dify
+    // conversation": the later write-through would overwrite the contact's
+    // stored conversation id and wipe their memory (#204). Abort instead.
+    try {
+      difyConvId = await readWithRetry(
+        "contact_dify_conversation",
+        () => readContactDifyConversationId(pool, accountIdStr, contactId),
+        log,
+        { accountId: accountIdStr, conversationId },
+      );
+    } catch (err) {
+      await abortOnReadFailure("contact_dify_conversation", err);
+      return;
+    }
     if (difyConvId) resolvedFrom = "table";
   }
   if (!difyConvId) {
@@ -664,10 +940,8 @@ async function flushGroup(
  * follow-up issue this one depends on; here we only make the silence
  * stop and let the agent react naturally to the content *type*.
  *
- * The full vocabulary (image/audio/video/file/generic) is defined up front
- * so it's ready as more `file_type` values get confirmed — but per the
- * issue's explicit instruction, only entries backed by an OBSERVED Chatwoot
- * value are actually wired into `deriveContentMarker` below. Never guess.
+ * Markers are wired only for `file_type` values documented upstream (see
+ * `FILE_TYPE_NUMBER_TO_NAME` below); anything else is the generic marker.
  */
 const CONTENT_MARKERS = {
   story_reply: "[o usuário respondeu ao seu story]",
@@ -682,33 +956,44 @@ const CONTENT_MARKERS = {
 export type ContentMarkerType = keyof typeof CONTENT_MARKERS;
 
 /**
- * `attachments[].file_type` is a Chatwoot-internal numeric enum. Only the
- * two values actually OBSERVED in production (account 3 / tenant `duda`)
- * are mapped — every other value falls through to the generic marker in
- * `deriveContentMarker` rather than guessing:
- *   - `11` — message 174 (Chatwoot DB, conversation 16, contact Gabriela
- *     Andretta, 2026-09-10): the Instagram story-reply that motivated this
- *     issue; she never received a reply.
- *   - `2` — message 113 (conversation 11): the neighbor story-MENTION case.
- *     That message already carries text today ("mentioned you in the
- *     story:") so it never actually falls into the empty-content branch in
- *     practice; mapped here only so the provenance is documented for #204.
+ * `attachments[].file_type` mapping. Source of truth is upstream Chatwoot
+ * (`app/models/attachment.rb` enum at v4.18.0: image 0, audio 1, video 2,
+ * file 3, location 4, fallback 5, share 6, story_mention 7, contact 8,
+ * ig_reel 9, ig_post 10, ig_story 11, embed 12). The webhook serializes the
+ * enum NAME (`Attachment#push_event_data`); the DB stores the integer, which
+ * is what production captures (msg 174 => 11) show. Both are normalized to
+ * the name here, then mapped. Unlisted names/values fall to the generic
+ * marker. Own-property lookups only (a `Map`): `constructor`/`__proto__`
+ * must never resolve to an inherited value.
  */
-const FILE_TYPE_MARKER_TYPE: Partial<Record<number, ContentMarkerType>> = {
-  11: "story_reply",
-  2: "story_mention",
-};
+const FILE_TYPE_NUMBER_TO_NAME = new Map<number, string>([
+  [0, "image"],
+  [1, "audio"],
+  [2, "video"],
+  [3, "file"],
+  [7, "story_mention"],
+  [11, "ig_story"],
+]);
+
+const FILE_TYPE_NAME_MARKER_TYPE = new Map<string, ContentMarkerType>([
+  ["image", "image"],
+  ["audio", "audio"],
+  ["video", "video"],
+  ["file", "file"],
+  ["story_mention", "story_mention"],
+  ["ig_story", "story_reply"],
+]);
 
 /**
  * Detects whether an empty `content` still carries a real content signal
  * and, if so, picks the right pt-BR marker. Returns `undefined` when there
- * is genuinely nothing to react to — that case must keep returning
- * `skipped: "empty_content"` (per the issue's AC): never invent a reply out
- * of nothing.
+ * is genuinely nothing to react to. That case is NOT sent to Dify (nothing
+ * to ask it about); since #293 it gets a static polite "send text" reply
+ * (reversing #203's original "keep skipping" criterion) instead of silence.
  *
  * SECURITY (issue #203, `@sec`): only reads `content_attributes.image_type`/
- * `story_id` (non-sensitive ids) and `attachments[].file_type` (a small
- * integer). Never reads `content_attributes.story_url` or
+ * `story_id` (non-sensitive ids) and `attachments[].file_type` (an enum
+ * name or small integer). Never reads `content_attributes.story_url` or
  * `attachments[].external_url` — both are Meta-SIGNED URLs
  * (`signature=...`) and must never reach a log line, a metric label, or the
  * Dify request.
@@ -723,8 +1008,8 @@ const FILE_TYPE_MARKER_TYPE: Partial<Record<number, ContentMarkerType>> = {
  * Only `image_type === "ig_story_reply"` (the confirmed signal) yields
  * `story_reply` here; any other/absent `image_type` alongside a present
  * `story_id` is a recognized-but-unconfirmed story signal and falls through
- * to the `attachments`-driven `file_type` mapping below (which DOES know
- * `file_type=2` ⇒ `story_mention`), and finally to the generic marker if
+ * to the `attachments`-driven `file_type` mapping below (which knows
+ * `story_mention`), and finally to the generic marker if
  * nothing more specific matches. Never guess.
  */
 function deriveContentMarker(
@@ -756,7 +1041,13 @@ function deriveContentMarker(
           : typeof rawType === "string" && rawType.trim() !== "" && Number.isFinite(Number(rawType))
             ? Number(rawType)
             : undefined;
-      const mappedType = numericType === undefined ? undefined : FILE_TYPE_MARKER_TYPE[numericType];
+      const typeName =
+        numericType !== undefined
+          ? FILE_TYPE_NUMBER_TO_NAME.get(numericType)
+          : typeof rawType === "string"
+            ? rawType.trim().toLowerCase()
+            : undefined;
+      const mappedType = typeName === undefined ? undefined : FILE_TYPE_NAME_MARKER_TYPE.get(typeName);
       if (mappedType) {
         return { marker: CONTENT_MARKERS[mappedType], type: mappedType };
       }
@@ -798,10 +1089,11 @@ export async function registerChatwootWebhookRoute(
   // an unrelated conversation with the same numeric id and leak one person's
   // Dify memory into another's reply. Never drop these prefixes.
   const difyConvIdCache = new Map<string, string>();
+  const throttle = new FallbackThrottle();
 
   const debouncer = new ConversationDebouncer<BufferedIncomingMessage>(
     config.webhook.debounceMs,
-    (group) => flushGroup(group, { app, config, metrics, chatwoot, pool, difyConvIdCache }),
+    (group) => flushGroup(group, { app, config, metrics, chatwoot, pool, difyConvIdCache, throttle }),
     (key, err) => {
       app.log.error({ key, err }, "webhook: group flush failed (see prior log line for detail)");
     },
@@ -885,6 +1177,7 @@ export async function registerChatwootWebhookRoute(
 
     let content = (evt.content ?? "").trim();
     const hasOriginalText = content.length > 0;
+    let emptyNoSignal = false;
 
     // Issue #208: the content-marker signal (a story reply/mention, an
     // attachment) is ORTHOGONAL to whether `content` is empty. #203 only
@@ -902,12 +1195,12 @@ export async function registerChatwootWebhookRoute(
       // real story reply that never got answered. Now: derive a pt-BR
       // marker when there's a signal, and keep skipping ONLY when there
       // genuinely is none.
-      metrics.emptyContentTotal.inc({
-        account_id: accountIdStr,
-        type: "none",
-        outcome: "skipped",
-      });
-      return reply.code(200).send({ skipped: "empty_content" });
+      //
+      // Issue #293 supersedes the old "keep skipping" rule: a customer must
+      // never be silently ignored, so this case gets a static polite reply
+      // asking for text (sent below, after the tenant check). Never routed
+      // through Dify: there is nothing to ask it about.
+      emptyNoSignal = true;
     }
 
     if (derived) {
@@ -955,7 +1248,21 @@ export async function registerChatwootWebhookRoute(
     // buffering it). The full tenant lookup happens again at flush time,
     // since that is when it actually gets used against Dify and a burst can
     // straddle a tenant-mapping change.
-    const resolution = await resolveTenantDetailed(config, accountIdStr, pool);
+    const resolution = await resolveTenantWithRetry(config, accountIdStr, pool, req.log, {
+      accountId: accountIdStr,
+      conversationId,
+    });
+    if (!resolution.ok && resolution.reason === "tenant_lookup_failed") {
+      // Ack first, post after: the fallback needs a Chatwoot GET + POST and
+      // must not hold the webhook response open. Never throws; throttled per
+      // conversation.
+      const acked = reply.code(200).send({ ok: true, fallback: "postgres_read_failed" });
+      void abortOnPostgresFailure(
+        { config, metrics, chatwoot, pool, log: req.log, throttle },
+        { accountId: accountIdStr, conversationId, what: "tenant", err: new Error("tenant lookup failed after retries") },
+      );
+      return acked;
+    }
     if (!resolution.ok) {
       req.log.warn({ accountId: accountIdStr, reason: resolution.reason }, `webhook: ${resolution.reason}`);
       metrics.errorsTotal.inc({
@@ -1001,6 +1308,7 @@ export async function registerChatwootWebhookRoute(
       conversationId,
       contactId,
       difyConvIdHint: difyConvId,
+      empty: emptyNoSignal,
     });
 
     return reply.code(200).send({ ok: true, buffered: true });

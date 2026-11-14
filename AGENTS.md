@@ -254,6 +254,11 @@ Dumps: `~/nexaduo-local/dumps/<db>-<YYYY-MM-DD>-HHMM.sql.gz` (+ off-host mirror 
    restored DB/volumes with.
 
 ## Live gotchas
+- **Static infra fallback vs kill switch (issue #293):** on a middleware Postgres read
+  failure the middleware sends one static apology per conversation per 5 min (pending
+  conversations only, never Dify). Kill switch ON + DB unreadable still allows that one
+  apology (state unknowable); a readable ON suppresses. Logged as
+  `infra_fallback_sent_kill_switch_unknown`. Details: `docs/dify-kill-switch.md`.
 - **Dify SSRF proxy (issue #222):** `deploy/squid/squid.conf` is the versioned
   destination ACL, mounted read-only; API/worker use SSRF proxy URLs and
   sandbox uses HTTP(S)_PROXY without NO_PROXY bypasses. The plugin daemon is
