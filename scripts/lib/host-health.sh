@@ -24,4 +24,14 @@ show_health_failure() {
     cat "$marker" >&2
     echo "Inspect ~/nexaduo-local/health-check.log; rerun scripts/scheduled-health-check.sh after repair." >&2
   fi
+  # backup-host.sh failure marker (#291; cleared by the next successful backup)
+  local bmarker="${BACKUP_DIR:-${HOME}/nexaduo-local/dumps}/.backup-last-fail"
+  if [[ -f "$bmarker" ]]; then
+    echo "!!! LAST BACKUP RUN FAILED: $bmarker !!!" >&2
+    cat "$bmarker" >&2
+  fi
+  if [[ -f "${HOME}/nexaduo-local/.notify-undelivered" ]]; then
+    echo "!!! OPERATOR NOTIFICATION NOT DELIVERED: ${HOME}/nexaduo-local/.notify-undelivered !!!" >&2
+    cat "${HOME}/nexaduo-local/.notify-undelivered" >&2
+  fi
 }

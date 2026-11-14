@@ -65,6 +65,14 @@ check_backup_freshness() {
     BACKUP_MAX_AGE_HOURS="${BACKUP_MAX_AGE_HOURS:-26}"
     step "Checking backup freshness in ${BACKUP_DIR} (max age ${BACKUP_MAX_AGE_HOURS}h)"
     [[ -d "$BACKUP_DIR" ]] || fail "backup dir ${BACKUP_DIR} does not exist (no dumps ever taken?)"
+    if [[ -f "${BACKUP_DIR}/.backup-last-fail" ]]; then
+      cat "${BACKUP_DIR}/.backup-last-fail" >&2
+      if grep -q 'offhost=failed' "${BACKUP_DIR}/.last-success" 2>/dev/null \
+         && [[ -n "$(find "${BACKUP_DIR}/.last-success" -mmin "-$(( BACKUP_MAX_AGE_HOURS * 60 ))" 2>/dev/null)" ]]; then
+        fail "LAST BACKUP RUN FAILED OFF-HOST ONLY: the LOCAL backup is fresh (local restore possible); see reason= in ${BACKUP_DIR}/.last-success"
+      fi
+      fail "LAST BACKUP RUN FAILED (${BACKUP_DIR}/.backup-last-fail; cleared by the next successful backup-host.sh run)"
+    fi
     newest_dump="$(find "$BACKUP_DIR" -type f -name '*.sql.gz' -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -n1)"
     [[ -n "$newest_dump" ]] || fail "no *.sql.gz dumps in ${BACKUP_DIR} — daily backup cron is not producing dumps"
     dump_epoch="${newest_dump%% *}"; dump_file="${newest_dump#* }"
@@ -97,7 +105,7 @@ check_backup_freshness() {
     # passwords, Azure OpenAI creds) and is NOT in git; backup-host.sh archives it
     # as env-<ts>.tar.gz alongside the dumps/volumes. Without it a DB+volume
     # restore alone can't reconnect or reach the tunnel, so gate on it too.
-    newest_env="$(find "$BACKUP_DIR" -type f -name 'env-*.tar.gz' -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -n1)"
+    newest_env="$(find "$BACKUP_DIR" -type f -not -path '*/quarantine-plaintext/*' -name 'env-*.tar.gz*' -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -n1)"
     [[ -n "$newest_env" ]] || fail "no env-*.tar.gz in ${BACKUP_DIR} — backup is NOT capturing the host .env (production secrets)."
     env_epoch="${newest_env%% *}"; env_file_found="${newest_env#* }"
     env_age_h=$(( ( $(date +%s) - ${env_epoch%.*} ) / 3600 ))
@@ -106,6 +114,16 @@ check_backup_freshness() {
       fail "STALE ENV BACKUP: newest .env archive is ${env_age_h}h old (>= ${BACKUP_MAX_AGE_HOURS}h). Check scripts/backup-host.sh."
     fi
     echo "  env backup OK: newest .env archive $(basename "$env_file_found") is ${env_age_h}h old"
+
+    # clone-local secrets (issue #291): clone-secrets-<ts>.tar.gz[.gpg|.age]
+    newest_cs="$(find "$BACKUP_DIR" -type f -not -path '*/quarantine-plaintext/*' -name 'clone-secrets-*.tar.gz*' -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -n1)"
+    [[ -n "$newest_cs" ]] || fail "no clone-secrets-*.tar.gz* in ${BACKUP_DIR} — backup is NOT capturing clone-local secrets (issue #291)."
+    cs_epoch="${newest_cs%% *}"; cs_file_found="${newest_cs#* }"
+    cs_age_h=$(( ( $(date +%s) - ${cs_epoch%.*} ) / 3600 ))
+    if (( cs_age_h >= BACKUP_MAX_AGE_HOURS )); then
+      fail "STALE CLONE-SECRETS BACKUP: newest archive is ${cs_age_h}h old (>= ${BACKUP_MAX_AGE_HOURS}h). Check scripts/backup-host.sh."
+    fi
+    echo "  clone-secrets backup OK: newest archive $(basename "$cs_file_found") is ${cs_age_h}h old"
   fi
 }
 

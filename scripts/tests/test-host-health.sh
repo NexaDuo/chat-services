@@ -7,7 +7,7 @@ trap 'rm -rf "$TMP"' EXIT
 export HOME="$TMP/home"
 mkdir -p "$HOME" "$TMP/bin" "$TMP/dumps"
 export PATH="$TMP/bin:$PATH" BACKUP_DIR="$TMP/dumps" DUMPS_DIR="$TMP/dumps"
-export ENV_FILE="$TMP/test.env"
+export ENV_FILE="$TMP/test.env" NOTIFY_CMD=true  # never toast the real desktop from tests
 unset ALLOW_NON_DESKTOP_ENGINE SKIP_BACKUP_CHECK
 echo 'CHATWOOT_FRONTEND_URL=https://chat.example.test' > "$ENV_FILE"
 echo 'DIFY_PLUGIN_DIFY_INNER_API_KEY=synthetic' >> "$ENV_FILE"
@@ -34,7 +34,7 @@ cat > "$TMP/bin/pgrep" <<'STUB'
 exit 0
 STUB
 chmod +x "$TMP/bin/"*
-for file in fixture.sql.gz fixture-chatwoot-storage-test.tar.gz fixture-dify-api-storage-test.tar.gz env-test.tar.gz; do
+for file in fixture.sql.gz fixture-chatwoot-storage-test.tar.gz fixture-dify-api-storage-test.tar.gz env-test.tar.gz clone-secrets-test.tar.gz.gpg; do
   echo synthetic > "$BACKUP_DIR/$file"
 done
 expect() {
@@ -78,6 +78,26 @@ grep -q '!!! PREVIOUS SCHEDULED HOST HEALTH FAILURE' "$TMP/output"
 touch "$BACKUP_DIR/fixture.sql.gz"
 expect pass bash "$ROOT/scripts/scheduled-health-check.sh"
 test ! -f "$HOME/nexaduo-local/.health-last-fail"
+# backup-host.sh failure marker (#291) must fail the probe and show in preflight.
+echo '[t] FAIL: backup-host.sh exited 1' > "$BACKUP_DIR/.backup-last-fail"
+expect fail bash "$ROOT/scripts/scheduled-health-check.sh"
+grep -q 'LAST BACKUP RUN FAILED' "$HOME/nexaduo-local/health-check.log"
+expect pass bash "$ROOT/scripts/run-stack.sh" preflight
+grep -q '!!! LAST BACKUP RUN FAILED' "$TMP/output"
+# Local fresh but off-host broken (#291): distinct, clearer failure.
+echo 'local=ok offhost=failed reason=remote missing;' > "$BACKUP_DIR/.last-success"
+expect fail bash "$ROOT/scripts/scheduled-health-check.sh"
+grep -q 'OFF-HOST ONLY' "$HOME/nexaduo-local/health-check.log"
+rm -f "$BACKUP_DIR/.backup-last-fail" "$BACKUP_DIR/.last-success"
+# Missing/stale clone-secrets archive must fail the probe; quarantined plaintext must not count.
+mv "$BACKUP_DIR/clone-secrets-test.tar.gz.gpg" "$TMP/cs-hold"
+expect fail bash "$ROOT/scripts/scheduled-health-check.sh"
+grep -q 'clone-local secrets' "$HOME/nexaduo-local/health-check.log"
+mkdir -p "$BACKUP_DIR/quarantine-plaintext"; echo x > "$BACKUP_DIR/quarantine-plaintext/clone-secrets-q.tar.gz"
+expect fail bash "$ROOT/scripts/scheduled-health-check.sh"
+rm -rf "$BACKUP_DIR/quarantine-plaintext"
+mv "$TMP/cs-hold" "$BACKUP_DIR/clone-secrets-test.tar.gz.gpg"
+expect pass bash "$ROOT/scripts/scheduled-health-check.sh"
 export MOCK_OS=unavailable
 expect fail bash "$ROOT/scripts/scheduled-health-check.sh"
 test -s "$HOME/nexaduo-local/.health-last-fail"
