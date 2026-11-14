@@ -180,10 +180,14 @@ HEALTHCHECK_SUBNAMES=(
   cloudflared
 )
 
+# Worst case (issue #294 review): each of the 14 healthcheck subnames waits up to
+# 60 x 5s = 5 min, so a stack where all are unhealthy takes ~70 min before the
+# summary prints. It still fails closed: every timeout is recorded and the run
+# exits non-zero. Tracked as a follow-up; behavior deliberately unchanged here.
 check_healthchecks() {
 local hc_failed=0
 for subname in "${HEALTHCHECK_SUBNAMES[@]}"; do
-  container="$(require_container "$subname" 2>&1)" || { echo "$container" >&2; hc_failed=1; continue; }
+  container="$(require_container "$subname" 2>/dev/null)" || { echo "FAIL: container for subName=${subname} not found" >&2; hc_failed=1; continue; }
   step "Checking ${container} (${subname}) health (up to 5 min)"
   for i in $(seq 1 60); do
     status=$(docker inspect -f '{{.State.Health.Status}}' "$container" 2>/dev/null || echo "missing")
@@ -218,7 +222,7 @@ RUNNING_SUBNAMES=(
 check_running() {
 local run_failed=0
 for subname in "${RUNNING_SUBNAMES[@]}"; do
-  container="$(require_container "$subname" 2>&1)" || { echo "$container" >&2; run_failed=1; continue; }
+  container="$(require_container "$subname" 2>/dev/null)" || { echo "FAIL: container for subName=${subname} not found" >&2; run_failed=1; continue; }
   step "Checking ${container} (${subname}) is running"
   running=$(docker inspect -f '{{.State.Running}}' "$container" 2>/dev/null || echo "missing")
   [[ "$running" == "true" ]] || { echo "FAIL: ${container} is not running (state=${running})" >&2; run_failed=1; }
@@ -259,7 +263,7 @@ check_http_probes() {
 local probe_failed=0
 for probe in "${HTTP_PROBES[@]}"; do
   IFS="|" read -r name subname url expected_codes <<< "$probe"
-  container="$(require_container "$subname" 2>&1)" || { echo "$container" >&2; probe_failed=1; continue; }
+  container="$(require_container "$subname" 2>/dev/null)" || { echo "FAIL: container for subName=${subname} not found" >&2; probe_failed=1; continue; }
   step "Probing ${name} (${container}) ${url} (expect one of ${expected_codes}, up to 1 min)"
   for i in $(seq 1 12); do
     code="$(probe_internal "$container" "$url")"
@@ -707,13 +711,6 @@ declare -A MEM_LIMIT_EXPECTED_MIB=(
   [cloudflared]=128
   [autoheal]=128
   [coolify-proxy]=256
-  # Retained rollback orphan (issue #294): no `promtail` service exists in the
-  # current compose chain since W2b (#239, Alloy). The still-running
-  # chat-services-promtail-1 carries the 384MiB limit from the pre-Alloy chain
-  # (HostConfig.Memory=402653184). Declared here so the drift guard stays green
-  # while it exists; delete this line when the container is retired (keep the
-  # promtail-data volume and observability/promtail/promtail.yaml).
-  [promtail]=384
 )
 
 mem_limit_bad=0

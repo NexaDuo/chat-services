@@ -3,7 +3,7 @@
 #  1. aborted on the FIRST failing check, so later sections (backup freshness)
 #     never ran, and
 #  2. the #157 drift guard failed on a running container whose mem_limit was not
-#     declared in MEM_LIMIT_EXPECTED_MIB (chat-services-promtail-1).
+#     declared in MEM_LIMIT_EXPECTED_MIB (chat-services-alloy-1).
 # Uses a fake Docker CLI (no host daemon access) like test-host-health.sh.
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -18,7 +18,7 @@ for file in fixture.sql.gz fixture-chatwoot-storage-test.tar.gz fixture-dify-api
   echo synthetic > "$BACKUP_DIR/$file"
 done
 
-# Running containers: promtail (declared limit 384MiB), middleware (256MiB, ok)
+# Running containers: alloy (declared limit 768MiB), middleware (256MiB, ok)
 # and "ghost" (a limit that is NOT declared in the script = the #294 drift).
 cat > "$TMP/bin/sleep" <<'STUB'
 #!/bin/bash
@@ -31,10 +31,10 @@ case "$args" in
   "info --format {{.OperatingSystem}}") echo "$MOCK_OS" ;;
   "compose version"|"network inspect nexaduo-network") exit 0 ;;
   "ps --format {{.Names}}")
-    printf '%s\n' chat-services-promtail-1 chat-services-middleware-1 chat-services-ghost-1 ;;
+    printf '%s\n' chat-services-alloy-1 chat-services-middleware-1 chat-services-ghost-1 ;;
   "ps -a --filter name=^/chat-services-middleware-[0-9]+\$ --format {{.Names}}") echo chat-services-middleware-1 ;;
   ps*) exit 0 ;;
-  "inspect -f {{.HostConfig.Memory}} chat-services-promtail-1") echo 402653184 ;;
+  "inspect -f {{.HostConfig.Memory}} chat-services-alloy-1") echo 805306368 ;;
   "inspect -f {{.HostConfig.Memory}} chat-services-middleware-1") echo 268435456 ;;
   "inspect -f {{.HostConfig.Memory}} chat-services-ghost-1") echo 1073741824 ;;
   "inspect -f {{.HostConfig.LogConfig.Type}}|"*) echo 'json-file|10m|3' ;;
@@ -44,6 +44,11 @@ case "$args" in
   *) exit 1 ;;  # coolify-proxy etc. are absent
 esac
 STUB
+# SEC-1: never let the script reach a real gcloud (runner / operator machine).
+cat > "$TMP/bin/gcloud" <<'STUB'
+#!/bin/bash
+exit 1
+STUB
 chmod +x "$TMP/bin/"*
 
 status=0
@@ -52,10 +57,14 @@ fail() { cat "$TMP/out"; echo "FAIL: $1"; exit 1; }
 
 # Overall result is non-zero when anything failed.
 [[ "$status" != 0 ]] || fail "expected non-zero exit"
-# Drift guard: the undeclared limit is reported, the declared promtail one is not.
+# Drift guard: the undeclared limit is reported, the declared alloy one is not.
 grep -q 'chat-services-ghost-1 (subname=ghost).*NOT in MEM_LIMIT_EXPECTED_MIB' "$TMP/out" || fail "undeclared mem_limit not reported"
-if grep -q 'FAIL-ITEM: chat-services-promtail-1' "$TMP/out"; then fail "promtail should be declared in MEM_LIMIT_EXPECTED_MIB"; fi
-if grep -q 'DRIFT: chat-services-promtail-1' "$TMP/out"; then fail "promtail limit should match declared 384MiB"; fi
+if grep -q 'FAIL-ITEM: chat-services-alloy-1' "$TMP/out"; then fail "alloy should be declared in MEM_LIMIT_EXPECTED_MIB"; fi
+if grep -q 'DRIFT: chat-services-alloy-1' "$TMP/out"; then fail "alloy limit should match declared 768MiB"; fi
+# Errexit must stay ON inside the run_check subshell: check_loki aborts at
+# require_container (loki absent). If `( set -e; "$@" )` were replaced by a
+# `|| rc=$?` form, set -e would be disabled and the step below would print.
+if grep -q 'Probing Loki readiness' "$TMP/out"; then fail "errexit lost inside run_check subshell"; fi
 # Continue-on-failure: earlier sections failed, yet later ones still ran.
 grep -q 'FAILED CHECK: memory-limit coverage' "$TMP/out" || fail "memory section not recorded"
 grep -q 'FAILED CHECK: Traefik docker-provider routers' "$TMP/out" || fail "traefik section not recorded"
