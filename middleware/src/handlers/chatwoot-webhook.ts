@@ -3,7 +3,7 @@ import { z } from "zod";
 import axios from "axios";
 import pg from "pg";
 import type { AppConfig } from "../config.js";
-import { resolveTenant, isDifyKillSwitchEnabled } from "../config.js";
+import { resolveTenantDetailed, isDifyKillSwitchEnabled } from "../config.js";
 import type { Metrics } from "../metrics.js";
 import type { ChatwootClient } from "../chatwoot.js";
 import { DifyClient } from "../dify.js";
@@ -388,12 +388,13 @@ async function flushGroup(
     0,
   );
 
-  const tenant = await resolveTenant(config, accountIdStr, pool);
-  if (!tenant) {
-    log.warn({ accountId: accountIdStr }, "webhook: no tenant mapping (group dropped)");
-    metrics.errorsTotal.inc({ account_id: accountIdStr, reason: "no_tenant_mapping" });
+  const resolution = await resolveTenantDetailed(config, accountIdStr, pool);
+  if (!resolution.ok) {
+    log.warn({ accountId: accountIdStr, reason: resolution.reason }, `webhook: ${resolution.reason} (group dropped)`);
+    metrics.errorsTotal.inc({ account_id: accountIdStr, reason: resolution.reason });
     return;
   }
+  const tenant = resolution.tenant;
 
   // Manual kill switch (issue #184) — checked HERE, at flush time, immediately
   // before the Dify call, and nowhere earlier in the pipeline. PR #180 made
@@ -954,14 +955,14 @@ export async function registerChatwootWebhookRoute(
     // buffering it). The full tenant lookup happens again at flush time,
     // since that is when it actually gets used against Dify and a burst can
     // straddle a tenant-mapping change.
-    const tenant = await resolveTenant(config, accountIdStr, pool);
-    if (!tenant) {
-      req.log.warn({ accountId: accountIdStr }, "webhook: no tenant mapping");
+    const resolution = await resolveTenantDetailed(config, accountIdStr, pool);
+    if (!resolution.ok) {
+      req.log.warn({ accountId: accountIdStr, reason: resolution.reason }, `webhook: ${resolution.reason}`);
       metrics.errorsTotal.inc({
         account_id: accountIdStr,
-        reason: "no_tenant_mapping",
+        reason: resolution.reason,
       });
-      return reply.code(200).send({ skipped: "no_tenant_mapping" });
+      return reply.code(200).send({ skipped: resolution.reason });
     }
 
     const difyConvId =

@@ -45,6 +45,28 @@ done
 [[ "$(q src postgres -c "select default_version from pg_available_extensions where name='vector'")" == "$want_vector" ]] \
   || { echo "FAIL: image does not ship pgvector $want_vector" >&2; exit 1; }
 
+# Issue #292: at most one ACTIVE tenant per Chatwoot account, enforced by the
+# partial unique index in 01-init.sql. Seed rows shaped like production, then
+# re-apply the init script twice (the documented way existing environments
+# converge) and prove it stays clean and the index bites.
+q src middleware >/dev/null <<'SQL'
+insert into tenants (slug, subdomain, chatwoot_account_id, status)
+  values ('t292-a', 't292-a', '9001', 'active'), ('t292-b', 't292-b', '9002', 'active');
+SQL
+for _ in 1 2; do
+  docker exec -i "$name-src" psql -v ON_ERROR_STOP=1 -U postgres -q -f - >/dev/null 2>&1 \
+    < "$ROOT/infrastructure/postgres/01-init.sql" \
+    || { echo "FAIL: re-applying 01-init.sql is not idempotent / index creation failed on valid data" >&2; exit 1; }
+done
+[[ "$(q src middleware -c "select count(*) from pg_indexes where indexname='uq_tenants_active_chatwoot_account' and indexdef like '%UNIQUE%' and indexdef like '%status = ''active''%'")" == 1 ]] \
+  || { echo "FAIL: partial unique index missing" >&2; exit 1; }
+if q src middleware -c "insert into tenants (slug, subdomain, chatwoot_account_id, status) values ('t292-c','t292-c','9001','active')" >/dev/null 2>&1; then
+  echo "FAIL: a second active tenant on one Chatwoot account was accepted" >&2; exit 1
+fi
+q src middleware -c "insert into tenants (slug, subdomain, chatwoot_account_id, status) values ('t292-d','t292-d','9001','onboarding')" >/dev/null \
+  || { echo "FAIL: a non-active tenant sharing an account was rejected" >&2; exit 1; }
+q src middleware -c "delete from tenants where slug like 't292-%'" >/dev/null
+
 # A vector table with an HNSW index, a sequence and a constraint: what a dump
 # must carry across.
 q src dify >/dev/null <<'SQL'

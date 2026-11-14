@@ -7,6 +7,7 @@ on:
       - '.github/workflows/validate-tenants.yml'
       - 'tenants.yaml'
       - 'scripts/sync-tenants.ts'
+      - 'middleware/src/tenants-seed.ts'
       - 'package-lock.json'
   pull_request:
     branches: [ main ]
@@ -14,6 +15,7 @@ on:
       - '.github/workflows/validate-tenants.yml'
       - 'tenants.yaml'
       - 'scripts/sync-tenants.ts'
+      - 'middleware/src/tenants-seed.ts'
       - 'package-lock.json'
 
 permissions:
@@ -37,5 +39,8 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
       
+      - name: Reject duplicate active Chatwoot accounts (real seed path, issue #292)
+        run: npx tsx scripts/sync-tenants.ts --print-sql production > /dev/null
+
       - name: Validate YAML Syntax
         run: npx tsx -e "import fs from 'fs'; import yaml from 'yaml'; yaml.parse(fs.readFileSync('tenants.yaml', 'utf8'))"

@@ -247,7 +247,7 @@ const REAL_MSG_182_STORY_REPLY_WITH_TEXT_PAYLOAD = {
 
 describe("registerChatwootWebhookRoute — burst dedup + watermark (issue #179)", () => {
   function buildFakePool() {
-    const tenants = new Map<string, { dify_api_key: string; dify_app_type: string }>();
+    const tenants = new Map<string, { status: string; dify_api_key: string; dify_app_type: string }>();
     const watermarks = new Map<string, number>();
     // configs table (issue #184): undefined key => no row => fail-safe "off".
     // A string here mimics the real `value TEXT` column; `null` mimics a row
@@ -263,7 +263,7 @@ describe("registerChatwootWebhookRoute — burst dedup + watermark (issue #179)"
     // pinned that. These let a test force either query to throw.
     let contactDifyReadError: Error | null = null;
     let contactDifyWriteError: Error | null = null;
-    tenants.set("42", { dify_api_key: "test-dify-key", dify_app_type: "chatflow" });
+    tenants.set("42", { status: "active", dify_api_key: "test-dify-key", dify_app_type: "chatflow" });
 
     const query = vi.fn(async (sql: string, params: unknown[]) => {
       if (sql.includes("FROM tenants")) {
@@ -1162,9 +1162,9 @@ describe("registerChatwootWebhookRoute — burst dedup + watermark (issue #179)"
  */
 describe("registerChatwootWebhookRoute — empty content marker (issue #203)", () => {
   function buildFakePool() {
-    const tenants = new Map<string, { dify_api_key: string; dify_app_type: string }>();
+    const tenants = new Map<string, { status: string; dify_api_key: string; dify_app_type: string }>();
     const watermarks = new Map<string, number>();
-    tenants.set("42", { dify_api_key: "test-dify-key", dify_app_type: "chatflow" });
+    tenants.set("42", { status: "active", dify_api_key: "test-dify-key", dify_app_type: "chatflow" });
 
     const query = vi.fn(async (sql: string, params: unknown[]) => {
       if (sql.includes("FROM tenants")) {
@@ -1434,6 +1434,62 @@ describe("registerChatwootWebhookRoute — empty content marker (issue #203)", (
     expect(skipped?.value).toBe(1);
 
     await app.close();
+  });
+
+  // Issue #292: a tenant that is inactive or ambiguous must not be a silent
+  // drop indistinguishable from an unmapped account: distinct reason label.
+  describe.each([
+    {
+      name: "inactive (only a non-active row)",
+      rows: [{ slug: "firm", status: "onboarding", dify_api_key: "k", dify_app_type: "chatflow" }],
+      reason: "tenant_inactive",
+    },
+    {
+      name: "ambiguous (two active rows)",
+      rows: [
+        { slug: "a", status: "active", dify_api_key: "ka", dify_app_type: "chatflow" },
+        { slug: "b", status: "active", dify_api_key: "kb", dify_app_type: "chatflow" },
+      ],
+      reason: "tenant_ambiguous",
+    },
+    { name: "unmapped (no rows)", rows: [], reason: "no_tenant_mapping" },
+  ])("tenant resolution failure: $name", ({ rows, reason }) => {
+    it(`hot path answers 200 skipped:${reason}, counts it with that reason and never calls Dify`, async () => {
+      const pool = buildFakePool();
+      const base = pool.query;
+      (pool as any).query = vi.fn(async (sql: string, params: unknown[]) =>
+        sql.includes("FROM tenants") ? { rows } : base(sql, params),
+      );
+      const consoleErr = vi.spyOn(console, "error").mockImplementation(() => {});
+      const { app, metrics } = await buildApp(pool, buildFakeChatwoot());
+
+      const res = await app.inject({
+        method: "POST",
+        url: "/webhooks/chatwoot",
+        payload: {
+          id: 601,
+          content: "oi",
+          content_type: 0,
+          message_type: "incoming",
+          content_attributes: {},
+          private: false,
+          sender: { id: 1, type: "contact" },
+          conversation: { status: "pending", id: 61, custom_attributes: {}, contact_inbox: { contact_id: 1 } },
+          account: { id: 42 },
+          event: "message_created",
+        },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual({ skipped: reason });
+      expect(chatBlocking).not.toHaveBeenCalled();
+
+      const errs = (await metrics.errorsTotal.get()).values;
+      expect(errs.find((v) => v.labels.reason === reason && v.labels.account_id === "42")?.value).toBe(1);
+      // No other reason leaked into the counter.
+      expect(errs.filter((v) => v.labels.reason !== reason)).toEqual([]);
+      consoleErr.mockRestore();
+      await app.close();
+    });
   });
 
   it("never logs the Meta-signed story_url/external_url — `@sec` requirement", async () => {
@@ -1804,7 +1860,7 @@ describe("Agent Bot ownership", () => {
     };
     const pool = {
       query: vi.fn(async (sql: string) => ({
-        rows: sql.includes("FROM tenants") ? [{ dify_api_key: "test-key", dify_app_type: "chatflow" }] : [],
+        rows: sql.includes("FROM tenants") ? [{ status: "active", dify_api_key: "test-key", dify_app_type: "chatflow" }] : [],
       })),
     };
     const config = {
