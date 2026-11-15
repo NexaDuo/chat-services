@@ -36,9 +36,8 @@ const SCAN_TARGETS = [
 ];
 
 // This spec necessarily names the forbidden shapes, so exclude it from its own scan.
-const SELF = path.basename(__filename);
-// The shell guard likewise embeds synthetic positives for its own self-test.
-const SHELL_GUARD = 'test-no-hardcoded-secrets.sh';
+// Exclusion is by exact repo-relative path, never by basename.
+const SELF = path.join(REPO_ROOT, 'onboarding', 'tests', '18-no-hardcoded-secrets.spec.ts');
 
 const SCANNED_EXTENSIONS = new Set(['.ts', '.js', '.sh', '.mts', '.cts']);
 
@@ -50,28 +49,21 @@ function collectFiles(dir: string): string[] {
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) {
       out.push(...collectFiles(full));
-    } else if (SCANNED_EXTENSIONS.has(path.extname(entry.name)) && entry.name !== SELF && entry.name !== SHELL_GUARD) {
+    } else if (SCANNED_EXTENSIONS.has(path.extname(entry.name)) && full !== SELF) {
       out.push(full);
     }
   }
   return out;
 }
 
-// Known leaked literals (must never reappear anywhere) and the predictable
-// generator prefix that produced the leaked Chatwoot password.
-const FORBIDDEN_LITERALS: RegExp[] = [
-  // The leaked value itself is deliberately NOT embedded here (not even in
-  // fragments). The generic `NexaDuo@2026-` prefix below and the shell guard
-  // scripts/tests/test-no-hardcoded-secrets.sh cover its shape.
-  /NexaDuo_2026_Admin/,
-  /NexaDuo@2026-/, // predictable, low-entropy generator prefix (issue #135)
-];
+// Leaked values and the generator prefix are checked by the authoritative shell guard
+// scripts/tests/test-no-hardcoded-secrets.sh (hash-based; no value is embedded here).
 
 // A password/secret env var falling back to a NON-EMPTY string literal, e.g.
-// `process.env.ADMIN_PASSWORD || 'secret'`. `|| ''` (empty) is allowed.
+// `process.env.ADMIN_PASSWORD || '<literal>'`. `|| ''` (empty) is allowed.
 const FALLBACK_TO_LITERAL = /(?:PASSWORD|SECRET|PASSWD)[A-Za-z_]*\s*\|\|\s*['"][^'"]/i;
 
-// A bare hardcoded password constant, e.g. `const ADMIN_PASSWORD = 'secret'`.
+// A bare hardcoded password constant, e.g. `const ADMIN_PASSWORD = '<literal>'`.
 const BARE_PASSWORD_CONST = /const\s+[A-Za-z_]*PASSWORD[A-Za-z_]*\s*=\s*['"]/i;
 
 test.describe('Regression: no hardcoded credentials in versioned code (issue #135)', () => {
@@ -85,9 +77,6 @@ test.describe('Regression: no hardcoded credentials in versioned code (issue #13
       const lines = fs.readFileSync(file, 'utf8').split('\n');
       lines.forEach((line, i) => {
         const loc = `${rel}:${i + 1}`;
-        for (const re of FORBIDDEN_LITERALS) {
-          if (re.test(line)) violations.push(`${loc} — leaked/predictable literal (${re})`);
-        }
         if (FALLBACK_TO_LITERAL.test(line)) {
           violations.push(`${loc} — password/secret falls back to a hardcoded literal`);
         }
