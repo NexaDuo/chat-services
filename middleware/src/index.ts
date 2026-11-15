@@ -1,6 +1,6 @@
 import Fastify from "fastify";
 import sensible from "@fastify/sensible";
-import pg from "pg";
+import { createPool } from "./db.js";
 import { loadConfig } from "./config.js";
 import { buildFastifyLoggerConfig } from "./logger.js";
 import { createMetrics } from "./metrics.js";
@@ -30,7 +30,7 @@ async function main(): Promise<void> {
     trustProxy: true,
   });
 
-  const pool = new pg.Pool({ connectionString: config.databaseUrl });
+  const pool = createPool(config, (err) => app.log.error({ err }, "middleware: idle pg client error"));
   const metrics = createMetrics();
   const chatwoot = new ChatwootClient(
     config.chatwoot.baseUrl,

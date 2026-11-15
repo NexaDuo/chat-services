@@ -629,7 +629,7 @@ describe("registerChatwootWebhookRoute — burst dedup + watermark (issue #179)"
       await app.close();
     });
 
-    it("DB error reading the flag — fail-safe: bot answers normally, error is not fatal to the flush", async () => {
+    it("DB error reading the flag: FAIL CLOSED (#299), no Dify call, one static fallback (unknown is not OFF)", async () => {
       const pool = buildFakePool();
       pool.setConfigsError(new Error("connection terminated"));
       const chatwoot = buildFakeChatwoot();
@@ -640,10 +640,57 @@ describe("registerChatwootWebhookRoute — burst dedup + watermark (issue #179)"
         url: "/webhooks/chatwoot",
         payload: chatwootMessageCreated({ id: 306, content: "oi", accountId: 42, conversationId: 36 }),
       });
-      await new Promise((resolve) => setTimeout(resolve, 200));
+      await new Promise((resolve) => setTimeout(resolve, 700));
+
+      expect(chatBlocking).not.toHaveBeenCalled();
+      expect(chatwoot.postMessage).toHaveBeenCalledTimes(1);
+      expect(chatwoot.postMessage.mock.calls[0][0].content).not.toBe("resposta");
+      await app.close();
+    });
+
+    it("kill switch ON + transient read errors then success: retried, switch honored (no Dify, no reply)", async () => {
+      const pool = buildFakePool();
+      pool.configs.set("DIFY_KILL_SWITCH", "true");
+      const inner = pool.query.getMockImplementation()!;
+      let failed = 0;
+      pool.query.mockImplementation((async (sql: string, params: unknown[]) => {
+        if (sql.includes("FROM configs") && failed++ < 2) throw new Error("query_timeout");
+        return inner(sql, params);
+      }) as any);
+      const chatwoot = buildFakeChatwoot();
+      const app = await buildApp(pool, chatwoot);
+
+      await app.inject({
+        method: "POST",
+        url: "/webhooks/chatwoot",
+        payload: chatwootMessageCreated({ id: 307, content: "oi", accountId: 42, conversationId: 37 }),
+      });
+      await new Promise((resolve) => setTimeout(resolve, 700));
+
+      expect(chatBlocking).not.toHaveBeenCalled();
+      expect(chatwoot.postMessage).not.toHaveBeenCalled();
+      await app.close();
+    });
+
+    it("kill switch OFF + transient read error then success: retried, bot answers", async () => {
+      const pool = buildFakePool();
+      const inner = pool.query.getMockImplementation()!;
+      let failed = 0;
+      pool.query.mockImplementation((async (sql: string, params: unknown[]) => {
+        if (sql.includes("FROM configs") && failed++ < 1) throw new Error("query_timeout");
+        return inner(sql, params);
+      }) as any);
+      const chatwoot = buildFakeChatwoot();
+      const app = await buildApp(pool, chatwoot);
+
+      await app.inject({
+        method: "POST",
+        url: "/webhooks/chatwoot",
+        payload: chatwootMessageCreated({ id: 308, content: "oi", accountId: 42, conversationId: 38 }),
+      });
+      await new Promise((resolve) => setTimeout(resolve, 700));
 
       expect(chatBlocking).toHaveBeenCalledTimes(1);
-      expect(chatwoot.postMessage).toHaveBeenCalledTimes(1);
       await app.close();
     });
 

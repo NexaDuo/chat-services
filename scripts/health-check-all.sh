@@ -117,7 +117,7 @@ check_backup_freshness() {
     # passwords, Azure OpenAI creds) and is NOT in git; backup-host.sh archives it
     # as env-<ts>.tar.gz alongside the dumps/volumes. Without it a DB+volume
     # restore alone can't reconnect or reach the tunnel, so gate on it too.
-    newest_env="$(find "$BACKUP_DIR" -type f -not -path '*/quarantine-plaintext/*' -name 'env-*.tar.gz*' -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -n1)"
+    newest_env="$(find "$BACKUP_DIR" -type f -not -path '*/quarantine-plaintext/*' -not -path '*/.stage.*' -not -name '.tmp-*' -not -name '*.partial' -name 'env-*.tar.gz*' -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -n1)"
     [[ -n "$newest_env" ]] || fail "no env-*.tar.gz in ${BACKUP_DIR} — backup is NOT capturing the host .env (production secrets)."
     env_epoch="${newest_env%% *}"; env_file_found="${newest_env#* }"
     env_age_h=$(( ( $(date +%s) - ${env_epoch%.*} ) / 3600 ))
@@ -128,7 +128,7 @@ check_backup_freshness() {
     echo "  env backup OK: newest .env archive $(basename "$env_file_found") is ${env_age_h}h old"
 
     # clone-local secrets (issue #291): clone-secrets-<ts>.tar.gz[.gpg|.age]
-    newest_cs="$(find "$BACKUP_DIR" -type f -not -path '*/quarantine-plaintext/*' -name 'clone-secrets-*.tar.gz*' -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -n1)"
+    newest_cs="$(find "$BACKUP_DIR" -type f -not -path '*/quarantine-plaintext/*' -not -path '*/.stage.*' -not -name '.tmp-*' -not -name '*.partial' -name 'clone-secrets-*.tar.gz*' -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -n1)"
     [[ -n "$newest_cs" ]] || fail "no clone-secrets-*.tar.gz* in ${BACKUP_DIR} — backup is NOT capturing clone-local secrets (issue #291)."
     cs_epoch="${newest_cs%% *}"; cs_file_found="${newest_cs#* }"
     cs_age_h=$(( ( $(date +%s) - ${cs_epoch%.*} ) / 3600 ))
@@ -210,8 +210,8 @@ HEALTHCHECK_SUBNAMES=(
   cloudflared
 )
 
-# Worst case (issue #294 review): each of the 14 healthcheck subnames waits up to
-# 60 x 5s = 5 min, so a stack where all are unhealthy takes ~70 min before the
+# Worst case (issue #294 review): each of the 13 healthcheck subnames waits up to
+# 60 x 5s = 5 min, so a stack where all are unhealthy takes ~65 min before the
 # summary prints. It still fails closed: every timeout is recorded and the run
 # exits non-zero. Tracked as a follow-up; behavior deliberately unchanged here.
 check_healthchecks() {
@@ -318,11 +318,16 @@ fi
 if [[ -n "${HANDOFF_SHARED_SECRET:-}" ]]; then
   middleware_container="$(require_container "middleware")"
   step "Probing Middleware /config (Bearer auth) inside ${middleware_container}"
-  code="$(docker exec "$middleware_container" sh -c '
+  # Issue #299: the HOST argv of `docker exec` (visible in `ps`) never carries the
+  # secret: `-e VAR` copies it from the environment of this ONE command only
+  # (inline prefix, not exported, so no later child inherits it). Honest limit:
+  # inside the container `sh` expands it onto the curl/wget argv, visible to
+  # that container's own process table only.
+  code="$(HANDOFF_SHARED_SECRET="$HANDOFF_SHARED_SECRET" docker exec -e HANDOFF_SHARED_SECRET "$middleware_container" sh -c '
     if command -v curl >/dev/null 2>&1; then
-      curl -s -o /dev/null -w "%{http_code}" -H "Authorization: Bearer '"${HANDOFF_SHARED_SECRET}"'" http://127.0.0.1:4000/config
+      curl -s -o /dev/null -w "%{http_code}" -H "Authorization: Bearer $HANDOFF_SHARED_SECRET" http://127.0.0.1:4000/config
     elif command -v wget >/dev/null 2>&1; then
-      wget -S -q -O /dev/null --header="Authorization: Bearer '"${HANDOFF_SHARED_SECRET}"'" http://127.0.0.1:4000/config 2>&1 | awk "/^ *HTTP\// {print \$2}" | tail -1
+      wget -S -q -O /dev/null --header="Authorization: Bearer $HANDOFF_SHARED_SECRET" http://127.0.0.1:4000/config 2>&1 | awk "/^ *HTTP\// {print \$2}" | tail -1
     else
       echo 000
     fi

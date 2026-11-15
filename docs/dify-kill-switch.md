@@ -111,8 +111,14 @@ never to "on":
 - `value` is anything other than the exact string `true` (case-insensitive,
   surrounding whitespace tolerated — `"  TRUE "` counts as ON, `"yes"` does
   not).
-- A Postgres error while reading the row (connection drop, pool exhaustion,
-  etc.) — logged as a `warn`, never thrown into the flush.
+
+**Exception (issue #299): a Postgres error or timeout while reading the row is
+UNKNOWN, not "off", on the Dify flush path.** The read is retried 3 times (same
+bounded retry as the tenant lookup); if it still fails, Dify is NOT called and
+the throttled static infra fallback below is sent instead. The pool has a 1200 ms
+query timeout, so a slow Postgres must not read as "off" while the operator
+believes the bot is silenced. Only the static-apology path (which is not a Dify
+call) still reads an error as "off".
 
 This is the deliberate mirror of the issue #152 lesson (self-healing silently
 degrading when its config read failed): here, the accident to avoid is

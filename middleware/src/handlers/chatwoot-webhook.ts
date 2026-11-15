@@ -6,6 +6,7 @@ import type { AppConfig } from "../config.js";
 import {
   resolveTenantDetailed,
   isDifyKillSwitchEnabled,
+  readDifyKillSwitch,
   DEFAULT_EMPTY_CONTENT_REPLY,
   DEFAULT_INFRA_FALLBACK_REPLY,
 } from "../config.js";
@@ -523,19 +524,33 @@ async function abortOnPostgresFailure(
  * (3 tries, 100/200 ms); an exhausted retry is returned as-is so the caller
  * takes the infra-fallback path. Deliberate skips are never retried.
  */
-async function resolveTenantWithRetry(
+export async function resolveTenantWithRetry(
   config: AppConfig,
   accountId: string,
   pool: pg.Pool,
   log: FastifyBaseLogger,
   ctx: { accountId: string; conversationId: number | string },
 ): Promise<TenantResolution> {
+  // Overall deadline (issue #299 REV-2): connect + queries + backoff across all
+  // attempts, so a slow-connect/hung-query Postgres cannot push past Chatwoot's
+  // 5 s webhook timeout. Exceeding it is reported as tenant_lookup_failed.
+  const deadline = Date.now() + (config.db?.resolveDeadlineMs ?? 4000);
   let res: TenantResolution = { ok: false, reason: "tenant_lookup_failed" };
   for (let attempt = 1; attempt <= DB_READ_ATTEMPTS; attempt++) {
-    res = await resolveTenantDetailed(config, accountId, pool);
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) break;
+    let timer: NodeJS.Timeout | undefined;
+    const expired = new Promise<TenantResolution>((resolve) => {
+      timer = setTimeout(() => resolve({ ok: false, reason: "tenant_lookup_failed" }), remaining);
+    });
+    try {
+      res = await Promise.race([resolveTenantDetailed(config, accountId, pool), expired]);
+    } finally {
+      clearTimeout(timer);
+    }
     if (res.ok || res.reason !== "tenant_lookup_failed") return res;
     log.warn({ attempt, what: "tenant", ...ctx }, "webhook: tenant lookup failed, retrying");
-    if (attempt < DB_READ_ATTEMPTS) await delay(100 * attempt);
+    if (attempt < DB_READ_ATTEMPTS) await delay(Math.min(100 * attempt, Math.max(0, deadline - Date.now())));
   }
   return res;
 }
@@ -672,7 +687,23 @@ async function flushGroup(
   // webhook fired, so it stays visible for human handoff; we simply skip the
   // Dify call and the outgoing reply (total silence, per #182) and leave the
   // watermark un-advanced.
-  if (await isDifyKillSwitchEnabled(pool, log)) {
+  // Issue #299: this read gets the same bounded retry as the tenant lookup and
+  // FAILS CLOSED. An unreadable switch (slow/hung Postgres) is UNKNOWN, not OFF:
+  // Dify is NOT called; the customer gets the throttled static infra fallback
+  // (decision on record: that apology is not a Dify call).
+  let killSwitchOn: boolean;
+  try {
+    killSwitchOn = await readWithRetry(
+      "kill_switch",
+      () => readDifyKillSwitch(pool),
+      log,
+      { accountId: accountIdStr, conversationId },
+    );
+  } catch (err) {
+    await abortOnReadFailure("kill_switch", err);
+    return;
+  }
+  if (killSwitchOn) {
     metrics.difyKillSwitchSkipsTotal.inc({ account_id: accountIdStr });
     log.warn(
       { accountId: accountIdStr, conversationId, groupSize: eligible.length },

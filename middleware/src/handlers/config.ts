@@ -1,6 +1,6 @@
+import { createPool } from "../db.js";
 import { FastifyInstance } from "fastify";
 import { AppConfig } from "../config.js";
-import pg from "pg";
 
 /**
  * Registers the configuration API route.
@@ -11,7 +11,7 @@ export async function registerConfigRoute(
   config: AppConfig,
 ): Promise<void> {
   const pool = config.databaseUrl 
-    ? new pg.Pool({ connectionString: config.databaseUrl }) 
+    ? createPool(config, (err) => console.error("config pool idle error", err))
     : null;
 
   // GET /config - List all configs or a specific one

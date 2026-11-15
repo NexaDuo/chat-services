@@ -173,8 +173,10 @@ assert_mode() { # path mode: verify, don't claim
 mkdir -p "$BACKUP_DIR"; chmod 700 "$BACKUP_DIR"; assert_mode "$BACKUP_DIR" 700
 FAIL_MARKER="${BACKUP_DIR}/.backup-last-fail"
 STAGE=""
+PART=""   # in-flight .tmp-*.partial of THIS run (never a glob: a skipped run must not delete another run's)
 on_exit() {
   local st=$?
+  [[ -n "$PART" ]] && rm -f -- "$PART"
   [[ -n "$STAGE" ]] && rm -rf "$STAGE"
   if (( st != 0 )); then
     printf '[%s] FAIL: backup-host.sh exited %s (see cron log)\n' "$(date -Is)" "$st" > "$FAIL_MARKER" 2>/dev/null || true
@@ -213,6 +215,14 @@ elif (( lockrc != 0 )); then
   log "ERRO: flock falhou (status ${lockrc}); não é contenção."
   exit 1
 fi
+
+# Crash-safety (issue #299): every artifact is first written to a hidden
+# ".tmp-<name>.partial" (matches no rotation/rclone/health-check pattern),
+# verified, then renamed atomically. A run killed mid-write leaves only such
+# partials (and a .stage.* dir); we hold the lock here so nothing else is
+# writing, hence it is safe to delete them now.
+find "$BACKUP_DIR" -maxdepth 1 -type f -name '.tmp-*.partial' -print -delete 2>/dev/null | sed 's/^/[backup] partial removido: /' || true
+find "$BACKUP_DIR" -maxdepth 1 -type d -name '.stage.*' -exec rm -rf -- {} + 2>/dev/null || true
 
 # Early validation of recipient and remote. NEVER blocks the LOCAL backup (the 30-day
 # outage of #291 was "nothing got backed up"): a problem here is recorded in
@@ -326,9 +336,15 @@ mkdir -p "$BACKUP_DIR"
 FILES=()
 for DB in "${DBS[@]}"; do
   OUT="${BACKUP_DIR}/${DB}-${TS}.sql.gz"
+  PART="${BACKUP_DIR}/.tmp-${DB}-${TS}.sql.gz.partial"
   log "==> Dumping ${DB} → ${OUT}"
   timeout -k 5 "$BACKUP_STEP_TIMEOUT" docker exec "$PG" pg_dump -U "$POSTGRES_USER" -d "$DB" --no-owner --clean --if-exists \
-    | gzip -9 > "$OUT" || { log "ERRO: pg_dump de ${DB} falhou/estourou o timeout; removendo dump parcial."; rm -f "$OUT"; exit 1; }
+    | gzip -9 > "$PART" || { log "ERRO: pg_dump de ${DB} falhou/estourou o timeout; removendo dump parcial."; rm -f "$PART"; exit 1; }
+  # Verify before it can ever carry the final name (gzip integrity + non-empty).
+  if ! [[ -s "$PART" ]] || ! gzip -t "$PART" 2>/dev/null; then
+    log "ERRO: dump de ${DB} vazio/corrompido (gzip -t); removendo."; rm -f "$PART"; exit 1
+  fi
+  mv -f "$PART" "$OUT"
   FILES+=("$OUT")
 done
 
@@ -360,14 +376,16 @@ for suffix in $BACKUP_VOLUME_SUFFIXES; do
   # would leave the helper container running). pg_dump: killing the `docker exec` client
   # closes its stdout, so the server-side pg_dump dies on SIGPIPE at its next write.
   cname="nexaduo-backup-${vol}-$$"
+  PART="${BACKUP_DIR}/.tmp-${vol}-${TS}.tar.gz.partial"
   if timeout -k 5 "$BACKUP_STEP_TIMEOUT" docker run --rm --name "$cname" -v "${vol}:/data:ro" "$BACKUP_HELPER_IMAGE" \
-        tar czf - -C /data . > "$OUT" 2>/dev/null && [[ -s "$OUT" ]]; then
+        tar czf - -C /data . > "$PART" 2>/dev/null && [[ -s "$PART" ]] && tar -tzf "$PART" >/dev/null 2>&1; then
+    mv -f "$PART" "$OUT"
     VOL_FILES+=("$OUT")
     RESOLVED_VOLS+=("$vol")
   else
     log "ERRO: falha ao arquivar volume ${vol} (tar/helper image ${BACKUP_HELPER_IMAGE})."
     timeout 30 docker rm -f "$cname" >/dev/null 2>&1 || true
-    rm -f "$OUT" 2>/dev/null || true
+    rm -f "$PART" 2>/dev/null || true
     MISSING_VOLS+=("$suffix")
   fi
 done
@@ -399,7 +417,7 @@ do_secret_archive() {
 # make_secret_archive <basename.tar.gz> <tar args...> -> prints final path.
 make_secret_archive() {
   local name="$1"; shift
-  local tmp="${STAGE}/${name}.tmp" final="${BACKUP_DIR}/${name}"
+  local tmp="${STAGE}/.tmp-${name}.partial" final="${BACKUP_DIR}/${name}"
   # PLAINTEXT FALLBACK (encryption configured but broken): goes into quarantine-plaintext/,
   # a location NO upload filter can ever match, regardless of what later runs resolve.
   # (Plaintext by design, with NO recipient configured, keeps the normal upload-eligible name.)
@@ -414,6 +432,8 @@ make_secret_archive() {
     *)   tar czhf "$tmp" "$@" || { rm -f "$tmp"; return 1; } ;;
   esac
   [[ -s "$tmp" ]] || { rm -f "$tmp"; return 1; }
+  # Integrity: plaintext archives are checkable; encrypted ones only for non-empty here.
+  if [[ "$ENC_MODE" != age && "$ENC_MODE" != gpg ]]; then tar -tzf "$tmp" >/dev/null 2>&1 || { rm -f "$tmp"; return 1; }; fi
   chmod 600 "$tmp"; mv -f "$tmp" "$final"; assert_mode "$final" 600
   printf '%s' "$final"
 }

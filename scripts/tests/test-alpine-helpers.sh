@@ -75,7 +75,7 @@ for _ in range(2):
 
 # Extract the production invocation, not a second copy of its flags. Fail on drift.
 source = (root / 'scripts/backup-host.sh').read_text()
-match = re.search(r'if (?:timeout -k 5 "\$BACKUP_STEP_TIMEOUT" )?docker run --rm (?:--name "\$cname" )?-v "\$\{vol\}:/data:ro" "\$BACKUP_HELPER_IMAGE" \\\n\s+(tar [^\n]+?) > "\$OUT"', source)
+match = re.search(r'if (?:timeout -k 5 "\$BACKUP_STEP_TIMEOUT" )?docker run --rm (?:--name "\$cname" )?-v "\$\{vol\}:/data:ro" "\$BACKUP_HELPER_IMAGE" \\\n\s+(tar [^\n]+?) > "\$(?:OUT|PART)"', source)
 assert match, 'backup tar invocation changed; review extraction'
 command = shlex.split(match[1])
 archive = run(volumes[1], helper, *command, readonly=True)

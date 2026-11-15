@@ -76,6 +76,12 @@ services:
       # and uses the built-in default text (see middleware/src/config.ts).
       WEBHOOK_EMPTY_CONTENT_REPLY: '${WEBHOOK_EMPTY_CONTENT_REPLY:-}'
       WEBHOOK_INFRA_FALLBACK_REPLY: '${WEBHOOK_INFRA_FALLBACK_REPLY:-}'
+      # Issue #299: bounded Postgres pool. Unset/empty => built-in defaults.
+      PG_CONNECTION_TIMEOUT_MS: '${PG_CONNECTION_TIMEOUT_MS:-}'
+      PG_QUERY_TIMEOUT_MS: '${PG_QUERY_TIMEOUT_MS:-}'
+      PG_STATEMENT_TIMEOUT_MS: '${PG_STATEMENT_TIMEOUT_MS:-}'
+      PG_IDLE_TIMEOUT_MS: '${PG_IDLE_TIMEOUT_MS:-}'
+      PG_RESOLVE_DEADLINE_MS: '${PG_RESOLVE_DEADLINE_MS:-}'
     # Reuses the /health route health-check-all.sh already probes (issue
     # #158: "endpoints already scraped/probed can back the healthcheck;
     # reuse rather than invent") — a real Express route response, not a
