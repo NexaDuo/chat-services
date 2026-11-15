@@ -72,6 +72,10 @@ services:
       CHATWOOT_PLATFORM_TOKEN: '${CHATWOOT_PLATFORM_TOKEN}'
       EVOLUTION_AUTHENTICATION_API_KEY: '${EVOLUTION_API_KEY}'
       EVOLUTION_BASE_URL: http://evolution-api:8080
+      # Issue #293. Unset on the host => "" here => config treats "" as unset
+      # and uses the built-in default text (see middleware/src/config.ts).
+      WEBHOOK_EMPTY_CONTENT_REPLY: '${WEBHOOK_EMPTY_CONTENT_REPLY:-}'
+      WEBHOOK_INFRA_FALLBACK_REPLY: '${WEBHOOK_INFRA_FALLBACK_REPLY:-}'
     # Reuses the /health route health-check-all.sh already probes (issue
     # #158: "endpoints already scraped/probed can back the healthcheck;
     # reuse rather than invent") — a real Express route response, not a

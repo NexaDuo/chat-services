@@ -119,4 +119,17 @@ degrading when its config read failed): here, the accident to avoid is
 silencing the bot by accident, so every ambiguous read defaults to normal
 operation instead.
 
+### Exception: static infra fallback (issue #293)
+
+When the middleware DB cannot be read during processing, the middleware sends
+ONE static apology (`WEBHOOK_INFRA_FALLBACK_REPLY`, not a Dify call) to the
+customer, at most once per conversation per 5 minutes, only while the
+conversation is still `pending`. If the kill-switch row is **readable and ON**,
+nothing is sent. If the DB is **unreadable**, the switch state is unknowable
+(it reads as "off" per the fail-safe above), so kill switch ON + DB unreadable
+still allows one static apology per conversation per window. That case is
+logged as `infra_fallback_sent_kill_switch_unknown` and counted in
+`middleware_fallback_replies_total{outcome="replied_kill_switch_unknown"}`.
+Operator decision (tech lead), reversible in code (`sendFallbackReply`).
+
 See also: `AGENTS.md` → "Configuration model (hybrid)".

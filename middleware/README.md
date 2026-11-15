@@ -41,6 +41,8 @@ Node.js/TypeScript service (Fastify 5) that closes the messaging loop between Ch
 | `DIFY_REQUEST_TIMEOUT_MS` | No | Default `30000` |
 | `HANDOFF_SHARED_SECRET` | ✅ | Secret ≥16 chars for `x-handoff-secret` header |
 | `HANDOFF_LABEL` | No | Default `atendimento-humano` |
+| `WEBHOOK_EMPTY_CONTENT_REPLY` | No | Static reply for an inbound message with no text and no media signal (#293). Empty/unset = built-in pt-BR default. |
+| `WEBHOOK_INFRA_FALLBACK_REPLY` | No | Static reply when a Postgres read fails after 3 bounded retries (#213/#293). Empty/unset = built-in default. |
 
 > The `CHATWOOT_API_TOKEN` **only exists after the first Chatwoot setup**. Create the super-admin in the UI (`chat.nexaduo.com`), copy the token from *Profile Settings → Access Token*, add it to `.env`, and recreate only middleware using the compose chain below. The user must have access to every bot-enabled account, including conversation reads.
 
@@ -85,6 +87,21 @@ src/
     ├── chatwoot-webhook.ts        # main messaging loop
     └── handoff.ts                 # human handoff (Dify tool)
 ```
+
+## Never silence the customer (#293, covers #203/#213)
+
+- Empty message with no media signal: previously `skipped:empty_content`
+  (#203 said to keep skipping; #293 reverses that). Now buffered with the burst:
+  if the burst has any text, the Dify answer is the only reply; if all empty,
+  one static "send text" reply. Messages with a media signal still reach Dify with a marker.
+- Postgres read failures (watermark, contact conversation id, tenant lookup error `tenant_lookup_failed`) are
+  retried (100/200 ms) and then answered with one static apology, never Dify.
+  Both fallbacks are throttled to one per conversation per 5 min (in memory; a
+  restart resets it, at most one extra message), only while `pending` (#250), and
+  suppressed when the kill switch is readable and ON (see `docs/dify-kill-switch.md`).
+- Metrics: `middleware_fallback_replies_total{account_id,reason,outcome}`,
+  `middleware_flush_aborted_total{account_id,reason}`,
+  `middleware_empty_content_total` (`outcome=answered_with_fallback`).
 
 ## Agent Bot cutover (#250)
 

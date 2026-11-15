@@ -1,5 +1,14 @@
 import { z } from "zod";
 
+/** Single source of truth for the customer-facing fallback texts (issue #293). */
+export const DEFAULT_EMPTY_CONTENT_REPLY =
+  "Recebi sua mensagem, mas não consegui ler o conteúdo. Pode me enviar em texto, por favor?";
+export const DEFAULT_INFRA_FALLBACK_REPLY =
+  "Estamos com uma instabilidade momentânea e não consegui processar sua mensagem agora. Pode reenviá-la em alguns instantes?";
+
+const emptyToUndefined = (v: unknown) =>
+  typeof v === "string" && v.trim() === "" ? undefined : v;
+
 const EnvSchema = z.object({
   PORT: z.coerce.number().int().positive().default(4000),
   LOG_LEVEL: z
@@ -20,6 +29,20 @@ const EnvSchema = z.object({
   // single Dify call instead of one call per message. 0 disables grouping
   // (each message flushes on its own, still serialized per conversation).
   WEBHOOK_DEBOUNCE_MS: z.coerce.number().int().nonnegative().default(2500),
+
+  // Static customer-facing fallbacks (issue #293: never silence the customer).
+  // EMPTY_CONTENT: an inbound message with no text and no recognizable media
+  // signal. INFRA: a Postgres read failure that survived bounded retries.
+  // Empty string is treated as UNSET (compose passes `${VAR:-}` through, so an
+  // unset host variable arrives as "" and must fall back to the default).
+  WEBHOOK_EMPTY_CONTENT_REPLY: z.preprocess(
+    emptyToUndefined,
+    z.string().min(1).default(DEFAULT_EMPTY_CONTENT_REPLY),
+  ),
+  WEBHOOK_INFRA_FALLBACK_REPLY: z.preprocess(
+    emptyToUndefined,
+    z.string().min(1).default(DEFAULT_INFRA_FALLBACK_REPLY),
+  ),
 
   HANDOFF_SHARED_SECRET: z
     .string()
@@ -54,6 +77,8 @@ export type AppConfig = {
   };
   webhook: {
     debounceMs: number;
+    emptyContentReply: string;
+    infraFallbackReply: string;
   };
   handoff: {
     sharedSecret: string;
@@ -96,6 +121,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     },
     webhook: {
       debounceMs: data.WEBHOOK_DEBOUNCE_MS,
+      emptyContentReply: data.WEBHOOK_EMPTY_CONTENT_REPLY,
+      infraFallbackReply: data.WEBHOOK_INFRA_FALLBACK_REPLY,
     },
     handoff: {
       sharedSecret: data.HANDOFF_SHARED_SECRET,
@@ -153,12 +180,18 @@ export interface ResolvedTenant {
 /**
  * Why a Chatwoot account did not resolve to a tenant. Bounded set: these are
  * used verbatim as the `reason` label of `middleware_errors_total`.
- *  - no_tenant_mapping: no row for the account (or the lookup failed).
+ *  - no_tenant_mapping: no row for the account.
+ *  - tenant_lookup_failed: the pool/query threw (an outage, not a mapping
+ *                       fact); callers retry and then use the infra fallback (#293).
  *  - tenant_inactive:   rows exist but none has status = 'active' (status is
  *                       the off switch for a firm's bot, issue #292).
  *  - tenant_ambiguous:  2+ active rows; we refuse to guess a Dify key.
  */
-export type TenantResolutionFailure = "no_tenant_mapping" | "tenant_inactive" | "tenant_ambiguous";
+export type TenantResolutionFailure =
+  | "no_tenant_mapping"
+  | "tenant_inactive"
+  | "tenant_ambiguous"
+  | "tenant_lookup_failed";
 
 export type TenantResolution =
   | { ok: true; tenant: ResolvedTenant }
@@ -220,7 +253,7 @@ export async function resolveTenantDetailed(
     console.error("Failed to resolve tenant from database", err);
   }
 
-  return { ok: false, reason: "no_tenant_mapping" };
+  return { ok: false, reason: "tenant_lookup_failed" };
 }
 
 /** Back-compat wrapper: the tenant, or `null` when it does not resolve. */

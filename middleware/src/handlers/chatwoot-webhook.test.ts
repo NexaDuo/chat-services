@@ -1050,7 +1050,7 @@ describe("registerChatwootWebhookRoute — burst dedup + watermark (issue #179)"
     // paths had coverage. Both must degrade gracefully — the reply still
     // reaches the user — mirroring the existing `chatBlocking`/
     // `chatwoot.postMessage` rejection tests already in this suite.
-    it("a transient read failure on contact_dify_conversations is NOT swallowed by flushGroup: it propagates uncaught to the debouncer, and the reply is never sent (documented pre-existing gap, `@rev` PR #210 finding 4.1 — same placement issue as readWatermark)", async () => {
+    it("a persistent read failure on contact_dify_conversations aborts the flush with ONE static fallback reply, never calls Dify, never advances the watermark (issues #213/#293)", async () => {
       const pool = buildFakePool();
       pool.setContactDifyReadError(new Error("ECONNRESET reading contact_dify_conversations"));
       const chatwoot = buildFakeChatwoot();
@@ -1067,23 +1067,16 @@ describe("registerChatwootWebhookRoute — burst dedup + watermark (issue #179)"
           contactId: 1001,
         }),
       });
-      await new Promise((resolve) => setTimeout(resolve, 200));
+      await new Promise((resolve) => setTimeout(resolve, 700));
 
-      // `readContactDifyConversationId` (called at the top of `flushGroup`,
-      // BEFORE the try/catch that starts around the Dify call) throws here.
-      // That's outside any try/catch in this function, so it propagates to
-      // the debouncer's `onError` (log-only) — Dify is never even called,
-      // and the user gets total silence rather than even the existing
-      // best-effort "processing failed" note (which only fires from the
-      // try/catch around the Dify call, further down). This pins the exact
-      // behavior `@rev` flagged in PR #210 review finding 4.1 as a real gap
-      // — NOT introduced by issue #204 (the pre-existing `readWatermark` call
-      // a few lines above has the identical placement issue) but newly
-      // exercised by this table. Fixing the placement is out of scope for
-      // this PR per `@techlead`'s task; this test exists so the behavior is
-      // pinned and visible instead of silently assumed.
       expect(chatBlocking).not.toHaveBeenCalled();
-      expect(chatwoot.postMessage).not.toHaveBeenCalled();
+      expect(chatwoot.postMessage).toHaveBeenCalledTimes(1);
+      expect(chatwoot.postMessage.mock.calls[0][0]).toMatchObject({
+        conversationId: 199,
+        messageType: "outgoing",
+      });
+      expect(chatwoot.postMessage.mock.calls[0][0].content).toContain("instabilidade");
+      expect(pool.watermarks.size).toBe(0);
 
       await app.close();
     });
@@ -1358,7 +1351,7 @@ describe("registerChatwootWebhookRoute — empty content marker (issue #203)", (
     await app.close();
   });
 
-  it("genuinely empty content (no attachments, no content_attributes signal) ⇒ still skipped, no Dify call", async () => {
+  it("genuinely empty content (no attachments, no content_attributes signal) ⇒ static polite fallback reply, no Dify call (issue #293)", async () => {
     const pool = buildFakePool();
     const chatwoot = buildFakeChatwoot();
     const { app } = await buildApp(pool, chatwoot);
@@ -1380,11 +1373,19 @@ describe("registerChatwootWebhookRoute — empty content marker (issue #203)", (
       },
     });
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toEqual({ skipped: "empty_content" });
+    expect(res.json()).toEqual({ ok: true, buffered: true });
 
     await new Promise((resolve) => setTimeout(resolve, 100));
     expect(chatBlocking).not.toHaveBeenCalled();
-    expect(chatwoot.postMessage).not.toHaveBeenCalled();
+    expect(chatwoot.postMessage).toHaveBeenCalledTimes(1);
+    expect(chatwoot.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        accountId: "42",
+        conversationId: 51,
+        messageType: "outgoing",
+        content: expect.stringContaining("texto"),
+      }),
+    );
 
     await app.close();
   });
@@ -1426,7 +1427,7 @@ describe("registerChatwootWebhookRoute — empty content marker (issue #203)", (
     );
     const skipped = markerCount.values.find(
       (v) =>
-        v.labels.outcome === "skipped" &&
+        v.labels.outcome === "answered_with_fallback" &&
         v.labels.type === "none" &&
         v.labels.account_id === "42",
     );
@@ -1595,7 +1596,7 @@ describe("registerChatwootWebhookRoute — empty content marker (issue #203)", (
    * `@rev` finding on PR #206 (LOW): an empty/whitespace `story_id` must not
    * count as "present" — that would fabricate a reply out of nothing.
    */
-  it("empty-string story_id ⇒ treated as absent, genuinely-empty message stays skipped", async () => {
+  it("empty-string story_id ⇒ treated as absent, genuinely-empty message gets the fallback, never Dify", async () => {
     const pool = buildFakePool();
     const chatwoot = buildFakeChatwoot();
     const { app } = await buildApp(pool, chatwoot);
@@ -1616,7 +1617,7 @@ describe("registerChatwootWebhookRoute — empty content marker (issue #203)", (
         event: "message_created",
       },
     });
-    expect(res.json()).toEqual({ skipped: "empty_content" });
+    expect(res.json()).toEqual({ ok: true, buffered: true });
 
     await new Promise((resolve) => setTimeout(resolve, 100));
     expect(chatBlocking).not.toHaveBeenCalled();
@@ -2128,5 +2129,432 @@ describe("Chatwoot ownership reads and credential safety", () => {
     expect(error.message).toBe("Chatwoot request failed");
     expect(error.config).toBeUndefined();
     expect(JSON.stringify(error)).not.toContain("test-bot");
+  });
+});
+
+/**
+ * Issue #293 (covers #203 follow-up and #213): the customer must never be
+ * silently ignored. Payloads come from `chatwootMessageCreated` (the full
+ * real Chatwoot `message_created` shape used across this file), not
+ * hand-picked discriminators.
+ */
+describe("registerChatwootWebhookRoute — never silence the customer (issues #293/#213)", () => {
+  function buildPool(opts: { watermarkFailures?: number; killSwitch?: boolean } = {}) {
+    let watermarkFailures = opts.watermarkFailures ?? 0;
+    const watermarks = new Map<string, number>();
+    const query = vi.fn(async (sql: string, params: unknown[]) => {
+      if (sql.includes("FROM tenants")) {
+        return { rows: [{ slug: "t", status: "active", dify_api_key: "k", dify_app_type: "chatflow" }] };
+      }
+      if (sql.includes("SELECT last_processed_message_id")) {
+        if (watermarkFailures === Infinity || watermarkFailures-- > 0) {
+          throw new Error("ECONNRESET reading conversation_watermarks");
+        }
+        return { rows: [] };
+      }
+      if (sql.includes("INSERT INTO conversation_watermarks")) {
+        watermarks.set(`${params[0]}:${params[1]}`, Number(params[2]));
+        return { rows: [] };
+      }
+      if (sql.includes("FROM contact_dify_conversations")) return { rows: [] };
+      if (sql.includes("INSERT INTO contact_dify_conversations")) return { rows: [] };
+      if (sql.includes("FROM configs")) {
+        return { rows: opts.killSwitch ? [{ value: "true" }] : [] };
+      }
+      throw new Error(`unexpected query in test: ${sql}`);
+    });
+    return { query, watermarks };
+  }
+
+  function buildChatwoot(status = "pending") {
+    return {
+      getConversation: vi.fn().mockResolvedValue({ status }),
+      postMessage: vi.fn().mockResolvedValue({ id: 1, content: "", private: false, message_type: "outgoing", created_at: "" }),
+      setConversationCustomAttributes: vi.fn().mockResolvedValue({}),
+    };
+  }
+
+  async function buildApp(pool: ReturnType<typeof buildPool>, chatwoot: ReturnType<typeof buildChatwoot>) {
+    const app = Fastify({ logger: false });
+    const config = {
+      chatwoot: { webhookToken: undefined, baseUrl: "https://chat.example", apiToken: "x" },
+      dify: { baseUrl: "https://dify.example", requestTimeoutMs: 5000 },
+      webhook: { debounceMs: 20, emptyContentReply: "ME MANDE TEXTO", infraFallbackReply: "INSTABILIDADE" },
+    } as unknown as AppConfig;
+    const metrics = createMetrics();
+    await registerChatwootWebhookRoute(app, config, metrics, chatwoot as any, pool as any);
+    await app.ready();
+    return { app, metrics };
+  }
+
+  const counter = async (
+    c: { get: () => Promise<{ values: Array<{ labels: Record<string, unknown>; value: number }> }> },
+    labels: Record<string, string>,
+  ) =>
+    (await c.get()).values.find((v) => Object.entries(labels).every(([k, val]) => v.labels[k] === val))?.value ?? 0;
+
+  const post = (app: Awaited<ReturnType<typeof buildApp>>["app"], payload: unknown) =>
+    app.inject({ method: "POST", url: "/webhooks/chatwoot", payload: payload as object });
+  const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+  beforeEach(() => {
+    chatBlocking.mockReset();
+    chatBlocking.mockResolvedValue({ message_id: "m", conversation_id: "c1", answer: "resposta" });
+  });
+
+  it("empty real-shape message (no text, no media signal) => configured polite reply, no Dify, metric counted", async () => {
+    const chatwoot = buildChatwoot();
+    const { app, metrics } = await buildApp(buildPool(), chatwoot);
+    const res = await post(app, chatwootMessageCreated({ id: 1, content: "", accountId: 42, conversationId: 7 }));
+    expect(res.json()).toEqual({ ok: true, buffered: true });
+    await wait(120);
+    expect(chatBlocking).not.toHaveBeenCalled();
+    expect(chatwoot.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ content: "ME MANDE TEXTO", messageType: "outgoing" }),
+    );
+    expect(
+      await counter(metrics.fallbackRepliesTotal, { account_id: "42", reason: "empty_content", outcome: "replied" }),
+    ).toBe(1);
+    await app.close();
+  });
+
+  it("repeated empty messages in one conversation get ONE nudge (throttled)", async () => {
+    const chatwoot = buildChatwoot();
+    const { app } = await buildApp(buildPool(), chatwoot);
+    await post(app, chatwootMessageCreated({ id: 1, content: "", accountId: 42, conversationId: 7 }));
+    await wait(120);
+    await post(app, chatwootMessageCreated({ id: 2, content: "", accountId: 42, conversationId: 7 }));
+    await wait(120);
+    expect(chatwoot.postMessage).toHaveBeenCalledTimes(1);
+    await app.close();
+  });
+
+  it("empty-content fallback honors DIFY_KILL_SWITCH (silence) and bot ownership (#250)", async () => {
+    const killed = buildChatwoot();
+    const a = await buildApp(buildPool({ killSwitch: true }), killed);
+    await post(a.app, chatwootMessageCreated({ id: 1, content: "", accountId: 42, conversationId: 7 }));
+    await wait(120);
+    expect(killed.postMessage).not.toHaveBeenCalled();
+    expect(await counter(a.metrics.fallbackRepliesTotal, { reason: "empty_content", outcome: "suppressed" })).toBe(1);
+    await a.app.close();
+
+    const human = buildChatwoot("open");
+    const b = await buildApp(buildPool(), human);
+    await post(b.app, chatwootMessageCreated({ id: 1, content: "", accountId: 42, conversationId: 8 }));
+    await wait(120);
+    expect(human.postMessage).not.toHaveBeenCalled();
+    await b.app.close();
+  });
+
+  it("audio attachment with empty text (webhook serializes file_type as the enum NAME, per upstream Attachment#push_event_data) reaches Dify with the audio marker", async () => {
+    const chatwoot = buildChatwoot();
+    const { app } = await buildApp(buildPool(), chatwoot);
+    await post(app, {
+      ...chatwootMessageCreated({ id: 3, content: "", accountId: 42, conversationId: 9 }),
+      attachments: [
+        { id: 1, message_id: 3, file_type: "audio", account_id: 42, extension: null, data_url: "https://x/y.ogg", thumb_url: "" },
+      ],
+    });
+    await wait(150);
+    expect(chatBlocking).toHaveBeenCalledTimes(1);
+    expect(chatBlocking.mock.calls[0][0].query).toBe("[o usuário enviou um áudio]");
+    await app.close();
+  });
+
+  it("Postgres fully down (every query rejects) on a real-shape text message => one fallback reply, no Dify, no 500", async () => {
+    const chatwoot = buildChatwoot();
+    const pool = buildPool();
+    pool.query.mockImplementation(async () => {
+      throw new Error("ECONNREFUSED postgres");
+    });
+    const { app, metrics } = await buildApp(pool, chatwoot);
+    const res = await post(app, chatwootMessageCreated({ id: 20, content: "oi", accountId: 42, conversationId: 21 }));
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ ok: true, fallback: "postgres_read_failed" });
+    await wait(500);
+    expect(chatBlocking).not.toHaveBeenCalled();
+    expect(chatwoot.postMessage).toHaveBeenCalledTimes(1);
+    expect(chatwoot.postMessage.mock.calls[0][0].content).toBe("INSTABILIDADE");
+    expect(await counter(metrics.flushAbortedTotal, { account_id: "42" })).toBe(1);
+    await app.close();
+  });
+
+  it("an unmapped account with a healthy Postgres is still a plain no_tenant_mapping skip (no fallback)", async () => {
+    const chatwoot = buildChatwoot();
+    const pool = buildPool();
+    const base = pool.query.getMockImplementation()!;
+    pool.query.mockImplementation((async (sql: string, params: unknown[]) =>
+      sql.includes("FROM tenants") ? { rows: [] } : sql.trim() === "SELECT 1" ? { rows: [{}] } : base(sql, params)) as any,
+    );
+    const { app } = await buildApp(pool, chatwoot);
+    const res = await post(app, chatwootMessageCreated({ id: 21, content: "oi", accountId: 42, conversationId: 22 }));
+    expect(res.json()).toEqual({ skipped: "no_tenant_mapping" });
+    expect(chatwoot.postMessage).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it("a throttled/suppressed empty-content attempt does not mute later nudges", async () => {
+    const chatwoot = buildChatwoot("open");
+    const { app } = await buildApp(buildPool(), chatwoot);
+    await post(app, chatwootMessageCreated({ id: 1, content: "", accountId: 42, conversationId: 30 }));
+    await wait(120);
+    expect(chatwoot.postMessage).not.toHaveBeenCalled();
+    chatwoot.getConversation.mockResolvedValue({ status: "pending" });
+    await post(app, chatwootMessageCreated({ id: 2, content: "", accountId: 42, conversationId: 30 }));
+    await wait(120);
+    expect(chatwoot.postMessage).toHaveBeenCalledTimes(1);
+    await app.close();
+  });
+
+  it("transient watermark read failure is retried and the normal reply is delivered (no fallback)", async () => {
+    const chatwoot = buildChatwoot();
+    const pool = buildPool({ watermarkFailures: 1 });
+    const { app, metrics } = await buildApp(pool, chatwoot);
+    await post(app, chatwootMessageCreated({ id: 10, content: "oi", accountId: 42, conversationId: 11 }));
+    await wait(400);
+    expect(chatBlocking).toHaveBeenCalledTimes(1);
+    expect(chatwoot.postMessage).toHaveBeenCalledTimes(1);
+    expect(chatwoot.postMessage.mock.calls[0][0].content).toBe("resposta");
+    expect(await counter(metrics.flushAbortedTotal, { account_id: "42" })).toBe(0);
+    await app.close();
+  });
+
+  it("persistent watermark read failure => bounded retries, ONE fallback reply, abort metric, no Dify, watermark untouched", async () => {
+    const chatwoot = buildChatwoot();
+    const pool = buildPool({ watermarkFailures: Infinity });
+    const { app, metrics } = await buildApp(pool, chatwoot);
+    await post(app, chatwootMessageCreated({ id: 10, content: "oi", accountId: 42, conversationId: 11 }));
+    await wait(700);
+    const watermarkReads = pool.query.mock.calls.filter((c) =>
+      String(c[0]).includes("SELECT last_processed_message_id"),
+    );
+    expect(watermarkReads).toHaveLength(3);
+    expect(chatBlocking).not.toHaveBeenCalled();
+    expect(chatwoot.postMessage).toHaveBeenCalledTimes(1);
+    expect(chatwoot.postMessage.mock.calls[0][0].content).toBe("INSTABILIDADE");
+    expect(pool.watermarks.size).toBe(0);
+    expect(await counter(metrics.flushAbortedTotal, { account_id: "42", reason: "postgres_read_failed" })).toBe(1);
+    expect(
+      await counter(metrics.fallbackRepliesTotal, { reason: "postgres_read_failed", outcome: "replied" }),
+    ).toBe(1);
+    await app.close();
+  });
+
+  it("read-failure fallback honors bot ownership: a human took over during the retries => no fallback (#250)", async () => {
+    const human = buildChatwoot();
+    human.getConversation.mockResolvedValue({ status: "open" });
+    const pool = buildPool({ watermarkFailures: Infinity });
+    const { app, metrics } = await buildApp(pool, human);
+    await post(app, chatwootMessageCreated({ id: 10, content: "oi", accountId: 42, conversationId: 12 }));
+    await wait(700);
+    expect(human.postMessage).not.toHaveBeenCalled();
+    expect(
+      await counter(metrics.fallbackRepliesTotal, { reason: "postgres_read_failed", outcome: "suppressed" }),
+    ).toBe(1);
+    await app.close();
+  });
+  it("3 concurrent empty messages => exactly ONE nudge (REV-2: no check-then-await race)", async () => {
+    const chatwoot = buildChatwoot();
+    const { app } = await buildApp(buildPool(), chatwoot);
+    await Promise.all(
+      [1, 2, 3].map((id) =>
+        post(app, chatwootMessageCreated({ id, content: "", accountId: 42, conversationId: 40 })),
+      ),
+    );
+    await wait(150);
+    expect(chatwoot.postMessage).toHaveBeenCalledTimes(1);
+    await app.close();
+  });
+
+  it("text + empty message in the same debounce window => ONE reply (the Dify answer), both orders (REV-4)", async () => {
+    for (const order of ["text-first", "empty-first"]) {
+      chatBlocking.mockClear();
+      const chatwoot = buildChatwoot();
+      const { app } = await buildApp(buildPool(), chatwoot);
+      const conv = order === "text-first" ? 50 : 51;
+      const text = chatwootMessageCreated({ id: 2, content: "oi", accountId: 42, conversationId: conv });
+      const empty = chatwootMessageCreated({ id: 1, content: "", accountId: 42, conversationId: conv });
+      if (order === "text-first") {
+        await post(app, text);
+        await post(app, empty);
+      } else {
+        await post(app, empty);
+        await post(app, text);
+      }
+      await wait(200);
+      expect(chatBlocking).toHaveBeenCalledTimes(1);
+      expect(chatBlocking.mock.calls[0][0].query).toBe("oi");
+      expect(chatwoot.postMessage).toHaveBeenCalledTimes(1);
+      expect(chatwoot.postMessage.mock.calls[0][0].content).toBe("resposta");
+      await app.close();
+    }
+  });
+
+  it("3-message burst with Postgres down => ONE apology (REV-3/SEC-2), account label validated (SEC-6)", async () => {
+    const chatwoot = buildChatwoot();
+    const pool = buildPool();
+    pool.query.mockImplementation(async () => {
+      throw new Error("ECONNREFUSED postgres");
+    });
+    const { app, metrics } = await buildApp(pool, chatwoot);
+    await Promise.all(
+      [1, 2, 3].map((id) =>
+        post(app, chatwootMessageCreated({ id, content: "oi", accountId: 42, conversationId: 60 })),
+      ),
+    );
+    await wait(700);
+    expect(chatwoot.postMessage).toHaveBeenCalledTimes(1);
+    expect(await counter(metrics.fallbackRepliesTotal, { reason: "postgres_read_failed", outcome: "throttled" })).toBe(2);
+    // kill switch unreadable (DB down): sent, but flagged distinctly
+    expect(
+      await counter(metrics.fallbackRepliesTotal, { reason: "postgres_read_failed", outcome: "replied_kill_switch_unknown" }),
+    ).toBe(1);
+    await app.close();
+  });
+
+  it("non-numeric account id never becomes a metric label on the DB-failure path (SEC-6)", async () => {
+    const chatwoot = buildChatwoot();
+    const pool = buildPool();
+    pool.query.mockImplementation(async () => {
+      throw new Error("ECONNREFUSED postgres");
+    });
+    const { app, metrics } = await buildApp(pool, chatwoot);
+    await post(app, {
+      ...chatwootMessageCreated({ id: 1, content: "oi", accountId: 42, conversationId: 61 }),
+      account: { id: "evil{label}", name: "x" },
+    });
+    await wait(500);
+    const flushed = (await metrics.flushAbortedTotal.get()).values;
+    expect(flushed.map((v) => v.labels.account_id)).toEqual(["unknown"]);
+    await app.close();
+  });
+
+  it("kill switch readable and ON suppresses the infra fallback (SEC-1)", async () => {
+    const chatwoot = buildChatwoot();
+    const pool = buildPool({ watermarkFailures: Infinity, killSwitch: true });
+    const { app, metrics } = await buildApp(pool, chatwoot);
+    await post(app, chatwootMessageCreated({ id: 1, content: "oi", accountId: 42, conversationId: 62 }));
+    await wait(700);
+    expect(chatwoot.postMessage).not.toHaveBeenCalled();
+    expect(await counter(metrics.fallbackRepliesTotal, { reason: "postgres_read_failed", outcome: "suppressed" })).toBe(1);
+    await app.close();
+  });
+
+  it("prototype-key file_type names yield the generic marker, never undefined (SEC-4)", async () => {
+    for (const bad of ["constructor", "__proto__", "toString"]) {
+      chatBlocking.mockClear();
+      const chatwoot = buildChatwoot();
+      const { app } = await buildApp(buildPool(), chatwoot);
+      await post(app, {
+        ...chatwootMessageCreated({ id: 1, content: "", accountId: 42, conversationId: 70 }),
+        attachments: [{ id: 1, file_type: bad }],
+      });
+      await wait(120);
+      expect(chatBlocking).toHaveBeenCalledTimes(1);
+      expect(chatBlocking.mock.calls[0][0].query).toBe("[o usuário enviou uma mídia]");
+      await app.close();
+    }
+  });
+  // ---- REV-1 (issue #293): tenant read errors are retried / answered, never a silent drop ----
+  // `tenantPlan(n)` decides the result of the n-th (1-based) `FROM tenants` query.
+  type TenantStep = "ok" | "throw" | "inactive" | "ambiguous" | "none";
+  function poolWithTenantPlan(plan: (n: number) => TenantStep) {
+    const pool = buildPool();
+    const base = pool.query.getMockImplementation()!;
+    let n = 0;
+    pool.query.mockImplementation((async (sql: string, params: unknown[]) => {
+      if (!sql.includes("FROM tenants")) return base(sql, params);
+      const step = plan(++n);
+      const row = { slug: "t", status: "active", dify_api_key: "k", dify_app_type: "chatflow" };
+      if (step === "throw") throw new Error("ECONNRESET reading tenants");
+      if (step === "inactive") return { rows: [{ ...row, status: "inactive" }] };
+      if (step === "ambiguous") return { rows: [row, { ...row, slug: "t2" }] };
+      if (step === "none") return { rows: [] };
+      return { rows: [row] };
+    }) as any);
+    return { pool, tenantCalls: () => n };
+  }
+
+  it("REV-1 handler: tenants query fails ONCE then succeeds => retried, normal Dify reply, no fallback", async () => {
+    const chatwoot = buildChatwoot();
+    const { pool } = poolWithTenantPlan((n) => (n === 1 ? "throw" : "ok"));
+    const { app, metrics } = await buildApp(pool, chatwoot);
+    const res = await post(app, chatwootMessageCreated({ id: 1, content: "oi", accountId: 42, conversationId: 80 }));
+    expect(res.json()).toEqual({ ok: true, buffered: true });
+    await wait(500);
+    expect(chatBlocking).toHaveBeenCalledTimes(1);
+    expect(chatwoot.postMessage).toHaveBeenCalledTimes(1);
+    expect(chatwoot.postMessage.mock.calls[0][0].content).toBe("resposta");
+    expect(await counter(metrics.flushAbortedTotal, { account_id: "42" })).toBe(0);
+    await app.close();
+  });
+
+  it("REV-1 flush: tenant read ok at the handler, fails ONCE at flush => retried, normal reply", async () => {
+    const chatwoot = buildChatwoot();
+    const { pool } = poolWithTenantPlan((n) => (n === 2 ? "throw" : "ok"));
+    const { app } = await buildApp(pool, chatwoot);
+    await post(app, chatwootMessageCreated({ id: 1, content: "oi", accountId: 42, conversationId: 81 }));
+    await wait(500);
+    expect(chatBlocking).toHaveBeenCalledTimes(1);
+    expect(chatwoot.postMessage).toHaveBeenCalledTimes(1);
+    expect(chatwoot.postMessage.mock.calls[0][0].content).toBe("resposta");
+    await app.close();
+  });
+
+  it("REV-1 flush: tenant read ok at the handler, fails PERSISTENTLY at flush => one fallback, no Dify, no silent drop", async () => {
+    const chatwoot = buildChatwoot();
+    const { pool, tenantCalls } = poolWithTenantPlan((n) => (n === 1 ? "ok" : "throw"));
+    const { app, metrics } = await buildApp(pool, chatwoot);
+    await post(app, chatwootMessageCreated({ id: 1, content: "oi", accountId: 42, conversationId: 82 }));
+    await wait(700);
+    expect(tenantCalls()).toBe(4); // 1 at the handler + 3 bounded tries at flush
+    expect(chatBlocking).not.toHaveBeenCalled();
+    expect(chatwoot.postMessage).toHaveBeenCalledTimes(1);
+    expect(chatwoot.postMessage.mock.calls[0][0].content).toBe("INSTABILIDADE");
+    expect(await counter(metrics.flushAbortedTotal, { account_id: "42", reason: "postgres_read_failed" })).toBe(1);
+    await app.close();
+  });
+
+  it("REV-1 handler: tenants query fails persistently => 3 tries, ack, ONE fallback", async () => {
+    const chatwoot = buildChatwoot();
+    const { pool, tenantCalls } = poolWithTenantPlan(() => "throw");
+    const { app } = await buildApp(pool, chatwoot);
+    const res = await post(app, chatwootMessageCreated({ id: 1, content: "oi", accountId: 42, conversationId: 83 }));
+    expect(res.json()).toEqual({ ok: true, fallback: "postgres_read_failed" });
+    await wait(500);
+    expect(tenantCalls()).toBe(3);
+    expect(chatwoot.postMessage).toHaveBeenCalledTimes(1);
+    await app.close();
+  });
+
+  it("deliberate tenant skips (inactive / ambiguous / none) are counted, not retried, and get NO reply", async () => {
+    for (const [step, reason] of [
+      ["inactive", "tenant_inactive"],
+      ["ambiguous", "tenant_ambiguous"],
+      ["none", "no_tenant_mapping"],
+    ] as const) {
+      const chatwoot = buildChatwoot();
+      const { pool, tenantCalls } = poolWithTenantPlan(() => step);
+      const { app, metrics } = await buildApp(pool, chatwoot);
+      const res = await post(app, chatwootMessageCreated({ id: 1, content: "oi", accountId: 42, conversationId: 84 }));
+      expect(res.json()).toEqual({ skipped: reason });
+      await wait(150);
+      expect(tenantCalls()).toBe(1);
+      expect(chatwoot.postMessage).not.toHaveBeenCalled();
+      expect(await counter(metrics.errorsTotal, { account_id: "42", reason })).toBe(1);
+      await app.close();
+    }
+  });
+
+  it("#296 REV-9: tenant becomes inactive between the handler and the flush => flush skip is counted, no reply", async () => {
+    const chatwoot = buildChatwoot();
+    const { pool } = poolWithTenantPlan((n) => (n === 1 ? "ok" : "inactive"));
+    const { app, metrics } = await buildApp(pool, chatwoot);
+    await post(app, chatwootMessageCreated({ id: 1, content: "oi", accountId: 42, conversationId: 85 }));
+    await wait(300);
+    expect(chatBlocking).not.toHaveBeenCalled();
+    expect(chatwoot.postMessage).not.toHaveBeenCalled();
+    expect(await counter(metrics.errorsTotal, { account_id: "42", reason: "tenant_inactive" })).toBe(1);
+    await app.close();
   });
 });
