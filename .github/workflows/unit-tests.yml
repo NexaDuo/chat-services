@@ -52,6 +52,7 @@ jobs:
           bash scripts/test-backup-volume-guard.sh
           bash scripts/tests/test-host-health.sh
           bash scripts/tests/test-health-check-continue.sh
+          bash scripts/tests/test-no-hardcoded-secrets.sh
           REQUIRE_REAL_RCLONE=1 bash scripts/tests/test-backup-offhost.sh
 
       - name: Setup Node.js

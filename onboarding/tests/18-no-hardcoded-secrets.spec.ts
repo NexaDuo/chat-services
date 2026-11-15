@@ -37,6 +37,8 @@ const SCAN_TARGETS = [
 
 // This spec necessarily names the forbidden shapes, so exclude it from its own scan.
 const SELF = path.basename(__filename);
+// The shell guard likewise embeds synthetic positives for its own self-test.
+const SHELL_GUARD = 'test-no-hardcoded-secrets.sh';
 
 const SCANNED_EXTENSIONS = new Set(['.ts', '.js', '.sh', '.mts', '.cts']);
 
@@ -48,7 +50,7 @@ function collectFiles(dir: string): string[] {
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) {
       out.push(...collectFiles(full));
-    } else if (SCANNED_EXTENSIONS.has(path.extname(entry.name)) && entry.name !== SELF) {
+    } else if (SCANNED_EXTENSIONS.has(path.extname(entry.name)) && entry.name !== SELF && entry.name !== SHELL_GUARD) {
       out.push(full);
     }
   }
@@ -58,8 +60,9 @@ function collectFiles(dir: string): string[] {
 // Known leaked literals (must never reappear anywhere) and the predictable
 // generator prefix that produced the leaked Chatwoot password.
 const FORBIDDEN_LITERALS: RegExp[] = [
-  // Built from fragments so this guard file does not itself contain the literal.
-  new RegExp(['NexaDuo', '2026-C9E5FF39'].join('@')),
+  // The leaked value itself is deliberately NOT embedded here (not even in
+  // fragments). The generic `NexaDuo@2026-` prefix below and the shell guard
+  // scripts/tests/test-no-hardcoded-secrets.sh cover its shape.
   /NexaDuo_2026_Admin/,
   /NexaDuo@2026-/, // predictable, low-entropy generator prefix (issue #135)
 ];
