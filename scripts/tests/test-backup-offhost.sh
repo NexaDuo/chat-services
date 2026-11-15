@@ -43,7 +43,9 @@ case "$1" in
   volume) echo chat-services_chatwoot-storage ;;
   rm) echo "rm $*" >> "$FAKE_LOG_DIR/docker-rm.log" ;;
   run) [[ -z "${FAKE_HANG_RUN:-}" ]] || exec sleep 30
-    echo "run $*" >> "$FAKE_LOG_DIR/docker-run.log"; seq 1 800 | gzip ;;
+    echo "run $*" >> "$FAKE_LOG_DIR/docker-run.log"
+    # a REAL tar.gz (backup-host.sh verifies volume archives with tar -tzf, #299)
+    seq 1 800 > "$FAKE_LOG_DIR/vol-data"; tar czf - -C "$FAKE_LOG_DIR" vol-data ;;
   *) echo "unexpected docker $*" >&2; exit 99 ;;
 esac
 STUB
@@ -474,6 +476,60 @@ run_backup || { cat "$S/out"; fail "default clock/sleep path"; }
 [[ "$(cat "$S/log/ps-count")" -ge 2 ]] || fail "wait loop did not retry with real sleep"
 ok "clock/sleep hooks inert without BACKUP_TEST_MODE; default path retries and succeeds"
 export BACKUP_TEST_MODE=1
+
+# 7z. Issue #299: atomic artifacts. A run killed mid-write leaves only hidden
+# `.tmp-*.partial` files (and a .stage.* dir); they must never be uploaded, never
+# satisfy the freshness probe, and are cleaned by the next run.
+scenario killmid
+export BACKUP_STEP_TIMEOUT=60 FAKE_HANG_DUMP=1
+setsid bash "$ROOT/scripts/backup-host.sh" > "$S/out-kill" 2>&1 &
+KPID=$!
+for _ in $(seq 1 50); do has "$S/dumps/.tmp-*.partial" && break; sleep 0.2; done
+has "$S/dumps/.tmp-*.sql.gz.partial" || fail "no in-flight partial dump while the dump was running"
+has "$S/dumps/chatwoot-*.sql.gz" && fail "final dump name exists before the dump finished"
+kill -9 -- "-$KPID" 2>/dev/null || true; wait "$KPID" 2>/dev/null || true
+pkill -f "sleep 30" 2>/dev/null || true
+has "$S/dumps/chatwoot-*.sql.gz" && fail "killed run left a final-named (truncated) dump"
+# plus the other leftovers a kill can strand: truncated volume/secret partials, an old-style stage tmp
+head -c 20 /dev/urandom > "$S/dumps/.tmp-chat-services_chatwoot-storage-2099-01-01-0000.tar.gz.partial"
+mkdir -p "$S/dumps/.stage.leftover"; echo trunc > "$S/dumps/.stage.leftover/env-2099-01-01-0000.tar.gz.tmp"
+echo trunc > "$S/dumps/.stage.leftover/.tmp-clone-secrets-2099-01-01-0000.tar.gz.partial"
+# freshness probe must see NO backup at all (partials are not backups)
+mkdir -p "$TMP/bin-hc"; printf '#!/bin/bash\necho "Docker Desktop"\n' > "$TMP/bin-hc/docker"; chmod +x "$TMP/bin-hc/docker"
+probe() { PATH="$TMP/bin-hc:$PATH" BACKUP_DIR="$S/dumps" bash "$ROOT/scripts/health-check-all.sh" --host-only > "$S/hc" 2>&1; }
+if probe; then
+  cat "$S/hc"; fail "freshness probe treated partials as a backup"
+fi
+grep -q 'no \*.sql.gz dumps' "$S/hc" || { cat "$S/hc"; fail "probe failed for the wrong reason"; }
+# env/clone-secrets lookups ignore partials too (seed a fresh dump + volume so those sections are reached)
+touch "$S/dumps/x-2099-01-01-0000.sql.gz" "$S/dumps/y-chatwoot-storage-2099-01-01-0000.tar.gz"
+probe && fail "env/clone-secrets partials satisfied the probe"
+grep -q 'no env-\*.tar.gz' "$S/hc" || { cat "$S/hc"; fail "env probe saw a partial/stage file"; }
+rm -f "$S/dumps/x-2099-01-01-0000.sql.gz" "$S/dumps/y-chatwoot-storage-2099-01-01-0000.tar.gz"
+ok "killed mid-dump: no final-named artifact; freshness probe ignores partials/stage leftovers"
+
+# next run, REAL rclone: leftovers removed, only verified finals reach the remote
+if [[ -n "$REAL_RCLONE" ]]; then
+  mkdir -p "$TMP/bin-real"
+  for t in docker fake-notify fake-sleep fake-clock; do ln -sf "$TMP/bin/$t" "$TMP/bin-real/$t"; done
+  ln -sf "$REAL_RCLONE" "$TMP/bin-real/rclone"
+  unset FAKE_HANG_DUMP BACKUP_STEP_TIMEOUT
+  PATH="$TMP/bin-real:$ORIG_PATH" run_backup || { cat "$S/out"; fail "post-kill run with real rclone"; }
+  has "$S/dumps/.tmp-*" && fail "stale partials not cleaned at start"
+  [[ ! -e "$S/dumps/.stage.leftover" ]] || fail "stale stage dir not cleaned"
+  [[ -z "$(find "$S/remote" -name '.tmp-*' -o -name '*.partial' -o -name '*.tmp')" ]] || fail "REAL rclone uploaded a partial"
+  has "$S/remote/chatwoot-*.sql.gz" && has "$S/remote/env-*.tar.gz" || fail "verified finals missing on remote"
+  for f in "$S"/remote/*.sql.gz; do gzip -t "$f" || fail "uploaded dump is not a valid gzip"; done
+  # a partial planted DURING the upload window must still be ignored (filters, not just cleanup)
+  echo trunc > "$S/dumps/.tmp-chatwoot-2099-01-01-0000.sql.gz.partial"
+  PATH="$TMP/bin-real:$ORIG_PATH" rclone copy "$S/dumps" "$S/remote2" --filter '+ /chatwoot-[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]-[0-9][0-9][0-9][0-9].sql.gz' --filter '- *' --max-depth 1
+  [[ -z "$(ls -A "$S/remote2" | grep -E 'tmp|partial' || true)" ]] || fail "REAL rclone filter matched a partial"
+  ok "REAL rclone: leftovers cleaned, no partial uploaded, uploaded dumps pass gzip -t"
+elif [[ "${REQUIRE_REAL_RCLONE:-0}" == 1 ]]; then
+  fail "real rclone required"
+else
+  echo "SKIP: real rclone not installed (killmid upload half)"
+fi
 
 # 8. restore refuses forged archives, writes nothing
 FG="$TMP/forge"; mkdir -p "$FG/src/.git/hooks" "$FG/t1" "$FG/t2" "$FG/t3"

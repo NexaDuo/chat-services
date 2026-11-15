@@ -117,7 +117,7 @@ check_backup_freshness() {
     # passwords, Azure OpenAI creds) and is NOT in git; backup-host.sh archives it
     # as env-<ts>.tar.gz alongside the dumps/volumes. Without it a DB+volume
     # restore alone can't reconnect or reach the tunnel, so gate on it too.
-    newest_env="$(find "$BACKUP_DIR" -type f -not -path '*/quarantine-plaintext/*' -name 'env-*.tar.gz*' -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -n1)"
+    newest_env="$(find "$BACKUP_DIR" -type f -not -path '*/quarantine-plaintext/*' -not -path '*/.stage.*' -not -name '.tmp-*' -not -name '*.partial' -name 'env-*.tar.gz*' -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -n1)"
     [[ -n "$newest_env" ]] || fail "no env-*.tar.gz in ${BACKUP_DIR} — backup is NOT capturing the host .env (production secrets)."
     env_epoch="${newest_env%% *}"; env_file_found="${newest_env#* }"
     env_age_h=$(( ( $(date +%s) - ${env_epoch%.*} ) / 3600 ))
@@ -128,7 +128,7 @@ check_backup_freshness() {
     echo "  env backup OK: newest .env archive $(basename "$env_file_found") is ${env_age_h}h old"
 
     # clone-local secrets (issue #291): clone-secrets-<ts>.tar.gz[.gpg|.age]
-    newest_cs="$(find "$BACKUP_DIR" -type f -not -path '*/quarantine-plaintext/*' -name 'clone-secrets-*.tar.gz*' -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -n1)"
+    newest_cs="$(find "$BACKUP_DIR" -type f -not -path '*/quarantine-plaintext/*' -not -path '*/.stage.*' -not -name '.tmp-*' -not -name '*.partial' -name 'clone-secrets-*.tar.gz*' -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -n1)"
     [[ -n "$newest_cs" ]] || fail "no clone-secrets-*.tar.gz* in ${BACKUP_DIR} — backup is NOT capturing clone-local secrets (issue #291)."
     cs_epoch="${newest_cs%% *}"; cs_file_found="${newest_cs#* }"
     cs_age_h=$(( ( $(date +%s) - ${cs_epoch%.*} ) / 3600 ))
