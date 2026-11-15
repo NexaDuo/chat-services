@@ -318,10 +318,12 @@ fi
 if [[ -n "${HANDOFF_SHARED_SECRET:-}" ]]; then
   middleware_container="$(require_container "middleware")"
   step "Probing Middleware /config (Bearer auth) inside ${middleware_container}"
-  # Issue #299: the secret travels via the environment (`-e VAR` copies the
-  # exported value, nothing on argv / `ps`), never interpolated into the command.
-  export HANDOFF_SHARED_SECRET
-  code="$(docker exec -e HANDOFF_SHARED_SECRET "$middleware_container" sh -c '
+  # Issue #299: the HOST argv of `docker exec` (visible in `ps`) never carries the
+  # secret: `-e VAR` copies it from the environment of this ONE command only
+  # (inline prefix, not exported, so no later child inherits it). Honest limit:
+  # inside the container `sh` expands it onto the curl/wget argv, visible to
+  # that container's own process table only.
+  code="$(HANDOFF_SHARED_SECRET="$HANDOFF_SHARED_SECRET" docker exec -e HANDOFF_SHARED_SECRET "$middleware_container" sh -c '
     if command -v curl >/dev/null 2>&1; then
       curl -s -o /dev/null -w "%{http_code}" -H "Authorization: Bearer $HANDOFF_SHARED_SECRET" http://127.0.0.1:4000/config
     elif command -v wget >/dev/null 2>&1; then

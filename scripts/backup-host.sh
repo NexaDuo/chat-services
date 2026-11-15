@@ -173,8 +173,10 @@ assert_mode() { # path mode: verify, don't claim
 mkdir -p "$BACKUP_DIR"; chmod 700 "$BACKUP_DIR"; assert_mode "$BACKUP_DIR" 700
 FAIL_MARKER="${BACKUP_DIR}/.backup-last-fail"
 STAGE=""
+PART=""   # in-flight .tmp-*.partial of THIS run (never a glob: a skipped run must not delete another run's)
 on_exit() {
   local st=$?
+  [[ -n "$PART" ]] && rm -f -- "$PART"
   [[ -n "$STAGE" ]] && rm -rf "$STAGE"
   if (( st != 0 )); then
     printf '[%s] FAIL: backup-host.sh exited %s (see cron log)\n' "$(date -Is)" "$st" > "$FAIL_MARKER" 2>/dev/null || true

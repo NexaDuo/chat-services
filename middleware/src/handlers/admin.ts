@@ -1,3 +1,4 @@
+import { createPool } from "../db.js";
 import { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import fs from "fs/promises";
 import fsSync from "fs";
@@ -610,7 +611,7 @@ async function fetchDifyApps(config: AppConfig, pool: pg.Pool): Promise<{ id: st
     console.warn("Postgres Pool class not found in pg import.");
     return [];
   }
-  const difyPool = new PoolClass({ connectionString: difyDbUrl });
+  const difyPool = createPool(config, (err) => console.error("dify pool idle error", err), difyDbUrl);
   try {
     let rows: any[] = [];
     try {

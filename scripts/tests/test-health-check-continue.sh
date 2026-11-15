@@ -13,7 +13,7 @@ export HOME="$TMP/home"
 mkdir -p "$HOME" "$TMP/bin" "$TMP/dumps"
 export PATH="$TMP/bin:$PATH" BACKUP_DIR="$TMP/dumps" MOCK_OS='Docker Desktop'
 unset ALLOW_NON_DESKTOP_ENGINE SKIP_BACKUP_CHECK HANDOFF_SHARED_SECRET
-export SKIP_ALERT_HEALTH_CHECK=1 COMPOSE_PROJECT_NAME=chat-services
+export EXEC_LOG="$TMP/exec.log" SKIP_ALERT_HEALTH_CHECK=1 COMPOSE_PROJECT_NAME=chat-services
 for file in fixture.sql.gz fixture-chatwoot-storage-test.tar.gz fixture-dify-api-storage-test.tar.gz env-test.tar.gz clone-secrets-test.tar.gz.gpg; do
   echo synthetic > "$BACKUP_DIR/$file"
 done
@@ -40,7 +40,7 @@ case "$args" in
   "inspect -f {{.HostConfig.LogConfig.Type}}|"*) echo 'json-file|10m|3' ;;
   "inspect -f {{.State.Health.Status}} "*|"inspect -f {{if .State.Health}}"*) echo healthy ;;
   "inspect -f {{.State.Running}} "*) echo true ;;
-  exec*) exit 1 ;;
+  exec*) echo "$args" >> "$EXEC_LOG"; exit 1 ;;
   *) exit 1 ;;  # coolify-proxy etc. are absent
 esac
 STUB
@@ -77,4 +77,11 @@ touch -d '27 hours ago' "$BACKUP_DIR/fixture.sql.gz"
 bash "$ROOT/scripts/health-check-all.sh" > "$TMP/out" 2>&1 && fail "expected non-zero exit"
 grep -q 'STALE BACKUP' "$TMP/out" || fail "stale backup not reported"
 grep -q '^  - backup freshness' "$TMP/out" || fail "stale backup missing from summary"
+# REV-8/SEC-2: the Bearer secret reaches `docker exec` only via the environment
+# (-e VAR), never on the host argv, and is not exported to later children.
+SECRET_VALUE='s3cr3t-value-0123456789abcdef'
+: > "$EXEC_LOG"
+HANDOFF_SHARED_SECRET="$SECRET_VALUE" bash "$ROOT/scripts/health-check-all.sh" > "$TMP/out" 2>&1 || true
+grep -q 'exec -e HANDOFF_SHARED_SECRET chat-services-middleware-1' "$EXEC_LOG" || fail "config probe did not use docker exec -e VAR (probe not exercised?)"
+if grep -q "$SECRET_VALUE" "$EXEC_LOG"; then fail "secret value leaked onto docker exec argv"; fi
 echo 'OK: health-check continue-on-failure + undeclared mem_limit drift'

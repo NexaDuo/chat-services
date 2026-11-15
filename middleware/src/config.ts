@@ -9,6 +9,12 @@ export const DEFAULT_INFRA_FALLBACK_REPLY =
 const emptyToUndefined = (v: unknown) =>
   typeof v === "string" && v.trim() === "" ? undefined : v;
 
+const pgMs = (def: number) =>
+  z.preprocess(
+    emptyToUndefined,
+    z.coerce.number().int().min(1).max(60000).default(def),
+  );
+
 const EnvSchema = z.object({
   PORT: z.coerce.number().int().positive().default(4000),
   LOG_LEVEL: z
@@ -45,13 +51,19 @@ const EnvSchema = z.object({
   ),
 
   // Postgres pool bounds (issue #299). Chatwoot's webhook timeout is 5 s and the
-  // hot path tries a tenant lookup 3x, so a hung Postgres must fail fast:
-  // 3 x 1200 ms query + backoff stays under 5 s. Empty string = unset
+  // hot path tries a tenant lookup 3x, so a hung Postgres must fail fast. The
+  // per-call timeouts do NOT bound 3 attempts (connect + query each); the
+  // PG_RESOLVE_DEADLINE_MS overall deadline does. Empty string = unset
   // (compose passes `${VAR:-}`).
-  PG_CONNECTION_TIMEOUT_MS: z.preprocess(emptyToUndefined, z.coerce.number().int().positive().default(1000)),
-  PG_QUERY_TIMEOUT_MS: z.preprocess(emptyToUndefined, z.coerce.number().int().positive().default(1200)),
-  PG_STATEMENT_TIMEOUT_MS: z.preprocess(emptyToUndefined, z.coerce.number().int().positive().default(2500)),
-  PG_IDLE_TIMEOUT_MS: z.preprocess(emptyToUndefined, z.coerce.number().int().positive().default(10000)),
+  // Each value must be an integer in [1, 60000] ms; NaN/0/negative/huge fail the
+  // boot with a message naming the variable (REV-7). PG_RESOLVE_DEADLINE_MS is
+  // the OVERALL budget for a tenant lookup (connect + queries + backoff, all
+  // attempts), because per-call timeouts alone do not bound 3 attempts (REV-2).
+  PG_CONNECTION_TIMEOUT_MS: pgMs(1000),
+  PG_QUERY_TIMEOUT_MS: pgMs(1200),
+  PG_STATEMENT_TIMEOUT_MS: pgMs(2500),
+  PG_IDLE_TIMEOUT_MS: pgMs(10000),
+  PG_RESOLVE_DEADLINE_MS: pgMs(4000),
 
   HANDOFF_SHARED_SECRET: z
     .string()
@@ -73,6 +85,7 @@ export type AppConfig = {
     queryTimeoutMs: number;
     statementTimeoutMs: number;
     idleTimeoutMs: number;
+    resolveDeadlineMs: number;
   };
   adminPassword?: string;
   evolution: {
@@ -122,6 +135,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       queryTimeoutMs: data.PG_QUERY_TIMEOUT_MS,
       statementTimeoutMs: data.PG_STATEMENT_TIMEOUT_MS,
       idleTimeoutMs: data.PG_IDLE_TIMEOUT_MS,
+      resolveDeadlineMs: data.PG_RESOLVE_DEADLINE_MS,
     },
     adminPassword: data.ADMIN_PASSWORD,
     evolution: {
@@ -170,18 +184,28 @@ export const DIFY_KILL_SWITCH_KEY = "DIFY_KILL_SWITCH";
  * or a thrown DB error — resolves to `false` ("keep operating normally").
  * Only an explicit `"true"` turns the switch on.
  */
+export async function readDifyKillSwitch(pool: import("pg").Pool): Promise<boolean> {
+  const result = await pool.query("SELECT value FROM configs WHERE key = $1", [
+    DIFY_KILL_SWITCH_KEY,
+  ]);
+  if (result.rows.length === 0) return false;
+  const raw = result.rows[0].value;
+  if (typeof raw !== "string") return false;
+  return raw.trim().toLowerCase() === "true";
+}
+
+/**
+ * Lenient variant: a thrown DB error resolves to OFF. Used ONLY where the
+ * caller must not block (static fallback reply path, which flags the unknown
+ * case itself). The Dify flush path must use `readDifyKillSwitch` with retry
+ * and fail closed on error (issue #299 SEC-1/REV-3).
+ */
 export async function isDifyKillSwitchEnabled(
   pool: import("pg").Pool,
   log?: { warn: (obj: unknown, msg?: string) => void },
 ): Promise<boolean> {
   try {
-    const result = await pool.query("SELECT value FROM configs WHERE key = $1", [
-      DIFY_KILL_SWITCH_KEY,
-    ]);
-    if (result.rows.length === 0) return false;
-    const raw = result.rows[0].value;
-    if (typeof raw !== "string") return false;
-    return raw.trim().toLowerCase() === "true";
+    return await readDifyKillSwitch(pool);
   } catch (err) {
     log?.warn(
       { err },
@@ -288,9 +312,12 @@ export async function resolveTenant(
 }
 
 /** Bounded pg.Pool options (issue #299). Exported so tests build the same pool. */
-export function buildPoolOptions(config: AppConfig): import("pg").PoolConfig {
+export function buildPoolOptions(
+  config: AppConfig,
+  connectionString: string = config.databaseUrl,
+): import("pg").PoolConfig {
   return {
-    connectionString: config.databaseUrl,
+    connectionString,
     connectionTimeoutMillis: config.db.connectionTimeoutMs,
     query_timeout: config.db.queryTimeoutMs,
     statement_timeout: config.db.statementTimeoutMs,

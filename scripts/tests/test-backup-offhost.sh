@@ -45,7 +45,8 @@ case "$1" in
   run) [[ -z "${FAKE_HANG_RUN:-}" ]] || exec sleep 30
     echo "run $*" >> "$FAKE_LOG_DIR/docker-run.log"
     # a REAL tar.gz (backup-host.sh verifies volume archives with tar -tzf, #299)
-    seq 1 800 > "$FAKE_LOG_DIR/vol-data"; tar czf - -C "$FAKE_LOG_DIR" vol-data ;;
+    seq 1 800 > "$FAKE_LOG_DIR/vol-data"
+    if [[ -n "${FAKE_CORRUPT_VOL:-}" ]]; then tar czf - -C "$FAKE_LOG_DIR" vol-data | head -c 30; else tar czf - -C "$FAKE_LOG_DIR" vol-data; fi ;;
   *) echo "unexpected docker $*" >&2; exit 99 ;;
 esac
 STUB
@@ -115,6 +116,12 @@ fi
 exec $REAL_GPG "\$@"
 STUB
 fi
+# Wrappers for the REV-4 mutation cases: emit a truncated-but-NON-EMPTY artifact.
+REAL_GZIP="$(command -v gzip)"
+cat > "$TMP/bin/gzip" <<STUB
+#!/bin/bash
+if [[ -n "\${FAKE_GZIP_TRUNCATE:-}" && "\$1" == -9 ]]; then $REAL_GZIP "\$@" | head -c 30; else exec $REAL_GZIP "\$@"; fi
+STUB
 chmod +x "$TMP/bin/"*
 
 fail() { echo "FAIL: $*"; exit 1; }
@@ -132,7 +139,7 @@ scenario() {
   export FAKE_LOG_DIR="$S/log" BACKUP_DIR="$S/dumps" BACKUP_REPO_ROOT="$S/clone" ENV_FILE="$S/clone/.env"
   echo 0 > "$S/log/clock"
   export BACKUP_TEST_MODE=1 BACKUP_WAIT_SECONDS=5 NOTIFY_STATE_DIR="$S/notify-state" BACKUP_SLEEP_CMD="$TMP/bin/fake-sleep" BACKUP_CLOCK_CMD="$TMP/bin/fake-clock"
-  unset FAKE_DOCKER_DOWN_CALLS FAKE_PG_NOTREADY_CALLS FAKE_RCLONE_SKIP FAKE_GPG_FAIL_AFTER FAKE_HANG_DUMP FAKE_HANG_RUN BACKUP_STEP_TIMEOUT FAKE_DB_EXTRA BACKUP_CLONE_REQUIRED_PATHS BACKUP_RCLONE_REMOTE BACKUP_GPG_RECIPIENT BACKUP_KEEP_DAYS BACKUP_CLONE_SECRET_PATHS || true
+  unset FAKE_GZIP_TRUNCATE FAKE_CORRUPT_VOL FAKE_DOCKER_DOWN_CALLS FAKE_PG_NOTREADY_CALLS FAKE_RCLONE_SKIP FAKE_GPG_FAIL_AFTER FAKE_HANG_DUMP FAKE_HANG_RUN BACKUP_STEP_TIMEOUT FAKE_DB_EXTRA BACKUP_CLONE_REQUIRED_PATHS BACKUP_RCLONE_REMOTE BACKUP_GPG_RECIPIENT BACKUP_KEEP_DAYS BACKUP_CLONE_SECRET_PATHS || true
 }
 run_backup() { bash "$ROOT/scripts/backup-host.sh" > "$S/out" 2>&1; }
 
@@ -488,7 +495,7 @@ for _ in $(seq 1 50); do has "$S/dumps/.tmp-*.partial" && break; sleep 0.2; done
 has "$S/dumps/.tmp-*.sql.gz.partial" || fail "no in-flight partial dump while the dump was running"
 has "$S/dumps/chatwoot-*.sql.gz" && fail "final dump name exists before the dump finished"
 kill -9 -- "-$KPID" 2>/dev/null || true; wait "$KPID" 2>/dev/null || true
-pkill -f "sleep 30" 2>/dev/null || true
+pkill -9 -s "$KPID" 2>/dev/null || true   # scoped to the session we started (setsid), never host-wide
 has "$S/dumps/chatwoot-*.sql.gz" && fail "killed run left a final-named (truncated) dump"
 # plus the other leftovers a kill can strand: truncated volume/secret partials, an old-style stage tmp
 head -c 20 /dev/urandom > "$S/dumps/.tmp-chat-services_chatwoot-storage-2099-01-01-0000.tar.gz.partial"
@@ -530,6 +537,22 @@ elif [[ "${REQUIRE_REAL_RCLONE:-0}" == 1 ]]; then
 else
   echo "SKIP: real rclone not installed (killmid upload half)"
 fi
+
+# 7y. REV-4: a truncated-but-non-empty artifact must never get its final name nor be uploaded.
+scenario corruptdump
+export FAKE_GZIP_TRUNCATE=1
+if run_backup; then fail "corrupt (truncated) dump must fail the run"; fi
+has "$S/dumps/chatwoot-*.sql.gz" && fail "truncated dump was renamed to its final name (gzip -t skipped?)"
+has "$S/dumps/.tmp-*" && fail "corrupt partial left behind"
+[[ -z "$(ls -A "$S/remote")" ]] || fail "something was uploaded after a corrupt dump"
+grep -q 'vazio/corrompido' "$S/out" || fail "no corrupt-dump message"
+scenario corruptvol
+export FAKE_CORRUPT_VOL=1
+if run_backup; then fail "corrupt volume archive must fail the run"; fi
+has "$S/dumps/*chatwoot-storage-*.tar.gz" && fail "truncated volume archive was renamed to its final name (tar -tzf skipped?)"
+has "$S/dumps/.tmp-*" && fail "corrupt volume partial left behind"
+has "$S/remote/*chatwoot-storage-*" && fail "corrupt volume archive uploaded"
+ok "truncated-but-non-empty dump/volume artifacts are rejected, never renamed or uploaded"
 
 # 8. restore refuses forged archives, writes nothing
 FG="$TMP/forge"; mkdir -p "$FG/src/.git/hooks" "$FG/t1" "$FG/t2" "$FG/t3"
