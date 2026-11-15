@@ -3,7 +3,7 @@
 #  1. aborted on the FIRST failing check, so later sections (backup freshness)
 #     never ran, and
 #  2. the #157 drift guard failed on a running container whose mem_limit was not
-#     declared in MEM_LIMIT_EXPECTED_MIB (chat-services-alloy-1).
+#     declared in MEM_LIMIT_EXPECTED_MIB (the fixture container chat-services-ghost-1).
 # Uses a fake Docker CLI (no host daemon access) like test-host-health.sh.
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"

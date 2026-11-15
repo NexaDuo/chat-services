@@ -210,8 +210,8 @@ HEALTHCHECK_SUBNAMES=(
   cloudflared
 )
 
-# Worst case (issue #294 review): each of the 14 healthcheck subnames waits up to
-# 60 x 5s = 5 min, so a stack where all are unhealthy takes ~70 min before the
+# Worst case (issue #294 review): each of the 13 healthcheck subnames waits up to
+# 60 x 5s = 5 min, so a stack where all are unhealthy takes ~65 min before the
 # summary prints. It still fails closed: every timeout is recorded and the run
 # exits non-zero. Tracked as a follow-up; behavior deliberately unchanged here.
 check_healthchecks() {
@@ -318,11 +318,14 @@ fi
 if [[ -n "${HANDOFF_SHARED_SECRET:-}" ]]; then
   middleware_container="$(require_container "middleware")"
   step "Probing Middleware /config (Bearer auth) inside ${middleware_container}"
-  code="$(docker exec "$middleware_container" sh -c '
+  # Issue #299: the secret travels via the environment (`-e VAR` copies the
+  # exported value, nothing on argv / `ps`), never interpolated into the command.
+  export HANDOFF_SHARED_SECRET
+  code="$(docker exec -e HANDOFF_SHARED_SECRET "$middleware_container" sh -c '
     if command -v curl >/dev/null 2>&1; then
-      curl -s -o /dev/null -w "%{http_code}" -H "Authorization: Bearer '"${HANDOFF_SHARED_SECRET}"'" http://127.0.0.1:4000/config
+      curl -s -o /dev/null -w "%{http_code}" -H "Authorization: Bearer $HANDOFF_SHARED_SECRET" http://127.0.0.1:4000/config
     elif command -v wget >/dev/null 2>&1; then
-      wget -S -q -O /dev/null --header="Authorization: Bearer '"${HANDOFF_SHARED_SECRET}"'" http://127.0.0.1:4000/config 2>&1 | awk "/^ *HTTP\// {print \$2}" | tail -1
+      wget -S -q -O /dev/null --header="Authorization: Bearer $HANDOFF_SHARED_SECRET" http://127.0.0.1:4000/config 2>&1 | awk "/^ *HTTP\// {print \$2}" | tail -1
     else
       echo 000
     fi
