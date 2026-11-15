@@ -16,6 +16,8 @@ finish() {
     printf '[%s] FAIL: scheduled host health check exited %s; see health-check.log\n' "$(date -Is)" "$status" > "$STATE_DIR/.health-last-fail.tmp"
     mv "$STATE_DIR/.health-last-fail.tmp" "$STATE_DIR/.health-last-fail"
     cat "$STATE_DIR/.health-last-fail"
+    # Operator-visible push (issue #291); throttled, best effort, never fails the probe.
+    bash "$SCRIPT_DIR/notify-operator.sh" "Health check FALHOU" "Probe horario saiu com codigo ${status}; veja ~/nexaduo-local/health-check.log" health-probe || true
   fi
 }
 trap finish EXIT

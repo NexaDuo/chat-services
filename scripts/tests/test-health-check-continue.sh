@@ -14,7 +14,7 @@ mkdir -p "$HOME" "$TMP/bin" "$TMP/dumps"
 export PATH="$TMP/bin:$PATH" BACKUP_DIR="$TMP/dumps" MOCK_OS='Docker Desktop'
 unset ALLOW_NON_DESKTOP_ENGINE SKIP_BACKUP_CHECK HANDOFF_SHARED_SECRET
 export SKIP_ALERT_HEALTH_CHECK=1 COMPOSE_PROJECT_NAME=chat-services
-for file in fixture.sql.gz fixture-chatwoot-storage-test.tar.gz fixture-dify-api-storage-test.tar.gz env-test.tar.gz; do
+for file in fixture.sql.gz fixture-chatwoot-storage-test.tar.gz fixture-dify-api-storage-test.tar.gz env-test.tar.gz clone-secrets-test.tar.gz.gpg; do
   echo synthetic > "$BACKUP_DIR/$file"
 done
 

@@ -115,8 +115,13 @@ Reproducible bootstrap (no manual drift — issue #109):
    `flock` and a 120s timeout. Log: `~/nexaduo-local/health-check.log`;
    failure: `~/nexaduo-local/.health-last-fail`, highlighted by preflight/health-check
    until a successful scheduled probe clears it. Alloy only collects container
-   logs; no host-log/metric collector or notification channel is provisioned.
-   This marker is local visibility, not an operator push notification (#197).
+   logs; no host-log/metric collector is provisioned. Since #291 a failed backup or
+   failed hourly probe also fires `scripts/notify-operator.sh` (Windows toast via
+   `powershell.exe`, absolute path, works from cron's PATH). **The toast is unproven on
+   a real desktop until the operator confirms one appeared** (WinRT `Show()` does not
+   throw for an unregistered AppId); an undelivered notification is never silent: it
+   leaves `~/nexaduo-local/.notify-undelivered`, surfaced by preflight. The markers
+   (`.health-last-fail`, `$BACKUP_DIR/.backup-last-fail`) stay the durable record.
 6. **Host ports (isolated by default — #119, default since #145):**
    `scripts/run-stack.sh up` publishes **zero** host ports by default (via
    `deploy/docker-compose.isolated.yml`, `!reset []` merge — Compose 2.24.4+). Public
@@ -215,10 +220,88 @@ states, scans logs for known anomalies, and files structured GitHub issues.
     DB passwords, Azure OpenAI creds) and is deliberately not in git — a DB+volume
     restore alone can't reconnect or reach the tunnel without it. `backup-host.sh`
     therefore also tars it as `env-<ts>.tar.gz` (same rotation/off-host-copy/coverage-
-    check treatment as the volume archives, no extra encryption — same trust level as
-    the DB dumps already shipped to the same remote), and `health-check-all.sh`
+    check treatment as the volume archives), and `health-check-all.sh`
     staleness-checks it the same way. Set `BACKUP_RCLONE_REMOTE` (see
-    `.env.production.example` for Google Drive setup) or it stays local-only.
+    `.env.production.example`: Google Drive, or a local path such as a OneDrive-synced
+    Windows folder) or it stays local-only.
+  - **Clone-local secrets (#291):** `backup-host.sh` also archives the allowlist
+    `BACKUP_CLONE_SECRET_PATHS` (`.env`, `deploy/.env`, the three
+    `infrastructure/terraform/envs/*/terraform.tfvars`, `.claude/settings.local.json`,
+    `skills-lock.json`; missing `.env` fails, other missing files warn) as
+    `clone-secrets-<ts>.tar.gz` (0600), with the same rotation, off-host copy,
+    `.last-success` record and staleness check. Outside the clone and NOT archived
+    (back up by hand): `~/.config/gh`, `~/.codex`, `~/.ssh`, Docker Desktop settings.
+  - **Encryption (optional):** `BACKUP_AGE_RECIPIENT` (age, if installed; the age
+    path is untested, age is not installed on the host/CI) or `BACKUP_GPG_RECIPIENT`
+    (full 40-hex key fingerprint, or an email already in the keyring; the public key
+    must be imported AND trusted, no `--trust-model always`) encrypts `env-*` and
+    `clone-secrets-*` (`.tar.gz.age`/`.tar.gz.gpg`). The tarball is piped into the
+    encryptor inside a 0700 staging dir and only a finished ciphertext enters
+    `BACKUP_DIR`; on any failure the run fails and no plaintext remains. Private key
+    stays offline, no passphrase on disk. With a recipient set, plaintext
+    `env-*`/`clone-secrets-*` already in the dumps dir are moved to
+    `quarantine-plaintext/` (never uploaded). Plaintext already on the remote is logged
+    and deleted from the remote only after this run's encrypted env + clone-secrets
+    archives are verified there; also purge the OneDrive recycle bin and version
+    history by hand, else treat those secrets as exposed. Unset = plaintext + warning:
+    **the `.env` then sits in plaintext in the cloud-synced folder** (OneDrive), a
+    trust trade-off. **Even with a recipient set, DB dumps (`*.sql.gz`: Chatwoot
+    conversations/PII/tokens, `middleware.configs` API keys) and volume archives
+    (`dify-api-storage` RSA private keys, `chatwoot-storage`) stay plaintext in the
+    cloud folder**; extending encryption to them is a separate follow-up.
+  - **Unattended + loud (#291):** `BACKUP_RCLONE_REMOTE`, `BACKUP_GPG_RECIPIENT`,
+    `BACKUP_AGE_RECIPIENT`, `BACKUP_KEEP_DAYS`, `BACKUP_WAIT_SECONDS` and
+    `BACKUP_CLONE_SECRET_PATHS` are read from `.env` when UNSET in the process env
+    (cron does not load it); an explicitly empty value forces the local-only/default
+    behavior. The script waits up to `BACKUP_WAIT_SECONDS` (1800) for Postgres to
+    accept connections (`pg_isready`); any failure writes `$BACKUP_DIR/.backup-last-fail`
+    (cleared by the next success; `health-check-all.sh` fails while it exists and
+    preflight prints it) and fires the notifier. The remote directory must already
+    exist (a wrong/unmounted OneDrive path fails instead of being created). Off-host
+    copy has no `--max-age`, uses ONE ordered `--filter` list (never `--include`/`--exclude`:
+    real rclone ignores their order) limited to anchored, top-level, generated names
+    with the exact prefixes (`<db>-`, `<volume>-`, `env-`, `clone-secrets-`) and digit
+    timestamps, with a `flock` so two runs cannot overlap (a contended run is skipped),
+    is verified by name+size, and only then is the remote pruned past
+    `BACKUP_KEEP_DAYS` (integer 1-3650) with the same filters, so unrelated files in
+    that folder are never touched. Syncing to the actual cloud is not verified here.
+    **Local first:** a bad recipient, an untrusted gpg key (checked by a real test
+    encryption), an unusable/unmounted remote or an invalid DB name never prevents the
+    LOCAL dumps, volume archives and secrets archives. The off-host phase is skipped
+    (plaintext secrets are never uploaded while a recipient is configured), the run
+    ends non-zero, `.last-success` records `local=ok|partial offhost=failed reason=...`
+    and `health-check-all.sh` reports "OFF-HOST ONLY" while the local copy is fresh.
+    Two distinct plaintext cases: (1) NO recipient configured (current production state):
+    normal `env-`/`clone-secrets-<ts>.tar.gz` ARE produced and uploaded, with the loud
+    plaintext warning, by policy; (2) a recipient is configured but encryption is broken:
+    the plaintext fallback is written ONLY to `quarantine-plaintext/` (0700, files 0600),
+    a location no upload filter matches regardless of what later runs resolve (an
+    unconditional first `--filter '- /quarantine-plaintext/**'`), and the next good run
+    leaves it there until rotation. Modes 0700/0600 are asserted, not assumed, and a remote
+    equal to/inside/above `BACKUP_DIR` is refused. Long steps are wrapped in
+    `timeout -k 5` (`BACKUP_STEP_TIMEOUT`, 3600s; volume helper containers are
+    named and `docker rm -f`'d on timeout; killing `docker exec` closes pg_dump's pipe); a contended
+    `flock` skips with a counter in `$BACKUP_DIR/.backup-skipped`, any other flock error
+    fails. A remote folder belongs to ONE host (a second clone's plaintext archives
+    would be purged). Test hooks (`BACKUP_CLOCK_CMD`, `BACKUP_SLEEP_CMD`,
+    `RESTORE_TEST_HOOK`) are inert unless `BACKUP_TEST_MODE=1`.
+    Tests: `scripts/tests/test-backup-offhost.sh`.
+  - **Restore safety (#291):** `restore-clone-secrets.sh` copies the archive to a
+    private temp dir, validates and extracts only that copy (sha256 re-checked), rejects
+    duplicates, forces 0600, and warns that the restored content is unauthenticated
+    (review `.env`/`.claude/settings.local.json` before use).
+  - **Rollout order (#291):** merge, then on the host run `scripts/backup-host.sh`
+    once right away (the new clone-secrets freshness check fails the hourly probe
+    until a backup with the new script has run), confirm the remote set, run
+    `scripts/health-check-all.sh`, import/trust the gpg public key and set
+    `BACKUP_GPG_RECIPIENT` in `.env`, and purge old plaintext copies from OneDrive.
+    **REQUIRED before relying on the remote plaintext purge** (it is irreversible apart
+    from the OneDrive recycle bin and only proves the encrypted file is PRESENT, not
+    decryptable): after the first encrypted run, run
+    `scripts/verify-backup-decrypt.sh <remote>/clone-secrets-<ts>.tar.gz.gpg` with the
+    offline private key available. Do not set `BACKUP_GPG_RECIPIENT` in production
+    until that decrypt-and-restore check (also via `restore-clone-secrets.sh --dry-run`)
+    has succeeded with the intended key; test it first with a scratch recipient.
 - **Postgres data is SACRED.** It lives in the Docker named volume
   `chat-services_postgres-data`. **Never** `docker compose down -v` or prune it;
   `run-stack.sh down` deliberately omits `-v`. The host serves production and is shared
@@ -248,10 +331,14 @@ Dumps: `~/nexaduo-local/dumps/<db>-<YYYY-MM-DD>-HHMM.sql.gz` (+ off-host mirror 
 7. **Remember the Docker volumes** — a dump restore alone leaves `PrivkeyNotFoundError`;
    restore the archived volumes or re-run `flask reset-encrypt-key-pair` + re-enter the
    Azure OpenAI creds.
-8. **On a fresh host, restore `.env` first** — extract the newest
-   `env-<ts>.tar.gz` (`tar xzf env-<ts>.tar.gz -C /path/to/repo`) before anything
-   else; without it there's nothing to authenticate the tunnel or reconnect the
-   restored DB/volumes with.
+8. **On a fresh host, restore the clone secrets first** — from the newest
+   `clone-secrets-<ts>.tar.gz[.gpg|.age]` (local dumps dir or the off-host copy) run
+   `scripts/restore-clone-secrets.sh <archive> [--dry-run] [--force]` (extracts into
+   the repo root, refuses to overwrite without `--force`; `.gpg` needs the offline
+   private key imported, `.age` needs `AGE_IDENTITY=<file>`). It restores `.env`,
+   tfvars and local settings; without `.env` there's nothing to authenticate the
+   tunnel or reconnect the restored DB/volumes with. `env-<ts>.tar.gz` remains a
+   `.env`-only fallback (`tar xzf`, or gpg-decrypt first).
 
 ## Live gotchas
 - **Static infra fallback vs kill switch (issue #293):** on a middleware Postgres read
