@@ -44,6 +44,15 @@ const EnvSchema = z.object({
     z.string().min(1).default(DEFAULT_INFRA_FALLBACK_REPLY),
   ),
 
+  // Postgres pool bounds (issue #299). Chatwoot's webhook timeout is 5 s and the
+  // hot path tries a tenant lookup 3x, so a hung Postgres must fail fast:
+  // 3 x 1200 ms query + backoff stays under 5 s. Empty string = unset
+  // (compose passes `${VAR:-}`).
+  PG_CONNECTION_TIMEOUT_MS: z.preprocess(emptyToUndefined, z.coerce.number().int().positive().default(1000)),
+  PG_QUERY_TIMEOUT_MS: z.preprocess(emptyToUndefined, z.coerce.number().int().positive().default(1200)),
+  PG_STATEMENT_TIMEOUT_MS: z.preprocess(emptyToUndefined, z.coerce.number().int().positive().default(2500)),
+  PG_IDLE_TIMEOUT_MS: z.preprocess(emptyToUndefined, z.coerce.number().int().positive().default(10000)),
+
   HANDOFF_SHARED_SECRET: z
     .string()
     .min(16, "HANDOFF_SHARED_SECRET must be at least 16 chars"),
@@ -59,6 +68,12 @@ export type AppConfig = {
   port: number;
   logLevel: z.infer<typeof EnvSchema>["LOG_LEVEL"];
   databaseUrl: string;
+  db: {
+    connectionTimeoutMs: number;
+    queryTimeoutMs: number;
+    statementTimeoutMs: number;
+    idleTimeoutMs: number;
+  };
   adminPassword?: string;
   evolution: {
     apiKey?: string;
@@ -102,6 +117,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     port: data.PORT,
     logLevel: data.LOG_LEVEL,
     databaseUrl: data.DATABASE_URL,
+    db: {
+      connectionTimeoutMs: data.PG_CONNECTION_TIMEOUT_MS,
+      queryTimeoutMs: data.PG_QUERY_TIMEOUT_MS,
+      statementTimeoutMs: data.PG_STATEMENT_TIMEOUT_MS,
+      idleTimeoutMs: data.PG_IDLE_TIMEOUT_MS,
+    },
     adminPassword: data.ADMIN_PASSWORD,
     evolution: {
       apiKey: data.EVOLUTION_AUTHENTICATION_API_KEY,
@@ -264,4 +285,15 @@ export async function resolveTenant(
 ): Promise<ResolvedTenant | null> {
   const r = await resolveTenantDetailed(config, accountId, pool);
   return r.ok ? r.tenant : null;
+}
+
+/** Bounded pg.Pool options (issue #299). Exported so tests build the same pool. */
+export function buildPoolOptions(config: AppConfig): import("pg").PoolConfig {
+  return {
+    connectionString: config.databaseUrl,
+    connectionTimeoutMillis: config.db.connectionTimeoutMs,
+    query_timeout: config.db.queryTimeoutMs,
+    statement_timeout: config.db.statementTimeoutMs,
+    idleTimeoutMillis: config.db.idleTimeoutMs,
+  };
 }

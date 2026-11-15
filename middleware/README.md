@@ -43,6 +43,10 @@ Node.js/TypeScript service (Fastify 5) that closes the messaging loop between Ch
 | `HANDOFF_LABEL` | No | Default `atendimento-humano` |
 | `WEBHOOK_EMPTY_CONTENT_REPLY` | No | Static reply for an inbound message with no text and no media signal (#293). Empty/unset = built-in pt-BR default. |
 | `WEBHOOK_INFRA_FALLBACK_REPLY` | No | Static reply when a Postgres read fails after 3 bounded retries (#213/#293). Empty/unset = built-in default. |
+| `PG_CONNECTION_TIMEOUT_MS` | No | Pool connect timeout (default 1000). Issue #299. |
+| `PG_QUERY_TIMEOUT_MS` | No | Client-side per-query timeout (default 1200). Keep `3 x value + 300 ms` under Chatwoot's 5 s webhook timeout so the #298 fallback runs in budget. |
+| `PG_STATEMENT_TIMEOUT_MS` | No | Server-side `statement_timeout` backstop (default 2500). |
+| `PG_IDLE_TIMEOUT_MS` | No | Idle pool client eviction (default 10000). |
 
 > The `CHATWOOT_API_TOKEN` **only exists after the first Chatwoot setup**. Create the super-admin in the UI (`chat.nexaduo.com`), copy the token from *Profile Settings → Access Token*, add it to `.env`, and recreate only middleware using the compose chain below. The user must have access to every bot-enabled account, including conversation reads.
 
